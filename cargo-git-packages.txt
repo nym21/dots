@@ -1,0 +1,1 @@
+https://github.com/fish-shell/fish-shell?tag=4.2.1

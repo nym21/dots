@@ -1,0 +1,169 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "auto_install_extensions": {
+    "codebook": true,
+    "colored-zed-icons-theme": true,
+    "fish": true,
+    "git-firefly": true,
+    "html": true,
+    "log": true,
+    "rainbow-csv": true,
+    "toml": true,
+    "zed-legacy-themes": true
+  },
+  "colorize_brackets": false,
+  "icon_theme": "Zed (Default)",
+  "diagnostics": {
+    "button": true
+  },
+  "use_system_window_tabs": false,
+  "tab_bar": {
+    "show_nav_history_buttons": true,
+    "show": true
+  },
+  "status_bar": {
+    "cursor_position_button": true,
+    "active_language_button": false
+  },
+  "search": {
+    "button": false
+  },
+  "git_panel": {
+    "button": true
+  },
+  "debugger": {
+    "button": true
+  },
+  "project_panel": {
+    "button": true,
+    "git_status": true,
+    "folder_icons": true,
+    "file_icons": true
+  },
+  "buffer_font_size": 15.0,
+  "buffer_line_height": { "custom": 2 },
+  "ui_font_family": "Lilex",
+  "show_whitespaces": "selection",
+  "soft_wrap": "editor_width",
+  "outline_panel": {
+    "button": false,
+    "dock": "right"
+  },
+  "minimap": {
+    "show": "always"
+  },
+  "tabs": {
+    "close_position": "right",
+    "file_icons": true,
+    "git_status": true,
+    "show_diagnostics": "all"
+  },
+  "terminal": {
+    "button": true,
+    "dock": "right",
+    "line_height": "comfortable"
+  },
+  "inlay_hints": {
+    "enabled": true
+  },
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware"
+  },
+  "theme": {
+    "mode": "system",
+    "light": "Rosé Pine Dawn",
+    "dark": "Zed Legacy: Rosé Pine"
+  },
+  "languages": {
+    "HTML": {
+      "tab_size": 2
+    },
+    "CSS": {
+      "tab_size": 2
+    },
+    "JavaScript": {
+      // "language_servers": ["tsgo"],
+      "inlay_hints": {
+        "enabled": false
+      }
+    },
+    "TypeScript": {
+      // "language_servers": ["tsgo"],
+      "inlay_hints": {
+        "enabled": false
+      }
+    }
+  },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "command": "clippy",
+          "extraArgs": ["--profile", "clippy"]
+        },
+        "cargo": {
+          "features": "all",
+          "targetDir": true
+        }
+      }
+    },
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "tsserver": {
+            "experimental": {
+              "enableProjectDiagnostics": true
+            }
+          }
+        }
+      }
+    }
+  },
+
+  // ---
+  // Hide useless stuff
+  // ---
+
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  },
+  "disable_ai": true,
+  "title_bar": {
+    "show_menus": false,
+    "show_onboarding_banner": false,
+    "show_project_items": true,
+    "show_branch_name": true,
+    "show_branch_icon": false,
+    "show_sign_in": false,
+    "show_user_picture": false
+  },
+  "features": {
+    "edit_prediction_provider": "none"
+  },
+  "agent": {
+    "button": false,
+    "enabled": false,
+    "dock": null
+  },
+  "notification_panel": {
+    "button": false,
+    "dock": null
+  },
+  "collaboration_panel": {
+    "button": false
+  },
+  "telemetry": {
+    "diagnostics": false,
+    "metrics": false
+  }
+}

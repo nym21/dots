@@ -1,0 +1,13 @@
+bat
+cargo-dist
+cargo-edit
+cargo-features-manager
+cargo-machete
+cargo-release
+cargo-update
+difftastic
+flamegraph
+samply
+starship
+tokei
+wasm-server-runner
