@@ -30,9 +30,9 @@ find "$HOME_DIR" -name ".DS_Store" -delete
 
 # Packages
 echo "Exporting packages..."
-brew bundle dump --force --file="$DOTS_DIR/Brewfile.tmp"
-grep -v "^cargo " "$DOTS_DIR/Brewfile.tmp" > "$DOTS_DIR/Brewfile" && rm "$DOTS_DIR/Brewfile.tmp"
-cargo install --list 2>/dev/null | grep -E "^[a-z]" | grep -v "(http" | cut -d' ' -f1 > "$DOTS_DIR/cargo-packages.txt"
-cargo install --list 2>/dev/null | grep -E "^[a-z].*\(http" | sed 's/.*(\(http[^#]*\).*/\1/' > "$DOTS_DIR/cargo-git-packages.txt"
+# brew bundle dump --force --file="$DOTS_DIR/Brewfile.tmp"
+# grep -v "^cargo " "$DOTS_DIR/Brewfile.tmp" > "$DOTS_DIR/Brewfile" && rm "$DOTS_DIR/Brewfile.tmp"
+cargo install --list 2>/dev/null | grep -E "^[a-z]" | grep -v "(http" | cut -d' ' -f1 > "$DOTS_DIR/cargo.txt"
+# cargo install --list 2>/dev/null | grep -E "^[a-z].*\(http" | sed 's/.*(\(http[^#]*\).*/\1/' > "$DOTS_DIR/cargo-git-packages.txt"
 
 echo "Done!"

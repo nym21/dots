@@ -24,17 +24,25 @@ if ! command -v rustc &> /dev/null; then
     echo "Installing Rust..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     source "$HOME/.cargo/env"
+else
+    rustup update
 fi
 
 # --- Cargo packages ---
 echo "Installing cargo packages..."
 while IFS= read -r pkg || [ -n "$pkg" ]; do
-    [ -n "$pkg" ] && cargo install "$pkg" 2>/dev/null || true
-done < "$DOTS_DIR/cargo-packages.txt"
+    echo "Installing ${pkg}..."
+    [ -n "$pkg" ] && cargo install "$pkg" || true
+done < "$DOTS_DIR/cargo.txt"
 
-while IFS= read -r url || [ -n "$url" ]; do
-    [ -n "$url" ] && cargo install --git "$url" 2>/dev/null || true
-done < "$DOTS_DIR/cargo-git-packages.txt"
+# --- Fish ---
+if ! command -v fish &> /dev/null; then
+    cargo install --git https://github.com/fish-shell/fish-shell?tag=latest fish
+    sudo sh -c 'which fish >> /etc/shells'
+    chsh -s $(which fish)
+else
+    cargo install --git https://github.com/fish-shell/fish-shell?tag=latest fish
+fi
 
 # --- Dotfiles ---
 echo "Linking dotfiles..."

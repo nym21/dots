@@ -1,4 +1,5 @@
 bat
+brk_cli
 cargo-dist
 cargo-edit
 cargo-features-manager
