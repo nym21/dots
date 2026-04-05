@@ -1,7 +1,7 @@
 bat
-brk_cli
 cargo-dist
 cargo-edit
+cargo-expand
 cargo-features-manager
 cargo-machete
 cargo-release
@@ -11,4 +11,5 @@ flamegraph
 samply
 starship
 tokei
-wasm-server-runner
+uv
+zellij

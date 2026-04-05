@@ -46,7 +46,7 @@ fi
 
 # --- Dotfiles ---
 echo "Linking dotfiles..."
-mkdir -p ~/.config/{fish,ghostty,zed}
+mkdir -p ~/.config/{fish,ghostty,zed,zellij}
 
 git config --global diff.external difft
 git config --global core.editor "zed --wait"
@@ -55,5 +55,6 @@ link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
 link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
 link "$HOME_DIR/.config/ghostty/config" ~/.config/ghostty/config
 link "$HOME_DIR/.config/zed/settings.json" ~/.config/zed/settings.json
+link "$HOME_DIR/.config/zellij/config.kdl" ~/.config/zellij/config.kdl
 
 echo "Done! Restart your terminal."
