@@ -1,0 +1,18 @@
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false  # Don't strip symbols
+lto = false    # Disable link-time optimization (can hide symbols)
+
+[profile.clippy]
+inherits = "dev"
+lto = "off"
+codegen-units = 256
+opt-level = 0
+debug = false
+overflow-checks = false
+panic = "abort"
+debug-assertions = false

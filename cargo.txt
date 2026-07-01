@@ -1,13 +1,15 @@
 bat
-cargo-dist
 cargo-edit
 cargo-expand
 cargo-features-manager
 cargo-machete
+cargo-outdated
 cargo-release
+cargo-show-asm
 cargo-update
 difftastic
 flamegraph
+ripgrep
 samply
 starship
 tokei

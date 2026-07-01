@@ -28,6 +28,11 @@ else
     rustup update
 fi
 
+# --- Cargo config ---
+echo "Linking cargo config..."
+mkdir -p ~/.cargo
+link "$HOME_DIR/.cargo/config.toml" ~/.cargo/config.toml
+
 # --- Cargo packages ---
 echo "Installing cargo packages..."
 while IFS= read -r pkg || [ -n "$pkg" ]; do
@@ -35,18 +40,47 @@ while IFS= read -r pkg || [ -n "$pkg" ]; do
     [ -n "$pkg" ] && cargo install "$pkg" || true
 done < "$DOTS_DIR/cargo.txt"
 
-# --- Fish ---
-if ! command -v fish &> /dev/null; then
-    cargo install --git https://github.com/fish-shell/fish-shell?tag=latest fish
-    sudo sh -c 'which fish >> /etc/shells'
-    chsh -s $(which fish)
-else
-    cargo install --git https://github.com/fish-shell/fish-shell?tag=latest fish
-fi
+# --- Fish shell ---
+setup_fish_shell() {
+    local fish_path
+    fish_path="$(brew --prefix fish)/bin/fish"
+
+    if [ ! -x "$fish_path" ]; then
+        echo "Fish is not installed or not on PATH." >&2
+        return 1
+    fi
+
+    local old_fish_path
+    old_fish_path="$HOME/.cargo/bin/fish"
+
+    if grep -qx "$old_fish_path" /etc/shells; then
+        echo "Removing old Cargo Fish from /etc/shells..."
+        local shells_tmp
+        shells_tmp="$(mktemp)"
+        awk -v old="$old_fish_path" '$0 != old' /etc/shells > "$shells_tmp"
+        sudo cp "$shells_tmp" /etc/shells
+        rm -f "$shells_tmp"
+    fi
+
+    if ! grep -qx "$fish_path" /etc/shells; then
+        echo "Adding Fish to /etc/shells..."
+        echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
+    fi
+
+    if [ "$SHELL" != "$fish_path" ]; then
+        chsh -s "$fish_path"
+    fi
+
+    if command -v launchctl >/dev/null 2>&1; then
+        launchctl setenv SHELL "$fish_path" || true
+    fi
+}
+
+setup_fish_shell
 
 # --- Dotfiles ---
 echo "Linking dotfiles..."
-mkdir -p ~/.config/{fish,ghostty,zed,zellij}
+mkdir -p ~/.config/{fish,ghostty,zed,zellij,helix}
 
 git config --global diff.external difft
 git config --global core.editor "zed --wait"
@@ -56,5 +90,6 @@ link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
 link "$HOME_DIR/.config/ghostty/config" ~/.config/ghostty/config
 link "$HOME_DIR/.config/zed/settings.json" ~/.config/zed/settings.json
 link "$HOME_DIR/.config/zellij/config.kdl" ~/.config/zellij/config.kdl
+link "$HOME_DIR/.config/helix/config.toml" ~/.config/helix/config.toml
 
 echo "Done! Restart your terminal."

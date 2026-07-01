@@ -7,6 +7,19 @@
 // custom settings, run `zed: open default settings` from the
 // command palette (cmd-shift-p / ctrl-shift-p)
 {
+  "cli_default_open_behavior": "existing_window",
+  "icon_theme": {
+    "mode": "dark",
+    "light": "Zed (Default)",
+    "dark": "Zed (Default)",
+  },
+  "code_lens": "on",
+  "project_panel": {
+    "dock": "left",
+  },
+  "git_panel": {
+    "dock": "left",
+  },
   "edit_predictions": {
     "provider": "none",
   },
@@ -47,7 +60,7 @@
     "coloring": "indent_aware",
   },
   "theme": {
-    "mode": "system",
+    "mode": "dark",
     "light": "Zed Legacy: Rosé Pine Dawn",
     "dark": "Zed Legacy: Rosé Pine",
   },
@@ -59,18 +72,24 @@
       "tab_size": 2,
     },
     "JavaScript": {
-      // "language_servers": ["tsgo"],
       "inlay_hints": {
         "enabled": false,
       },
     },
     "TypeScript": {
-      // "language_servers": ["tsgo"],
       "inlay_hints": {
         "enabled": false,
       },
     },
   },
+  "language_servers": [
+    "tsgo",
+    "!vtsls",
+    "!eslint",
+    "!typescript-language-server",
+    "!tailwindcss-language-server",
+    "...",
+  ],
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
@@ -81,17 +100,6 @@
         "cargo": {
           "features": "all",
           "targetDir": true,
-        },
-      },
-    },
-    "vtsls": {
-      "settings": {
-        "typescript": {
-          "tsserver": {
-            "experimental": {
-              "enableProjectDiagnostics": true,
-            },
-          },
         },
       },
     },
@@ -114,22 +122,13 @@
   },
   "disable_ai": true,
   "title_bar": {
-    "show_menus": false,
     "show_onboarding_banner": false,
-    "show_project_items": true,
-    "show_branch_name": true,
-    "show_branch_icon": false,
     "show_sign_in": false,
     "show_user_picture": false,
   },
   "agent": {
     "button": false,
     "enabled": false,
-    "dock": null,
-  },
-  "notification_panel": {
-    "button": false,
-    "dock": null,
   },
   "collaboration_panel": {
     "button": false,

@@ -1,0 +1,35 @@
+keybinds clear-defaults=true {
+    shared {
+        bind "Ctrl Left" { GoToPreviousTab; }
+        bind "Ctrl Right" { GoToNextTab; }
+        bind "Ctrl t" { NewTab; }
+        bind "Ctrl w" { CloseTab; }
+        bind "Ctrl q" { Detach; }
+        bind "Ctrl r" { SwitchToMode "RenameTab"; TabNameInput 0; }
+        bind "Ctrl 1" { GoToTab 1; }
+        bind "Ctrl 2" { GoToTab 2; }
+        bind "Ctrl 3" { GoToTab 3; }
+        bind "Ctrl 4" { GoToTab 4; }
+        bind "Ctrl 5" { GoToTab 5; }
+        bind "Ctrl 6" { GoToTab 6; }
+        bind "Ctrl 7" { GoToTab 7; }
+        bind "Ctrl 8" { GoToTab 8; }
+        bind "Ctrl 9" { GoToTab 9; }
+    }
+
+    renametab {
+        bind "Enter" { SwitchToMode "Normal"; }
+        bind "Esc" { UndoRenameTab; SwitchToMode "Normal"; }
+        bind "Ctrl c" { SwitchToMode "Normal"; }
+    }
+}
+
+theme "default"
+default_layout "compact"
+simplified_ui true
+mouse_mode true
+pane_frames false
+session_name "main"
+attach_to_session true
+show_startup_tips false
+auto_name_tabs true
