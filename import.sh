@@ -50,18 +50,6 @@ setup_fish_shell() {
         return 1
     fi
 
-    local old_fish_path
-    old_fish_path="$HOME/.cargo/bin/fish"
-
-    if grep -qx "$old_fish_path" /etc/shells; then
-        echo "Removing old Cargo Fish from /etc/shells..."
-        local shells_tmp
-        shells_tmp="$(mktemp)"
-        awk -v old="$old_fish_path" '$0 != old' /etc/shells > "$shells_tmp"
-        sudo cp "$shells_tmp" /etc/shells
-        rm -f "$shells_tmp"
-    fi
-
     if ! grep -qx "$fish_path" /etc/shells; then
         echo "Adding Fish to /etc/shells..."
         echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
