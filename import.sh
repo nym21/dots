@@ -17,7 +17,7 @@ if ! command -v brew &> /dev/null; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 echo "Installing brew packages..."
-brew bundle --file="$DOTS_DIR/Brewfile"
+brew bundle install --no-upgrade --file="$DOTS_DIR/Brewfile"
 
 # --- Rust ---
 if ! command -v rustc &> /dev/null; then
