@@ -2,6 +2,7 @@ keybinds clear-defaults=true {
     shared {
         bind "Ctrl Left" { GoToPreviousTab; }
         bind "Ctrl Right" { GoToNextTab; }
+        bind "Ctrl Tab" { GoToNextTab; }
         bind "Ctrl t" { NewTab; }
         bind "Ctrl w" { CloseTab; }
         bind "Ctrl q" { Detach; }
