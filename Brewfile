@@ -1,4 +1,5 @@
 brew "bitcoin"
+brew "cloudflared"
 brew "fish"
 brew "helix"
 
