@@ -4,6 +4,7 @@ brew "fish"
 brew "helix"
 
 cask "iina"
+cask "ghostty"
 cask "mullvad-browser"
 cask "mullvad-vpn"
 cask "oversight"
