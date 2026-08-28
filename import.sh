@@ -23,6 +23,7 @@ if ! command -v brew &> /dev/null; then
 fi
 echo "Updating Homebrew..."
 brew update
+brew cleanup
 echo "Installing and updating brew packages..."
 brew bundle install --file="$DOTS_DIR/Brewfile"
 
