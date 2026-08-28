@@ -33,6 +33,11 @@ echo "Linking cargo config..."
 mkdir -p ~/.cargo
 link "$HOME_DIR/.cargo/config.toml" ~/.cargo/config.toml
 
+# --- Codex ---
+echo "Linking Codex settings..."
+mkdir -p ~/.codex
+link "$HOME_DIR/.codex/config.toml" ~/.codex/config.toml
+
 # --- Cargo packages ---
 echo "Installing cargo packages..."
 while IFS= read -r pkg || [ -n "$pkg" ]; do
@@ -68,7 +73,7 @@ setup_fish_shell
 
 # --- Dotfiles ---
 echo "Linking dotfiles..."
-mkdir -p ~/.config/{fish,ghostty,zed,zellij,helix}
+mkdir -p ~/.config/{fish,ghostty,zed,tmux,helix}
 
 git config --global diff.external difft
 git config --global core.editor "zed --wait"
@@ -77,7 +82,7 @@ link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
 link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
 link "$HOME_DIR/.config/ghostty/config" ~/.config/ghostty/config
 link "$HOME_DIR/.config/zed/settings.json" ~/.config/zed/settings.json
-link "$HOME_DIR/.config/zellij/config.kdl" ~/.config/zellij/config.kdl
+link "$HOME_DIR/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf
 link "$HOME_DIR/.config/helix/config.toml" ~/.config/helix/config.toml
 
 echo "Done! Restart your terminal."

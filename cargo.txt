@@ -14,4 +14,3 @@ samply
 starship
 tokei
 uv
-zellij

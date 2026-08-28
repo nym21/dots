@@ -56,7 +56,6 @@ sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 powernap 0
 # Normal OpenSSH over Tailscale. Tailscale provides private network access;
 # sshd still handles authentication.
 sudo systemsetup -setremotelogin on
-sudo systemsetup -setremoteappleevents off
 
 # Screen Sharing over Tailscale.
 sudo launchctl enable system/com.apple.screensharing
