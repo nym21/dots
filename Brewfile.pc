@@ -1,0 +1,8 @@
+cask "iina"
+cask "ghostty"
+cask "mullvad-browser"
+cask "mullvad-vpn"
+cask "oversight"
+cask "raycast"
+cask "ungoogled-chromium"
+cask "zed"
