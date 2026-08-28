@@ -49,11 +49,11 @@ link "$HOME_DIR/.codex/config.toml" ~/.codex/config.toml
 echo "Installing cargo packages..."
 while IFS= read -r pkg || [ -n "$pkg" ]; do
     echo "Installing ${pkg}..."
-    [ -n "$pkg" ] && cargo install "$pkg" || true
+    [ -n "$pkg" ] && cargo install --locked "$pkg" || true
 done < "$DOTS_DIR/cargo.txt"
 
 echo "Updating cargo packages..."
-cargo install-update --all
+cargo install-update --all --locked
 
 # --- Fish shell ---
 setup_fish_shell() {
