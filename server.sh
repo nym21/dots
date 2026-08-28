@@ -24,9 +24,7 @@ install_sysctl_conf() {
         fi
 
         echo "# dots server sysctl begin"
-        echo "net.inet.tcp.delayed_ack=0"
         echo "kern.ipc.somaxconn=2048"
-        echo "net.inet.tcp.always_keepalive=1"
         echo "# dots server sysctl end"
     } > "$tmp"
 
@@ -36,9 +34,7 @@ install_sysctl_conf() {
 
 # Persistent TCP tuning. /etc/sysctl.conf is read during multi-user boot.
 install_sysctl_conf
-sudo sysctl -w net.inet.tcp.delayed_ack=0
 sudo sysctl -w kern.ipc.somaxconn=2048
-sudo sysctl -w net.inet.tcp.always_keepalive=1
 
 # Cloudflare DNS on the wired service.
 if networksetup -listallnetworkservices | tail -n +2 | grep -Fxq "$NETWORK_SERVICE"; then
