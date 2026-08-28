@@ -2,6 +2,7 @@
 set -e
 
 brew upgrade
+brew cleanup
 
 if launchctl print system/com.local.tailscaled >/dev/null 2>&1; then
     sudo launchctl kickstart -k system/com.local.tailscaled

@@ -15,8 +15,26 @@ if ! command -v brew >/dev/null 2>&1; then
     exit 1
 fi
 
-if brew list --cask tailscale-app >/dev/null 2>&1 || [ -d /Applications/Tailscale.app ] || pgrep -f io.tailscale.ipn.macsys.network-extension >/dev/null 2>&1; then
-    echo "Remove the Tailscale GUI app and reboot before installing tailscaled." >&2
+GUI_CONFLICT=0
+
+if brew list --cask tailscale-app >/dev/null 2>&1; then
+    echo "Tailscale GUI conflict: Homebrew still records the tailscale-app cask." >&2
+    GUI_CONFLICT=1
+fi
+
+if [ -d /Applications/Tailscale.app ]; then
+    echo "Tailscale GUI conflict: /Applications/Tailscale.app still exists." >&2
+    GUI_CONFLICT=1
+fi
+
+if pgrep -f io.tailscale.ipn.macsys.network-extension >/dev/null 2>&1; then
+    echo "Tailscale GUI conflict: the system extension is still running:" >&2
+    pgrep -lf io.tailscale.ipn.macsys.network-extension >&2 || true
+    GUI_CONFLICT=1
+fi
+
+if [ "$GUI_CONFLICT" -ne 0 ]; then
+    echo "Remove the reported GUI component and reboot before installing tailscaled." >&2
     exit 1
 fi
 
