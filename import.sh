@@ -85,6 +85,7 @@ setup_fish_shell
 # --- Dotfiles ---
 echo "Linking dotfiles..."
 mkdir -p ~/.config/{fish,ghostty,zed,tmux,helix}
+mkdir -p "$HOME/Library/Application Support/com.mitchellh.ghostty"
 
 git config --global diff.external difft
 git config --global core.editor "zed --wait"
@@ -92,6 +93,7 @@ git config --global core.editor "zed --wait"
 link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
 link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
 link "$HOME_DIR/.config/ghostty/config" ~/.config/ghostty/config
+link "$HOME_DIR/.config/ghostty/config" "$HOME/Library/Application Support/com.mitchellh.ghostty/config"
 link "$HOME_DIR/.config/zed/settings.json" ~/.config/zed/settings.json
 link "$HOME_DIR/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf
 link "$HOME_DIR/.config/helix/config.toml" ~/.config/helix/config.toml
@@ -142,6 +144,9 @@ sudo mdutil -a -i off
 # Keep the machine reachable while allowing the display to sleep.
 sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 powernap 0
 
+# Mount external disks without requiring a GUI user login.
+sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount AutomountDisksWithoutUserLogin -bool true
+
 # Normal OpenSSH over Tailscale. Tailscale provides private network access;
 # sshd still handles authentication.
 sudo systemsetup -setremotelogin on
@@ -150,7 +155,19 @@ sudo systemsetup -setremotelogin on
 sudo launchctl enable system/com.apple.screensharing
 sudo launchctl kickstart -k system/com.apple.screensharing
 
+# SMB File Sharing.
+sudo launchctl enable system/com.apple.smbd
+if ! sudo launchctl print system/com.apple.smbd >/dev/null 2>&1; then
+    sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist
+fi
+sudo launchctl kickstart -k system/com.apple.smbd
+
 # Firewall.
 sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
 
-echo "Done! Restart your terminal."
+echo
+echo "Import complete. Manual steps remaining:"
+echo "  - System Settings > General > Sharing > Remote Login > Allow full disk access for remote users."
+echo "  - Configure File Sharing folders and users if needed; do not enable guest access."
+echo "  - One-time per data disk, if needed: sudo chown $(id -un):staff \"/Volumes/<volume>\""
+echo "  - Restart your terminal."

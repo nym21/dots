@@ -59,3 +59,5 @@ window-colorspace = "display-p3"
 keybind = shift+enter=text:\n
 
 scrollback-limit = 100_000_000
+
+shell-integration-features = ssh-env,ssh-terminfo
