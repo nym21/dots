@@ -105,6 +105,8 @@ git config --global diff.external difft
 link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
 link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
 link "$HOME_DIR/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf
+link "$HOME_DIR/.config/tmux/save-layout.sh" ~/.config/tmux/save-layout.sh
+link "$HOME_DIR/.config/tmux/restore-layout.sh" ~/.config/tmux/restore-layout.sh
 link "$HOME_DIR/.config/helix/config.toml" ~/.config/helix/config.toml
 
 if [ "$ROLE" = "pc" ]; then
