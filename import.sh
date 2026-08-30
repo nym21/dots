@@ -38,7 +38,7 @@ echo "Installing and updating Homebrew formulae..."
 brew bundle install --file="$DOTS_DIR/Brewfile"
 if [ "$ROLE" = "pc" ]; then
     echo "Installing and updating Homebrew casks..."
-    brew bundle install --file="$DOTS_DIR/Brewfile.pc"
+    brew bundle install --file="$DOTS_DIR/Brewfile.cask"
 fi
 
 # --- Rust ---

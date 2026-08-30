@@ -12,5 +12,3 @@ flamegraph
 ripgrep
 samply
 starship
-tokei
-uv

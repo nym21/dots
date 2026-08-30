@@ -1,5 +1,8 @@
 brew "bitcoin"
 brew "cloudflared"
 brew "fish"
+brew "gh"
 brew "helix"
+brew "node"
 brew "tmux"
+brew "uv"
