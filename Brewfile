@@ -1,3 +1,4 @@
+brew "bat"
 brew "bitcoin"
 brew "cloudflared"
 brew "fish"

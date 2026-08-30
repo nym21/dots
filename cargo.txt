@@ -1,4 +1,3 @@
-bat
 cargo-edit
 cargo-expand
 cargo-features-manager
