@@ -39,6 +39,12 @@ brew bundle install --file="$DOTS_DIR/Brewfile"
 if [ "$ROLE" = "pc" ]; then
     echo "Installing and updating Homebrew casks..."
     brew bundle install --file="$DOTS_DIR/Brewfile.cask"
+
+    # Configure Raycast before launch so it cannot cache the default opt-ins.
+    echo "Disabling Raycast analytics and error reporting..."
+    pkill -x Raycast 2>/dev/null || true
+    defaults write com.raycast.macos analytics_optOut -bool true
+    defaults write com.raycast.macos errorReporting_optOut -bool true
 fi
 
 # --- Rust ---
@@ -123,6 +129,13 @@ else
 fi
 
 if [ "$ROLE" = "server" ]; then
+    SERVER_USER="$(id -un)"
+
+    if ! id -Gn "$SERVER_USER" | tr ' ' '\n' | grep -qx admin; then
+        echo "Server user '$SERVER_USER' must be an administrator for full-volume file sharing." >&2
+        exit 1
+    fi
+
     # --- Headless macOS system ---
     NETWORK_SERVICES=("Ethernet" "USB 10/100/1G/2.5G LAN")
     DNS_SERVERS=("1.1.1.1" "1.0.0.1")
@@ -172,6 +185,15 @@ if [ "$ROLE" = "server" ]; then
     # Mount external disks without requiring a GUI user login.
     sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount AutomountDisksWithoutUserLogin -bool true
 
+    # Every non-system volume attached to this server is a server-owned data disk.
+    # Claim only the volume root; preserve ownership within existing contents.
+    for volume in /Volumes/*; do
+        [ -d "$volume" ] && [ ! -L "$volume" ] || continue
+        [ "$(basename "$volume")" = "Macintosh HD" ] && continue
+        echo "Setting ownership of '$volume' to $SERVER_USER:staff..."
+        sudo chown "$SERVER_USER:staff" "$volume"
+    done
+
     # Normal OpenSSH over Tailscale. Tailscale provides private network access;
     # sshd still handles authentication.
     sudo systemsetup -setremotelogin on
@@ -181,6 +203,7 @@ if [ "$ROLE" = "server" ]; then
     sudo launchctl kickstart -k system/com.apple.screensharing
 
     # SMB File Sharing.
+    sudo sysadminctl -smbGuestAccess off
     sudo launchctl enable system/com.apple.smbd
     if ! sudo launchctl print system/com.apple.smbd >/dev/null 2>&1; then
         sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist
@@ -207,8 +230,7 @@ echo "$ROLE import complete."
 if [ "$ROLE" = "server" ]; then
     echo "Manual steps remaining:"
     echo "  - System Settings > General > Sharing > Remote Login > Allow full disk access for remote users."
-    echo "  - Configure File Sharing folders and users if needed; do not enable guest access."
-    echo "  - One-time per data disk, if needed: sudo chown $(id -un):staff \"/Volumes/<volume>\""
+    echo "  - System Settings > General > Sharing > File Sharing > Allow full disk access for all users."
     echo "  - Restart your terminal."
 else
     echo "Manual steps remaining:"
