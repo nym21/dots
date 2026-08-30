@@ -231,7 +231,7 @@ if [ "$ROLE" = "server" ]; then
     echo "Manual steps remaining:"
     echo "  - System Settings > General > Sharing > Remote Login > Allow full disk access for remote users."
     echo "  - System Settings > General > Sharing > File Sharing > Allow full disk access for all users."
-    echo "  - Restart your terminal."
+    echo "  - Run in your current terminal: exec fish -l"
 else
     echo "Manual steps remaining:"
     echo "  - Enable Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode > Turn On & Restart."
