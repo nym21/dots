@@ -1,0 +1,118 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    echo "usage: $0 [ssh-options] user@tailscale-host" >&2
+    exit 2
+}
+
+[ "$#" -gt 0 ] || usage
+
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "error: this wrapper currently supports macOS only" >&2
+    exit 1
+fi
+
+if ! command -v brew >/dev/null 2>&1; then
+    echo "error: Homebrew is required to bootstrap the open-source Tailscale binaries" >&2
+    exit 1
+fi
+
+formula_prefix="$(brew --prefix tailscale)"
+tailscale_bin="$formula_prefix/bin/tailscale"
+tailscaled_bin="$formula_prefix/bin/tailscaled"
+
+if [ ! -x "$tailscale_bin" ] || [ ! -x "$tailscaled_bin" ]; then
+    echo "Installing the official Tailscale CLI formula (no background service)..." >&2
+    brew install --formula tailscale
+    formula_prefix="$(brew --prefix tailscale)"
+    tailscale_bin="$formula_prefix/bin/tailscale"
+    tailscaled_bin="$formula_prefix/bin/tailscaled"
+fi
+
+if [ ! -x "$tailscale_bin" ] || [ ! -x "$tailscaled_bin" ]; then
+    echo "error: the Tailscale formula did not provide tailscale and tailscaled" >&2
+    exit 1
+fi
+
+state_dir="$HOME/Library/Application Support/tailscale-userspace-ssh"
+runtime_dir="$HOME/.cache/tailscale-userspace-ssh"
+socket="$runtime_dir/tailscaled.sock"
+state="$state_dir/tailscaled.state"
+log="$state_dir/tailscaled.log"
+lock="$runtime_dir/session.lock"
+pid_file="$lock/pid"
+
+umask 077
+mkdir -p "$state_dir" "$runtime_dir"
+
+if ! mkdir "$lock" 2>/dev/null; then
+    if [ -r "$pid_file" ]; then
+        old_pid="$(sed -n '1p' "$pid_file")"
+        case "$old_pid" in
+            *[!0-9]*|'') old_pid='' ;;
+        esac
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            echo "error: another userspace Tailscale SSH session is already running (PID $old_pid)" >&2
+            exit 1
+        fi
+    fi
+    rmdir "$lock" 2>/dev/null || {
+        echo "error: could not clear stale session lock: $lock" >&2
+        exit 1
+    }
+    mkdir "$lock"
+fi
+
+daemon_pid=''
+
+cleanup() {
+    trap - EXIT HUP INT TERM
+    if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
+        kill "$daemon_pid" 2>/dev/null || true
+        wait "$daemon_pid" 2>/dev/null || true
+    fi
+    rm -f "$socket" "$pid_file"
+    rmdir "$lock" 2>/dev/null || true
+}
+
+trap cleanup EXIT HUP INT TERM
+rm -f "$socket"
+
+"$tailscaled_bin" \
+    --tun=userspace-networking \
+    --port=0 \
+    --socket="$socket" \
+    --state="$state" \
+    >"$log" 2>&1 &
+daemon_pid=$!
+printf '%s\n' "$daemon_pid" >"$pid_file"
+
+attempt=0
+while [ ! -S "$socket" ]; do
+    if ! kill -0 "$daemon_pid" 2>/dev/null; then
+        echo "error: userspace tailscaled failed to start; log follows:" >&2
+        tail -n 40 "$log" >&2 || true
+        exit 1
+    fi
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 100 ]; then
+        echo "error: timed out waiting for userspace tailscaled; log: $log" >&2
+        exit 1
+    fi
+    sleep 0.1
+done
+
+# On the first run this prints an authorization URL and waits. The encrypted
+# node identity is then reused from the private state file on future runs.
+"$tailscale_bin" --socket="$socket" up --accept-dns=false
+
+proxy_command="$tailscale_bin --socket=$socket nc %h %p"
+
+set +e
+/usr/bin/ssh -o "ProxyCommand=$proxy_command" "$@"
+ssh_status=$?
+set -e
+
+exit "$ssh_status"

@@ -104,10 +104,11 @@ setup_fish_shell
 
 # --- Dotfiles ---
 echo "Linking dotfiles..."
-mkdir -p ~/.config/{fish,tmux,helix}
+mkdir -p ~/.config/{fish,tmux,helix} ~/.local/bin
 
 git config --global diff.external difft
 
+link "$DOTS_DIR/tssh" ~/.local/bin/tssh
 link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
 link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
 link "$HOME_DIR/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf
