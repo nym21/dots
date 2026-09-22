@@ -26,6 +26,8 @@ trap 'exit 1' HUP INT TERM
 
 printf 'version\t1\n' > "$tmp"
 
+window_ids="$(tmux list-windows -t "=$SESSION" -F '#{window_id}')"
+[ -n "$window_ids" ] || exit 1
 while IFS= read -r window_id; do
     window_index="$(tmux display-message -p -t "$window_id" '#{window_index}')"
     window_active="$(tmux display-message -p -t "$window_id" '#{window_active}')"
@@ -40,6 +42,8 @@ while IFS= read -r window_id; do
         "$(encode "$window_name")" \
         "$window_layout" >> "$tmp"
 
+    pane_ids="$(tmux list-panes -t "$window_id" -F '#{pane_id}')"
+    [ -n "$pane_ids" ] || exit 1
     while IFS= read -r pane_id; do
         pane_active="$(tmux display-message -p -t "$pane_id" '#{pane_active}')"
         pane_path="$(tmux display-message -p -t "$pane_id" '#{pane_current_path}')"
@@ -48,8 +52,8 @@ while IFS= read -r window_id; do
         printf 'pane\t%s\t%s\n' \
             "$pane_active" \
             "$(encode "$pane_path")" >> "$tmp"
-    done < <(tmux list-panes -t "$window_id" -F '#{pane_id}')
-done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
+    done <<< "$pane_ids"
+done <<< "$window_ids"
 
 mv "$tmp" "$STATE_FILE"
 tmp=""

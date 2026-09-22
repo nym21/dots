@@ -48,16 +48,18 @@ umask 077
 mkdir -p "$state_dir" "$runtime_dir"
 
 if ! mkdir "$lock" 2>/dev/null; then
-    if [ -r "$pid_file" ]; then
-        old_pid="$(sed -n '1p' "$pid_file")"
-        case "$old_pid" in
-            *[!0-9]*|'') old_pid='' ;;
-        esac
-        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            echo "error: another userspace Tailscale SSH session is already running (PID $old_pid)" >&2
+    old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    case "$old_pid" in
+        *[!0-9]*|'')
+            echo "error: session lock has no valid PID; another session may be starting: $lock" >&2
             exit 1
-        fi
+            ;;
+    esac
+    if kill -0 "$old_pid" 2>/dev/null; then
+        echo "error: another userspace Tailscale SSH session is already running (PID $old_pid)" >&2
+        exit 1
     fi
+    rm -f "$pid_file"
     rmdir "$lock" 2>/dev/null || {
         echo "error: could not clear stale session lock: $lock" >&2
         exit 1

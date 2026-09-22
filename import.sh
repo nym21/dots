@@ -20,8 +20,16 @@ DOTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOME_DIR="$DOTS_DIR/home"
 
 link() {
-    [ -e "$2" ] && [ ! -L "$2" ] && mv "$2" "$2.backup"
-    [ -L "$2" ] && rm "$2"
+    if [ -L "$2" ]; then
+        [ "$(readlink "$2")" = "$1" ] && return 0
+        rm "$2"
+    elif [ -e "$2" ]; then
+        if [ -e "$2.backup" ] || [ -L "$2.backup" ]; then
+            echo "Refusing to overwrite existing backup: $2.backup" >&2
+            return 1
+        fi
+        mv "$2" "$2.backup"
+    fi
     ln -s "$1" "$2"
 }
 
@@ -39,6 +47,9 @@ brew bundle install --file="$DOTS_DIR/Brewfile"
 if [ "$ROLE" = "pc" ]; then
     echo "Installing and updating Homebrew casks..."
     brew bundle install --file="$DOTS_DIR/Brewfile.cask"
+else
+    echo "Installing and updating server tools..."
+    brew bundle install --file="$DOTS_DIR/Brewfile.server"
 fi
 
 # --- Rust ---
@@ -63,12 +74,10 @@ link "$HOME_DIR/.codex/config.toml" ~/.codex/config.toml
 # --- Cargo packages ---
 echo "Installing cargo packages..."
 while IFS= read -r pkg || [ -n "$pkg" ]; do
+    [ -n "$pkg" ] || continue
     echo "Installing ${pkg}..."
-    [ -n "$pkg" ] && cargo install --locked "$pkg" || true
+    cargo install --locked "$pkg"
 done < "$DOTS_DIR/cargo.txt"
-
-echo "Updating cargo packages..."
-cargo install-update --all --locked
 
 # --- Fish shell ---
 setup_fish_shell() {
@@ -101,6 +110,7 @@ echo "Linking dotfiles..."
 mkdir -p ~/.config/{fish,tmux,helix} ~/.local/bin
 
 git config --global diff.external difft
+git config --global core.editor hx
 
 link "$DOTS_DIR/tssh" ~/.local/bin/tssh
 link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
@@ -111,16 +121,9 @@ link "$HOME_DIR/.config/tmux/restore-layout.sh" ~/.config/tmux/restore-layout.sh
 link "$HOME_DIR/.config/helix/config.toml" ~/.config/helix/config.toml
 
 if [ "$ROLE" = "pc" ]; then
-    mkdir -p ~/.config/{ghostty,zed}
-    mkdir -p "$HOME/Library/Application Support/com.mitchellh.ghostty"
-
+    mkdir -p ~/.config/zed
     git config --global core.editor "zed --wait"
-
-    link "$HOME_DIR/.config/ghostty/config" ~/.config/ghostty/config
-    link "$HOME_DIR/.config/ghostty/config" "$HOME/Library/Application Support/com.mitchellh.ghostty/config"
     link "$HOME_DIR/.config/zed/settings.json" ~/.config/zed/settings.json
-else
-    git config --global core.editor hx
 fi
 
 if [ "$ROLE" = "server" ]; then
@@ -204,6 +207,37 @@ if [ "$ROLE" = "server" ]; then
         sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist
     fi
     sudo launchctl kickstart -k system/com.apple.smbd
+
+    # Disable unused wireless radios. Refuse to turn off the server's active
+    # network path so a remote import cannot strand the machine.
+    WIFI_DEVICE="$(
+        networksetup -listallhardwareports |
+            awk '
+                $0 == "Hardware Port: Wi-Fi" || $0 == "Hardware Port: AirPort" {
+                    getline
+                    sub(/^Device: /, "")
+                    print
+                    exit
+                }
+            '
+    )"
+    if [ -n "$WIFI_DEVICE" ]; then
+        DEFAULT_ROUTE="$(route -n get default)"
+        DEFAULT_INTERFACE="$(awk '$1 == "interface:" { print $2; exit }' <<< "$DEFAULT_ROUTE")"
+        if [ -z "$DEFAULT_INTERFACE" ] || [ "$DEFAULT_INTERFACE" = "$WIFI_DEVICE" ]; then
+            echo "Refusing to disable Wi-Fi: no other default network interface was confirmed." >&2
+            echo "Connect and verify Ethernet, then run the server import again." >&2
+            exit 1
+        fi
+
+        sudo networksetup -setairportpower "$WIFI_DEVICE" off
+        echo "Wi-Fi: $(networksetup -getairportpower "$WIFI_DEVICE")"
+    else
+        echo "Skipping Wi-Fi: no wireless interface was found." >&2
+    fi
+
+    blueutil --power off
+    echo "Bluetooth power: $(blueutil --power)"
 fi
 
 # Firewall.
