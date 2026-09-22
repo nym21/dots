@@ -4,8 +4,8 @@ set -e
 DOTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 "$DOTS_DIR/import.sh" server
 
-echo "Installing Bluetooth control..."
-brew install blueutil
+echo "Installing server tools..."
+brew install blueutil helix mactop
 
 # Disable unused wireless radios. Refuse to turn off the server's active
 # network path so a remote import cannot strand the machine.
