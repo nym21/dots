@@ -23,41 +23,53 @@ The server import keeps SSH, Screen Sharing, and SMB enabled. It disables
 Spotlight indexing on mounted volumes, Content Caching, printer sharing, and
 remote Apple Events. It also prevents idle sleep and enables restart after power
 loss. Screen Sharing and SMB start on demand without being restarted on reruns.
+The import runs the read-only server audit at the end. Fish is configured as the
+login shell for future terminal and SSH sessions; `exec fish -l` is only needed
+to switch the terminal that launched the import immediately.
 
-## Settings to finish in macOS 27
+## Finish once in System Settings
 
-Configure these once for the server's login user, using Screen Sharing if needed,
-then log out of the desktop. Recheck them after major macOS upgrades.
+Use the mini's desktop or Screen Sharing. Skip items already completed.
 
-- **General > AirDrop & Continuity:** turn off Handoff and AirPlay Receiver;
-  set AirDrop receiving to No One.
-- **General > Sharing:** turn off Media Sharing and Bluetooth Sharing. Keep
-  Remote Login, Screen Sharing, and File Sharing enabled. In Remote Login,
-  enable full disk access for remote users; in File Sharing, enable full disk
-  access for all users if using the intended full-volume administrator shares.
-- **Siri:** turn off Siri. Under **Notifications**, turn off notification
-  summaries. If Mail or Messages were configured previously, turn off their
-  summaries too. Apple Intelligence controls are feature-specific in macOS 27;
-  use **Screen Time > Content & Privacy > Siri** (or **Intelligence & Siri**,
-  depending on language and Siri version) to restrict remaining AI features.
-- **Privacy & Security > Analytics & Improvements:** turn off optional analytics
-  sharing and improvement contributions.
-- **General > Login Items & Extensions:** remove unneeded login items and turn
-  off unneeded Background App Activity. Preserve services needed by the server.
+1. **General > Device Management:** install **Headless Mac mini server** from
+   [server.mobileconfig](server.mobileconfig). Local setup opens the file if
+   the profile is missing. After SSH setup, open the file on the mini itself.
+2. **General > Sharing:** enable File Sharing's **Allow full disk access for all
+   users**, and Remote Login's **Allow full disk access for remote users** if
+   setup was run locally. Turn off **Media Sharing** and **Bluetooth Sharing**.
+3. **Notifications:** turn off notification summaries. If Mail or Messages was
+   previously configured, turn off automatic summaries there too.
+4. **Privacy & Security > Analytics & Improvements:** turn off any remaining
+   optional improvement contributions.
+5. **General > Login Items & Extensions:** disable unused third-party login
+   items and Background App Activity. Keep the server's workload services.
 
-These settings use Apple's supported UI because this setup does not have a
-verified macOS 27 command-line equivalent for them. Turning off a feature does
-not necessarily remove its process from the process list.
+Then log out of the desktop. Fish applies automatically to new terminal/SSH
+sessions. Recheck these settings after a major macOS upgrade.
 
-Apple references: [sharing](https://support.apple.com/en-lk/guide/mac-help/mchl26e04309/mac),
-[AirDrop and Continuity](https://support.apple.com/en-me/guide/mac-help/mchl6a407f99/mac),
-[Siri and Apple Intelligence](https://support.apple.com/en-az/guide/mac-help/mchlb2e44f94/mac),
-[background app activity](https://support.apple.com/en-me/125671),
-[analytics](https://support.apple.com/en-za/guide/mac-help/mchl211c911f/mac).
+The profile configures Handoff, AirDrop, AirPlay Receiver, diagnostic submission,
+Siri, external AI integrations, and supported Apple Intelligence features off.
+It adds no background service. Its Mail summary restriction covers manually
+requested summaries, not automatic summaries, which remain in the list above.
+Reinstall the profile after changing `server.mobileconfig`; setup checks whether
+its identifier is installed, not whether its contents have changed. Remove it
+from Device Management to release its restrictions.
+
+macOS requires approval in System Settings to install local configuration
+profiles. Full Disk Access requires separate consent on these unmanaged Macs;
+the initial setup check covers the process running setup, not File Sharing.
+No TCC database edits or undocumented preference writes are used for these
+settings. Turning a feature off does not guarantee its process disappears.
+
+Apple references: [profile installation](https://support.apple.com/guide/mac-help/mh35561/mac),
+[profile restrictions](https://developer.apple.com/documentation/devicemanagement/restrictions),
+[managed privacy permissions](https://developer.apple.com/documentation/devicemanagement/privacypreferencespolicycontrol),
+[background app activity](https://support.apple.com/en-me/125671).
 
 ## Audit and verify
 
-Run `./server-audit.sh` on each mini before and after cleanup. It reports service
+The import runs `./server-audit.sh` automatically; run it separately whenever
+you want another snapshot, including before cleanup. It reports service
 registrations, launchd jobs, indexing status, and a process snapshot; it does not
 stop services or uninstall software. A registered job is not necessarily a
 running process, and a process snapshot alone does not establish sustained load.

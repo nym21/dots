@@ -292,12 +292,39 @@ fi
 echo
 echo "$ROLE import complete."
 if [ "$ROLE" = "server" ]; then
-    echo "Manual steps remaining:"
-    echo "  - System Settings > General > Sharing > Remote Login > Allow full disk access for remote users."
-    echo "  - System Settings > General > Sharing > File Sharing > Allow full disk access for all users."
-    echo "  - Complete the macOS 27 background-feature settings in $DOTS_DIR/SERVER.md."
-    echo "  - Audit services and indexing with $DOTS_DIR/server-audit.sh."
-    echo "  - Run in your current terminal: exec fish -l"
+    echo "Running the read-only server audit..."
+    "$DOTS_DIR/server-audit.sh" || echo "Server audit failed; rerun $DOTS_DIR/server-audit.sh to investigate." >&2
+
+    # macOS requires approval in System Settings to install local profiles.
+    SERVER_PROFILE="$DOTS_DIR/server.mobileconfig"
+    PROFILE_IDENTIFIER="$(plutil -extract PayloadIdentifier raw "$SERVER_PROFILE")"
+    PROFILE_INSTALLED=false
+    if sudo profiles list -type configuration | awk -v identifier="$PROFILE_IDENTIFIER" '
+        $3 == "profileIdentifier:" && $4 == identifier { found = 1 }
+        END { exit !found }
+    '; then
+        PROFILE_INSTALLED=true
+    elif [ -z "${SSH_CONNECTION:-}" ]; then
+        open "$SERVER_PROFILE" || echo "Open $SERVER_PROFILE manually to review and install it." >&2
+    fi
+
+    echo
+    echo "Remaining in System Settings (skip completed items):"
+    if [ "$PROFILE_INSTALLED" = false ]; then
+        echo "  - General > Device Management: install the server profile."
+        echo "    Open $SERVER_PROFILE on this Mac first if it is not listed."
+    fi
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        echo "  - General > Sharing: enable full disk access in File Sharing."
+    else
+        echo "  - General > Sharing: enable full disk access in File Sharing and Remote Login."
+    fi
+    echo "  - General > Sharing: turn off Media Sharing and Bluetooth Sharing."
+    echo "  - Notifications: summaries off; also automatic summaries in Mail/Messages if used."
+    echo "  - Privacy & Security > Analytics & Improvements: remaining optional contributions off."
+    echo "  - General > Login Items & Extensions: unused third-party items off."
+    echo "Details: $DOTS_DIR/SERVER.md"
+    echo "Then log out of the desktop. Fish is ready for new terminal/SSH sessions."
 else
     echo "Manual steps remaining:"
     echo "  - Enable Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode > Turn On & Restart."

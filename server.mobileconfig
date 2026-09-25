@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<!--
+			The Siri and Apple Intelligence restrictions below are deprecated on
+			macOS 26.4+ in favor of declarative management. They remain the
+			documented manually installable compatibility path for this profile.
+		-->
+		<dict>
+			<key>PayloadDescription</key>
+			<string>Disable continuity, nearby sharing, diagnostics, Siri, and Apple Intelligence features.</string>
+			<key>PayloadDisplayName</key>
+			<string>Headless server restrictions</string>
+			<key>PayloadIdentifier</key>
+			<string>com.k.dots.server.restrictions</string>
+			<key>PayloadType</key>
+			<string>com.apple.applicationaccess</string>
+			<key>PayloadUUID</key>
+			<string>E3B11C27-8F94-4B44-9233-0C89032D41E0</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+
+			<key>allowActivityContinuation</key>
+			<false/>
+			<key>allowAirDrop</key>
+			<false/>
+			<key>allowAirPlayIncomingRequests</key>
+			<false/>
+			<key>allowDiagnosticSubmission</key>
+			<false/>
+
+			<key>allowAssistant</key>
+			<false/>
+			<key>allowExternalIntelligenceIntegrations</key>
+			<false/>
+			<key>allowAppleIntelligenceReport</key>
+			<false/>
+			<key>allowGenmoji</key>
+			<false/>
+			<key>allowImagePlayground</key>
+			<false/>
+			<key>allowWritingTools</key>
+			<false/>
+			<key>allowMailSmartReplies</key>
+			<false/>
+			<key>allowMailSummary</key>
+			<false/>
+			<key>allowNotesTranscription</key>
+			<false/>
+			<key>allowNotesTranscriptionSummary</key>
+			<false/>
+			<key>allowSafariSummary</key>
+			<false/>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Restrictions for a headless macOS server.</string>
+	<key>PayloadDisplayName</key>
+	<string>Headless Mac mini server</string>
+	<key>PayloadIdentifier</key>
+	<string>com.k.dots.server</string>
+	<key>PayloadOrganization</key>
+	<string>dots</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>AEC8F728-B5BD-4688-B9EF-9C4B2B8DF32E</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
