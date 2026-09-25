@@ -75,8 +75,11 @@ Run `./locate-mac.sh` on the mini to loop a short sound, or start it remotely:
 ssh -t mini@192.168.1.130 '~/Developer/dots/locate-mac.sh'
 ```
 
-Press Ctrl-C to stop. Playback uses the mini's current audio output and volume;
-it must be unmuted and routed to an audible speaker.
+The script selects the built-in speaker when available, unmutes it, and sets
+its volume to 100%. It falls back to the current output if the built-in speaker
+cannot be selected. Ctrl-C stops playback and restores the previous output,
+volume, and mute state. It uses `switchaudio-osx`, installed by server setup or
+automatically on first use.
 
 ## Audit and verify
 
