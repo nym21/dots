@@ -14,7 +14,7 @@ to a protected system file. If access cannot be verified, it stops with the
 instructions above. This is a read-only probe, not a macOS permission-query API.
 Connect and verify Ethernet before setup disables Wi-Fi and Bluetooth.
 
-For initial Tailscale setup, run `./tailscale-cli.sh` separately and authenticate.
+For initial Tailscale setup, run `./tailscale.sh` separately and authenticate.
 It installs the system daemon so remote access does not require a desktop login.
 Keep the server at the login screen and run persistent workloads as LaunchDaemons
 under their intended user. Do not enable automatic desktop login.
@@ -66,6 +66,17 @@ them only if enabled during setup:
 - **Notifications:** turn off notification summaries.
 - **Privacy & Security > Analytics & Improvements:** turn off other optional
   contributions. The profile blocks automatic diagnostic submission only.
+
+## Locate a mini
+
+Run `./locate-mac.sh` on the mini to loop a short sound, or start it remotely:
+
+```sh
+ssh -t mini@192.168.1.130 '~/Developer/dots/locate-mac.sh'
+```
+
+Press Ctrl-C to stop. Playback uses the mini's current audio output and volume;
+it must be unmuted and routed to an audible speaker.
 
 ## Audit and verify
 
