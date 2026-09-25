@@ -1,6 +1,6 @@
 # Headless Mac mini setup
 
-Before running setup, grant Full Disk Access on the mini:
+Setup requires Full Disk Access on the mini. If the startup access check fails:
 
 - **Over SSH:** System Settings > General > Sharing > Remote Login > Info >
   Allow full disk access for remote users, then reconnect over SSH.
@@ -29,20 +29,11 @@ to switch the terminal that launched the import immediately.
 
 ## Finish once in System Settings
 
-Use the mini's desktop or Screen Sharing. Skip items already completed.
+For a new Mac, use its desktop or Screen Sharing. Skip items already completed.
 
-1. **General > Device Management:** install **Headless Mac mini server** from
-   [server.mobileconfig](server.mobileconfig). Local setup opens the file if
-   the profile is missing. After SSH setup, open the file on the mini itself.
-2. **General > Sharing:** enable File Sharing's **Allow full disk access for all
-   users**, and Remote Login's **Allow full disk access for remote users** if
-   setup was run locally. Turn off **Media Sharing** and **Bluetooth Sharing**.
-3. **Notifications:** turn off notification summaries. If Mail or Messages was
-   previously configured, turn off automatic summaries there too.
-4. **Privacy & Security > Analytics & Improvements:** turn off any remaining
-   optional improvement contributions.
-5. **General > Login Items & Extensions:** disable unused third-party login
-   items and Background App Activity. Keep the server's workload services.
+In **General > Device Management**, install **Headless Mac mini server** from
+[server.mobileconfig](server.mobileconfig). Local setup opens the file if
+the profile is missing. After SSH setup, open the file on the mini itself.
 
 Then log out of the desktop. Fish applies automatically to new terminal/SSH
 sessions. Recheck these settings after a major macOS upgrade.
@@ -50,21 +41,31 @@ sessions. Recheck these settings after a major macOS upgrade.
 The profile configures Handoff, AirDrop, AirPlay Receiver, diagnostic submission,
 Siri, external AI integrations, and supported Apple Intelligence features off.
 It adds no background service. Its Mail summary restriction covers manually
-requested summaries, not automatic summaries, which remain in the list above.
+requested summaries, not automatic summaries; Mail and Messages need no setup
+on a fresh server without those accounts configured.
 Reinstall the profile after changing `server.mobileconfig`; setup checks whether
 its identifier is installed, not whether its contents have changed. Remove it
 from Device Management to release its restrictions.
 
 macOS requires approval in System Settings to install local configuration
-profiles. Full Disk Access requires separate consent on these unmanaged Macs;
-the initial setup check covers the process running setup, not File Sharing.
+profiles. The profile does not modify Full Disk Access; the initial setup check
+covers the process running setup, not File Sharing.
 No TCC database edits or undocumented preference writes are used for these
 settings. Turning a feature off does not guarantee its process disappears.
 
 Apple references: [profile installation](https://support.apple.com/guide/mac-help/mh35561/mac),
 [profile restrictions](https://developer.apple.com/documentation/devicemanagement/restrictions),
-[managed privacy permissions](https://developer.apple.com/documentation/devicemanagement/privacypreferencespolicycontrol),
-[background app activity](https://support.apple.com/en-me/125671).
+[managed privacy permissions](https://developer.apple.com/documentation/devicemanagement/privacypreferencespolicycontrol).
+
+## Optional cleanup
+
+These settings are not applied by the profile. On a fresh headless Mac, review
+them only if enabled during setup:
+
+- **General > Sharing:** turn off Media Sharing and Bluetooth Sharing.
+- **Notifications:** turn off notification summaries.
+- **Privacy & Security > Analytics & Improvements:** turn off other optional
+  contributions. The profile blocks automatic diagnostic submission only.
 
 ## Audit and verify
 
@@ -74,11 +75,8 @@ registrations, launchd jobs, indexing status, and a process snapshot; it does no
 stop services or uninstall software. A registered job is not necessarily a
 running process, and a process snapshot alone does not establish sustained load.
 
-Remove confirmed unused third-party services through their owning application
-or service manager. Keep required Tailscale, tunnel, and workload services. Do
-not disable Apple daemons indiscriminately: DNS, logging, security, and update
-services remain necessary. Use CPU activity, disk activity, and memory pressure
-to decide whether further cleanup is useful.
+Use sustained CPU activity, disk activity, and memory pressure to decide whether
+further cleanup is useful.
 
 After attaching a new data disk, check `mdutil -as`. Disable indexing for that
 specific volume if needed with `sudo mdutil -i off "/Volumes/your-data-disk"`.

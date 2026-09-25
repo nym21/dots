@@ -309,22 +309,15 @@ if [ "$ROLE" = "server" ]; then
     fi
 
     echo
-    echo "Remaining in System Settings (skip completed items):"
     if [ "$PROFILE_INSTALLED" = false ]; then
+        echo "Remaining in System Settings:"
         echo "  - General > Device Management: install the server profile."
         echo "    Open $SERVER_PROFILE on this Mac first if it is not listed."
-    fi
-    if [ -n "${SSH_CONNECTION:-}" ]; then
-        echo "  - General > Sharing: enable full disk access in File Sharing."
     else
-        echo "  - General > Sharing: enable full disk access in File Sharing and Remote Login."
+        echo "Server profile is already installed."
     fi
-    echo "  - General > Sharing: turn off Media Sharing and Bluetooth Sharing."
-    echo "  - Notifications: summaries off; also automatic summaries in Mail/Messages if used."
-    echo "  - Privacy & Security > Analytics & Improvements: remaining optional contributions off."
-    echo "  - General > Login Items & Extensions: unused third-party items off."
-    echo "Details: $DOTS_DIR/SERVER.md"
-    echo "Then log out of the desktop. Fish is ready for new terminal/SSH sessions."
+    echo "Optional cleanup: $DOTS_DIR/SERVER.md"
+    echo "Then log out of the desktop."
 else
     echo "Manual steps remaining:"
     echo "  - Enable Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode > Turn On & Restart."
