@@ -75,11 +75,10 @@ Run `./locate-mac.sh` on the mini to loop a short sound, or start it remotely:
 ssh -t mini@192.168.1.130 '~/Developer/dots/locate-mac.sh'
 ```
 
-The script selects the built-in speaker when available, unmutes it, and sets
-its volume to 100%. It falls back to the current output if the built-in speaker
-cannot be selected. Ctrl-C stops playback and restores the previous output,
-volume, and mute state. It uses `switchaudio-osx`, installed by server setup or
-automatically on first use.
+The script downloads nothing. It unmutes the current output and sets its volume
+to 100%. If `SwitchAudioSource` is already installed, it prefers the built-in
+speaker; otherwise, select it in **System Settings > Sound > Output** if needed.
+Ctrl-C stops playback and restores the previous output, volume, and mute state.
 
 ## Audit and verify
 
