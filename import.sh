@@ -215,7 +215,7 @@ if [ "$ROLE" = "server" ]; then
     else
         echo "Content Caching is already disabled."
     fi
-    sudo cupsctl -h localhost --no-share-printers
+    sudo cupsctl -h /private/var/run/cupsd --no-share-printers
 
     # Mount external disks without requiring a GUI user login.
     sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount AutomountDisksWithoutUserLogin -bool true
