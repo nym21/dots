@@ -16,8 +16,25 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
 fi
 
+if [ "$ROLE" = "server" ]; then
+    sudo -v
+    # Probe an actual read: file mode checks do not establish Full Disk Access.
+    # sudo handles Unix permissions; macOS privacy checks still apply.
+    if ! sudo /bin/dd if="/Library/Application Support/com.apple.TCC/TCC.db" \
+        of=/dev/null bs=1 count=1 >/dev/null 2>&1; then
+        echo "Cannot verify Full Disk Access. Server setup has not started." >&2
+        echo "Local terminal: System Settings > Privacy & Security > Full Disk Access." >&2
+        echo "  Enable your terminal app, then quit and reopen it." >&2
+        echo "SSH: System Settings > General > Sharing > Remote Login > Info." >&2
+        echo "  Enable Allow full disk access for remote users, then reconnect." >&2
+        exit 1
+    fi
+fi
+
 DOTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOME_DIR="$DOTS_DIR/home"
+
+mkdir -p "$HOME/Developer"
 
 link() {
     if [ -L "$2" ]; then
@@ -35,8 +52,10 @@ link() {
 
 # --- Homebrew ---
 if ! command -v brew &> /dev/null; then
-    echo "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [ ! -x /opt/homebrew/bin/brew ]; then
+        echo "Installing Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
     eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 echo "Updating Homebrew..."
@@ -189,7 +208,13 @@ if [ "$ROLE" = "server" ]; then
 
     # Disable unused sharing features through their supported controls.
     sudo systemsetup -setremoteappleevents off
-    sudo AssetCacheManagerUtil deactivate
+    CONTENT_CACHE_STATUS="$(AssetCacheManagerUtil -j status)"
+    CONTENT_CACHE_ACTIVATED="$(plutil -extract result.Activated raw -expect bool - <<< "$CONTENT_CACHE_STATUS")"
+    if [ "$CONTENT_CACHE_ACTIVATED" = true ]; then
+        sudo AssetCacheManagerUtil deactivate
+    else
+        echo "Content Caching is already disabled."
+    fi
     sudo cupsctl -h localhost --no-share-printers
 
     # Mount external disks without requiring a GUI user login.

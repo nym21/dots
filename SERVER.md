@@ -1,7 +1,17 @@
 # Headless Mac mini setup
 
+Before running setup, grant Full Disk Access on the mini:
+
+- **Over SSH:** System Settings > General > Sharing > Remote Login > Info >
+  Allow full disk access for remote users, then reconnect over SSH.
+- **In a local terminal:** System Settings > Privacy & Security > Full Disk
+  Access > enable the terminal app, then quit and reopen it.
+
 Run `./import-server.sh` as the server's administrator, without `sudo`.
-The terminal running setup needs Full Disk Access for macOS sharing controls.
+The script uses `sudo` where needed; it does not grant macOS Full Disk Access.
+Before making setup changes, it authenticates with `sudo` and checks read access
+to a protected system file. If access cannot be verified, it stops with the
+instructions above. This is a read-only probe, not a macOS permission-query API.
 Connect and verify Ethernet before setup disables Wi-Fi and Bluetooth.
 
 For initial Tailscale setup, run `./tailscale-cli.sh` separately and authenticate.
