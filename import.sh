@@ -47,6 +47,12 @@ brew bundle install --file="$DOTS_DIR/Brewfile"
 if [ "$ROLE" = "pc" ]; then
     echo "Installing and updating Homebrew casks..."
     brew bundle install --file="$DOTS_DIR/Brewfile.cask"
+
+    # Configure Raycast before launch so it cannot cache the default opt-ins.
+    echo "Disabling Raycast analytics and error reporting..."
+    pkill -x Raycast 2>/dev/null || true
+    defaults write com.raycast.macos analytics_optOut -bool true
+    defaults write com.raycast.macos errorReporting_optOut -bool true
 else
     echo "Installing and updating server tools..."
     brew bundle install --file="$DOTS_DIR/Brewfile.server"

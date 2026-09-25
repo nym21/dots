@@ -1,6 +1,6 @@
 cask "codex"
 cask "iina"
 cask "oversight"
-cask "abue-ammar/tinycast/tinycast"
+cask "raycast"
 cask "transmission"
 cask "zed"
