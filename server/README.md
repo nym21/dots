@@ -1,5 +1,7 @@
 # Headless Mac mini setup
 
+Commands below run from the repository root unless stated otherwise.
+
 Setup requires Full Disk Access on the mini. If the startup access check fails:
 
 - **Over SSH:** System Settings > General > Sharing > Remote Login > Info >
@@ -7,17 +9,22 @@ Setup requires Full Disk Access on the mini. If the startup access check fails:
 - **In a local terminal:** System Settings > Privacy & Security > Full Disk
   Access > enable the terminal app, then quit and reopen it.
 
-Run `./import-server.sh` as the server's administrator, without `sudo`.
+From the repository root, run `./shared/import.sh server` as the server's administrator, without `sudo`.
 The script uses `sudo` where needed; it does not grant macOS Full Disk Access.
 Before making setup changes, it authenticates with `sudo` and checks read access
 to a protected system file. If access cannot be verified, it stops with the
 instructions above. This is a read-only probe, not a macOS permission-query API.
 Connect and verify Ethernet before setup disables Wi-Fi and Bluetooth.
 
-For initial Tailscale setup, run `./tailscale.sh` separately and authenticate.
+For initial Tailscale setup, run `./server/tailscale.sh` separately and authenticate.
 It installs the system daemon so remote access does not require a desktop login.
 Keep the server at the login screen and run persistent workloads as LaunchDaemons
 under their intended user. Do not enable automatic desktop login.
+
+From your other Mac, use `tssh mini@tailscale-host` in each terminal. Concurrent
+connections share one local userspace Tailscale daemon, which stops after the
+last SSH session closes. Authentication is saved for next time. Close any
+sessions started with the older, single-session `tssh` before using this version.
 
 The server import keeps SSH, Screen Sharing, and SMB enabled. It disables
 Spotlight indexing on mounted volumes, Content Caching, printer sharing, and
@@ -32,7 +39,7 @@ to switch the terminal that launched the import immediately.
 For a new Mac, use its desktop or Screen Sharing. Skip items already completed.
 
 In **General > Device Management**, install **Headless Mac mini server** from
-[server.mobileconfig](server.mobileconfig). Local setup opens the file if
+[profile.mobileconfig](profile.mobileconfig). Local setup opens the file if
 the profile is missing. After SSH setup, open the file on the mini itself.
 
 Then log out of the desktop. Fish applies automatically to new terminal/SSH
@@ -43,7 +50,7 @@ Siri, external AI integrations, and supported Apple Intelligence features off.
 It adds no background service. Its Mail summary restriction covers manually
 requested summaries, not automatic summaries; Mail and Messages need no setup
 on a fresh server without those accounts configured.
-Reinstall the profile after changing `server.mobileconfig`; setup checks whether
+Reinstall the profile after changing `server/profile.mobileconfig`; setup checks whether
 its identifier is installed, not whether its contents have changed. Remove it
 from Device Management to release its restrictions.
 
@@ -67,12 +74,57 @@ them only if enabled during setup:
 - **Privacy & Security > Analytics & Improvements:** turn off other optional
   contributions. The profile blocks automatic diagnostic submission only.
 
-## Locate a mini
+## Workloads
 
-Run `./locate-mac.sh` on the mini to loop a short sound, or start it remotely:
+Run each workload in its own terminal or tmux pane:
+
+| Script | Purpose |
+| --- | --- |
+| `server/bitcoin.sh` | Run Bitcoin Core with data in `/Volumes/External/bitcoin`. |
+| `server/bitview.sh` | Update Rust, install Bitview, and run the indexer/server. |
+| `server/mcp.sh` | Install and run the Bitview MCP server. |
+| `server/tunnels.sh` | Run and monitor the three Cloudflare tunnels together. |
+
+The Bitcoin launcher requires the external volume to be mounted and creates
+its data directory if needed. Extra Bitcoin Core arguments are forwarded; for
+the initial sync with the larger cache:
 
 ```sh
-ssh -t mini@192.168.1.130 '~/Developer/dots/locate-mac.sh'
+./server/bitcoin.sh -dbcache=8196
+```
+
+Bitview and MCP preserve the caller's working directory. Their builds use the
+shared native-CPU settings in `shared/home/.cargo/config.toml`, linked during setup.
+These are foreground launchers; use LaunchDaemons for automatic startup at boot.
+
+## Cloudflare tunnels
+
+Place the raw token for each tunnel in its corresponding local file:
+
+| File | Route |
+| --- | --- |
+| `server/shared.token` | Shared `bitview.space` domain. |
+| `server/node.token` | This server's `euX.bitview.space` domain. |
+| `server/mcp.token` | MCP endpoint. |
+
+Token files are ignored by Git. They are resolved relative to `tunnels.sh`, so
+the launcher works from any directory. Start Bitcoin Core and Bitview first,
+then run:
+
+```sh
+./server/tunnels.sh
+```
+
+All three tunnels log to the same terminal. Ctrl-C stops the tunnels started by
+this launcher. If Bitcoin Core, Bitview, or any tunnel exits, the launcher stops
+its remaining tunnels and exits; rerun it once the problem is resolved.
+
+## Locate a mini
+
+Run `./server/locate.sh` on the mini to loop a short sound, or start it remotely:
+
+```sh
+ssh -t mini@192.168.1.130 '~/Developer/dots/server/locate.sh'
 ```
 
 The script downloads nothing. It unmutes the current output and sets its volume
@@ -82,7 +134,7 @@ Ctrl-C stops playback and restores the previous output, volume, and mute state.
 
 ## Audit and verify
 
-The import runs `./server-audit.sh` automatically; run it separately whenever
+The import runs `./server/audit.sh` automatically; run it separately whenever
 you want another snapshot, including before cleanup. It reports service
 registrations, launchd jobs, indexing status, and a process snapshot; it does not
 stop services or uninstall software. A registered job is not necessarily a

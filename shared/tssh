@@ -1,0 +1,177 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    echo "usage: $0 [ssh-options] user@tailscale-host" >&2
+    exit 2
+}
+
+[ "$#" -gt 0 ] || usage
+
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "error: this wrapper currently supports macOS only" >&2
+    exit 1
+fi
+
+if ! command -v brew >/dev/null 2>&1; then
+    echo "error: Homebrew is required to bootstrap the open-source Tailscale binaries" >&2
+    exit 1
+fi
+
+formula_prefix="$(brew --prefix tailscale)"
+tailscale_bin="$formula_prefix/bin/tailscale"
+tailscaled_bin="$formula_prefix/bin/tailscaled"
+
+if [ ! -x "$tailscale_bin" ] || [ ! -x "$tailscaled_bin" ]; then
+    echo "Installing the official Tailscale CLI formula (no background service)..." >&2
+    brew install --formula tailscale
+    formula_prefix="$(brew --prefix tailscale)"
+    tailscale_bin="$formula_prefix/bin/tailscale"
+    tailscaled_bin="$formula_prefix/bin/tailscaled"
+fi
+
+if [ ! -x "$tailscale_bin" ] || [ ! -x "$tailscaled_bin" ]; then
+    echo "error: the Tailscale formula did not provide tailscale and tailscaled" >&2
+    exit 1
+fi
+
+state_dir="$HOME/Library/Application Support/tailscale-userspace-ssh"
+runtime_dir="$HOME/.cache/tailscale-userspace-ssh"
+socket="$runtime_dir/tailscaled.sock"
+state="$state_dir/tailscaled.state"
+log="$state_dir/tailscaled.log"
+lock="$runtime_dir/lifecycle.lock"
+pid_file="$runtime_dir/tailscaled.pid"
+sessions_dir="$runtime_dir/sessions"
+session=''
+daemon_pid=''
+
+umask 077
+mkdir -p "$state_dir" "$sessions_dir"
+
+daemon_running() {
+    case "$daemon_pid" in
+        *[!0-9]*|''|0) return 1 ;;
+    esac
+    kill -0 "$daemon_pid" 2>/dev/null || return 1
+    # A stale PID must not make us reuse or terminate an unrelated process.
+    case " $(ps -ww -p "$daemon_pid" -o command=) " in
+        *" --socket=$socket "*) return 0 ;;
+    esac
+    return 1
+}
+
+sessions_active() {
+    active=1
+    for peer in "$sessions_dir"/*; do
+        [ -f "$peer" ] || continue
+        # A live session holds its lease open and locked. Unlocked leases are
+        # stale; lockf removes them after the no-op command completes.
+        if ! /usr/bin/lockf -s -t 0 "$peer" true; then
+            active=0
+        fi
+    done
+    return "$active"
+}
+
+cleanup() {
+    trap - EXIT HUP INT TERM
+    exec 8>&- 9>&-
+    exec 9>>"$lock"
+    /usr/bin/lockf 9 || return
+    [ -z "$session" ] || rm -f "$session"
+    sessions_active && return
+
+    daemon_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if daemon_running; then
+        kill "$daemon_pid" 2>/dev/null || true
+        attempt=0
+        while daemon_running; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 100 ]; then
+                echo "warning: tailscaled is still stopping; keeping its socket and PID file" >&2
+                return
+            fi
+            sleep 0.1
+        done
+        wait "$daemon_pid" 2>/dev/null || true
+    fi
+    rm -f "$socket" "$pid_file"
+}
+
+# Serialize only joining/leaving and daemon startup/shutdown, not SSH itself.
+exec 9>>"$lock"
+/usr/bin/lockf 9
+
+# Let sessions started by the older, single-session wrapper finish first.
+if [ -d "$runtime_dir/session.lock" ]; then
+    old_pid="$(cat "$runtime_dir/session.lock/pid" 2>/dev/null || true)"
+    case "$old_pid" in
+        *[!0-9]*|'')
+            echo "error: an older tssh session may be starting; close it before retrying" >&2
+            exit 1
+            ;;
+    esac
+    if kill -0 "$old_pid" 2>/dev/null; then
+        echo "error: close the older tssh session before using simultaneous connections" >&2
+        exit 1
+    fi
+    rm -f "$runtime_dir/session.lock/pid"
+    rmdir "$runtime_dir/session.lock"
+fi
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+session="$(mktemp "$sessions_dir/session.XXXXXX")"
+exec 8>"$session"
+/usr/bin/lockf 8
+
+daemon_pid="$(cat "$pid_file" 2>/dev/null || true)"
+if ! daemon_running; then
+    rm -f "$socket" "$pid_file"
+    # Give the shared daemon its own process group so a terminal's Ctrl-C
+    # cannot stop other sessions. Close both locks in the daemon process.
+    set -m
+    nohup "$tailscaled_bin" \
+        --tun=userspace-networking \
+        --port=0 \
+        --socket="$socket" \
+        --state="$state" \
+        </dev/null >"$log" 2>&1 8>&- 9>&- &
+    daemon_pid=$!
+    set +m
+    printf '%s\n' "$daemon_pid" >"$pid_file"
+fi
+
+attempt=0
+while [ ! -S "$socket" ]; do
+    if ! daemon_running; then
+        echo "error: userspace tailscaled failed to start; log follows:" >&2
+        tail -n 40 "$log" >&2 || true
+        exit 1
+    fi
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 100 ]; then
+        echo "error: timed out waiting for userspace tailscaled; log: $log" >&2
+        exit 1
+    fi
+    sleep 0.1
+done
+
+# First use prints an authorization URL and waits. Repeating up with the same
+# settings reuses the connection, and retries setup if a previous login failed.
+"$tailscale_bin" --socket="$socket" up --accept-dns=false
+exec 9>&-
+
+proxy_command="$tailscale_bin --socket=$socket nc %h %p"
+
+set +e
+/usr/bin/ssh -o "ProxyCommand=$proxy_command" "$@"
+ssh_status=$?
+set -e
+
+exit "$ssh_status"

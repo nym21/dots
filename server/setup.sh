@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
-set -e
+# Sourced by ../shared/import.sh; server setup runs in preflight, setup, and finish phases.
 
-ROLE="${1:-}"
+role_prepare() {
+    SERVER_USER="$(id -un)"
 
-case "$ROLE" in
-    pc|server) ;;
-    *)
-        echo "Use ./import-pc.sh or ./import-server.sh." >&2
+    if ! id -Gn "$SERVER_USER" | tr ' ' '\n' | grep -qx admin; then
+        echo "Server user '$SERVER_USER' must be an administrator for full-volume file sharing." >&2
         exit 1
-        ;;
-esac
+    fi
 
-if [ "$(id -u)" -eq 0 ]; then
-    echo "Run this as the target login user, not with sudo." >&2
-    exit 1
-fi
-
-if [ "$ROLE" = "server" ]; then
     sudo -v
     # Probe an actual read: file mode checks do not establish Full Disk Access.
     # sudo handles Unix permissions; macOS privacy checks still apply.
@@ -29,136 +21,9 @@ if [ "$ROLE" = "server" ]; then
         echo "  Enable Allow full disk access for remote users, then reconnect." >&2
         exit 1
     fi
-fi
-
-DOTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-HOME_DIR="$DOTS_DIR/home"
-
-mkdir -p "$HOME/Developer"
-
-link() {
-    if [ -L "$2" ]; then
-        [ "$(readlink "$2")" = "$1" ] && return 0
-        rm "$2"
-    elif [ -e "$2" ]; then
-        if [ -e "$2.backup" ] || [ -L "$2.backup" ]; then
-            echo "Refusing to overwrite existing backup: $2.backup" >&2
-            return 1
-        fi
-        mv "$2" "$2.backup"
-    fi
-    ln -s "$1" "$2"
 }
 
-# --- Homebrew ---
-if ! command -v brew &> /dev/null; then
-    if [ ! -x /opt/homebrew/bin/brew ]; then
-        echo "Installing Homebrew..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    fi
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-fi
-echo "Updating Homebrew..."
-brew update
-brew cleanup
-echo "Installing and updating Homebrew formulae..."
-brew bundle install --file="$DOTS_DIR/Brewfile"
-if [ "$ROLE" = "pc" ]; then
-    echo "Installing and updating Homebrew casks..."
-    brew bundle install --file="$DOTS_DIR/Brewfile.cask"
-
-    # Configure Raycast before launch so it cannot cache the default opt-ins.
-    echo "Disabling Raycast analytics and error reporting..."
-    pkill -x Raycast 2>/dev/null || true
-    defaults write com.raycast.macos analytics_optOut -bool true
-    defaults write com.raycast.macos errorReporting_optOut -bool true
-else
-    echo "Installing and updating server tools..."
-    brew bundle install --file="$DOTS_DIR/Brewfile.server"
-fi
-
-# --- Rust ---
-if ! command -v rustc &> /dev/null; then
-    echo "Installing Rust..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
-else
-    rustup update
-fi
-
-# --- Cargo config ---
-echo "Linking cargo config..."
-mkdir -p ~/.cargo
-link "$HOME_DIR/.cargo/config.toml" ~/.cargo/config.toml
-
-# --- Codex ---
-echo "Linking Codex settings..."
-mkdir -p ~/.codex
-link "$HOME_DIR/.codex/config.toml" ~/.codex/config.toml
-
-# --- Cargo packages ---
-echo "Installing cargo packages..."
-while IFS= read -r pkg || [ -n "$pkg" ]; do
-    [ -n "$pkg" ] || continue
-    echo "Installing ${pkg}..."
-    cargo install --locked "$pkg"
-done < "$DOTS_DIR/cargo.txt"
-
-# --- Fish shell ---
-setup_fish_shell() {
-    local fish_path
-    fish_path="$(brew --prefix fish)/bin/fish"
-
-    if [ ! -x "$fish_path" ]; then
-        echo "Fish is not installed or not on PATH." >&2
-        return 1
-    fi
-
-    if ! grep -qx "$fish_path" /etc/shells; then
-        echo "Adding Fish to /etc/shells..."
-        echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
-    fi
-
-    if [ "$SHELL" != "$fish_path" ]; then
-        chsh -s "$fish_path"
-    fi
-
-    if command -v launchctl >/dev/null 2>&1; then
-        launchctl setenv SHELL "$fish_path" || true
-    fi
-}
-
-setup_fish_shell
-
-# --- Dotfiles ---
-echo "Linking dotfiles..."
-mkdir -p ~/.config/{fish,tmux,helix} ~/.local/bin
-
-git config --global diff.external difft
-git config --global core.editor hx
-
-link "$DOTS_DIR/tssh" ~/.local/bin/tssh
-link "$HOME_DIR/.config/fish/config.fish" ~/.config/fish/config.fish
-link "$HOME_DIR/.config/starship.toml" ~/.config/starship.toml
-link "$HOME_DIR/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf
-link "$HOME_DIR/.config/tmux/save-layout.sh" ~/.config/tmux/save-layout.sh
-link "$HOME_DIR/.config/tmux/restore-layout.sh" ~/.config/tmux/restore-layout.sh
-link "$HOME_DIR/.config/helix/config.toml" ~/.config/helix/config.toml
-
-if [ "$ROLE" = "pc" ]; then
-    mkdir -p ~/.config/zed
-    git config --global core.editor "zed --wait"
-    link "$HOME_DIR/.config/zed/settings.json" ~/.config/zed/settings.json
-fi
-
-if [ "$ROLE" = "server" ]; then
-    SERVER_USER="$(id -un)"
-
-    if ! id -Gn "$SERVER_USER" | tr ' ' '\n' | grep -qx admin; then
-        echo "Server user '$SERVER_USER' must be an administrator for full-volume file sharing." >&2
-        exit 1
-    fi
-
+role_setup() {
     # --- Headless macOS system ---
     NETWORK_SERVICES=("Ethernet" "USB 10/100/1G/2.5G LAN")
     DNS_SERVERS=("1.1.1.1" "1.0.0.1")
@@ -273,30 +138,14 @@ if [ "$ROLE" = "server" ]; then
 
     blueutil --power off
     echo "Bluetooth power: $(blueutil --power)"
-fi
+}
 
-# Firewall.
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
-
-if [ "$ROLE" = "pc" ]; then
-    # FileVault requires the login password and returns a personal recovery key.
-    if fdesetup isactive >/dev/null 2>&1; then
-        echo "FileVault is already enabled."
-    else
-        echo "Enabling FileVault..."
-        echo "Save the recovery key somewhere other than this Mac."
-        sudo fdesetup enable -user "$(id -un)" -prompt
-    fi
-fi
-
-echo
-echo "$ROLE import complete."
-if [ "$ROLE" = "server" ]; then
+role_finish() {
     echo "Running the read-only server audit..."
-    "$DOTS_DIR/server-audit.sh" || echo "Server audit failed; rerun $DOTS_DIR/server-audit.sh to investigate." >&2
+    "$SERVER_DIR/audit.sh" || echo "Server audit failed; rerun $SERVER_DIR/audit.sh to investigate." >&2
 
     # macOS requires approval in System Settings to install local profiles.
-    SERVER_PROFILE="$DOTS_DIR/server.mobileconfig"
+    SERVER_PROFILE="$SERVER_DIR/profile.mobileconfig"
     PROFILE_IDENTIFIER="$(plutil -extract PayloadIdentifier raw "$SERVER_PROFILE")"
     PROFILE_INSTALLED=false
     if sudo profiles list -type configuration | awk -v identifier="$PROFILE_IDENTIFIER" '
@@ -316,10 +165,6 @@ if [ "$ROLE" = "server" ]; then
     else
         echo "Server profile is already installed."
     fi
-    echo "Optional cleanup: $DOTS_DIR/SERVER.md"
+    echo "Optional cleanup: $SERVER_DIR/README.md"
     echo "Then log out of the desktop."
-else
-    echo "Manual steps remaining:"
-    echo "  - Enable Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode > Turn On & Restart."
-    echo "  - If you postpone Lockdown Mode, restart your terminal manually."
-fi
+}
