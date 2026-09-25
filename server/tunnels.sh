@@ -10,7 +10,7 @@ backends_running() {
 }
 
 command -v cloudflared >/dev/null || {
-    echo "cloudflared is not installed; run ./shared/import.sh server first." >&2
+    echo "cloudflared is not installed; run ./server/import.sh first." >&2
     exit 1
 }
 

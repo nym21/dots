@@ -169,6 +169,11 @@ exec 9>&-
 
 proxy_command="$tailscale_bin --socket=$socket nc %h %p"
 
+# Fresh macOS hosts lack Ghostty's terminfo; use its standard SSH fallback.
+if [ "${TERM:-}" = "xterm-ghostty" ]; then
+    export TERM=xterm-256color
+fi
+
 set +e
 /usr/bin/ssh -o "ProxyCommand=$proxy_command" "$@"
 ssh_status=$?

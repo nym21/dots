@@ -9,7 +9,7 @@ Setup requires Full Disk Access on the mini. If the startup access check fails:
 - **In a local terminal:** System Settings > Privacy & Security > Full Disk
   Access > enable the terminal app, then quit and reopen it.
 
-From the repository root, run `./shared/import.sh server` as the server's administrator, without `sudo`.
+From the repository root, run `./server/import.sh` as the server's administrator, without `sudo`.
 The script uses `sudo` where needed; it does not grant macOS Full Disk Access.
 Before making setup changes, it authenticates with `sudo` and checks read access
 to a protected system file. If access cannot be verified, it stops with the
@@ -25,6 +25,14 @@ From your other Mac, use `tssh mini@tailscale-host` in each terminal. Concurrent
 connections share one local userspace Tailscale daemon, which stops after the
 last SSH session closes. Authentication is saved for next time. Close any
 sessions started with the older, single-session `tssh` before using this version.
+
+`tssh` uses `xterm-256color` when connecting from Ghostty, so the mini needs no
+extra terminal definition. Reconnect with the updated local `tssh` to apply it.
+For an existing session reporting `missing or unsuitable terminal: xterm-ghostty`:
+
+```sh
+TERM=xterm-256color tmux
+```
 
 The server import keeps SSH, Screen Sharing, and SMB enabled. It disables
 Spotlight indexing on mounted volumes, Content Caching, printer sharing, and

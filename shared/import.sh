@@ -10,6 +10,11 @@ case "$ROLE" in
         ;;
 esac
 
+if [ "$#" -ne 1 ]; then
+    echo "Usage: ./$ROLE/import.sh" >&2
+    exit 1
+fi
+
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "This setup only supports macOS." >&2
     exit 1
@@ -20,10 +25,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 SHARED_DIR="$(cd "$(dirname "$0")" && pwd)"
-DOTS_DIR="$(dirname "$SHARED_DIR")"
-PC_DIR="$DOTS_DIR/pc"
-SERVER_DIR="$DOTS_DIR/server"
-ROLE_DIR="$DOTS_DIR/$ROLE"
+ROLE_DIR="$(dirname "$SHARED_DIR")/$ROLE"
 
 source "$SHARED_DIR/setup.sh"
 source "$ROLE_DIR/setup.sh"

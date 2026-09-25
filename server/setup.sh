@@ -142,10 +142,10 @@ role_setup() {
 
 role_finish() {
     echo "Running the read-only server audit..."
-    "$SERVER_DIR/audit.sh" || echo "Server audit failed; rerun $SERVER_DIR/audit.sh to investigate." >&2
+    "$ROLE_DIR/audit.sh" || echo "Server audit failed; rerun $ROLE_DIR/audit.sh to investigate." >&2
 
     # macOS requires approval in System Settings to install local profiles.
-    SERVER_PROFILE="$SERVER_DIR/profile.mobileconfig"
+    SERVER_PROFILE="$ROLE_DIR/profile.mobileconfig"
     PROFILE_IDENTIFIER="$(plutil -extract PayloadIdentifier raw "$SERVER_PROFILE")"
     PROFILE_INSTALLED=false
     if sudo profiles list -type configuration | awk -v identifier="$PROFILE_IDENTIFIER" '
@@ -165,6 +165,6 @@ role_finish() {
     else
         echo "Server profile is already installed."
     fi
-    echo "Optional cleanup: $SERVER_DIR/README.md"
+    echo "Optional cleanup: $ROLE_DIR/README.md"
     echo "Then log out of the desktop."
 }

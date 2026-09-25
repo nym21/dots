@@ -89,12 +89,11 @@ shared_setup() {
 
     # --- Dotfiles ---
     echo "Linking dotfiles..."
-    mkdir -p ~/.config/{fish,tmux,helix} ~/.local/bin
+    mkdir -p ~/.config/{fish,tmux,helix}
 
     git config --global diff.external difft
     git config --global core.editor hx
 
-    link "$SHARED_DIR/tssh" ~/.local/bin/tssh
     link "$SHARED_DIR/home/.config/fish/config.fish" ~/.config/fish/config.fish
     link "$SHARED_DIR/home/.config/starship.toml" ~/.config/starship.toml
     link "$SHARED_DIR/home/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf

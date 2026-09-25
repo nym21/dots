@@ -6,14 +6,14 @@ Run commands from this repository's root as your normal login user.
 ## Setup
 
 ```sh
-./shared/import.sh pc
+./pc/import.sh
 ```
 
 For a headless mini, follow the [server setup instructions](server/README.md),
 then run:
 
 ```sh
-./shared/import.sh server
+./server/import.sh
 ```
 
 The importer installs the shared packages and the selected role's additions.
@@ -23,8 +23,8 @@ the linked settings.
 
 ## Layout
 
-- `shared/`: importer, common packages, dotfiles, maintenance tools, and `tssh`.
-- `pc/`: workstation applications, Zed settings, and desktop setup.
+- `shared/`: common packages, dotfiles, setup internals, and maintenance tools.
+- `pc/`: workstation applications, Zed settings, desktop setup, and `tssh`.
 - `server/`: headless setup, profile, diagnostics, and workload launchers.
 
 Each folder has its own `Brewfile`. Shared Cargo packages are listed in
@@ -40,7 +40,7 @@ Each folder has its own `Brewfile`. Shared Cargo packages are listed in
 
 ## SSH over Tailscale
 
-Setup makes `tssh` available on your PATH:
+PC setup makes `tssh` available on your PATH:
 
 ```sh
 tssh mini@tailscale-host
@@ -48,3 +48,8 @@ tssh mini@tailscale-host
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.
+
+When connecting from Ghostty, `tssh` uses the standard `xterm-256color` terminal
+definition so fresh servers work without installing Ghostty's terminfo. This
+preserves ordinary terminal functionality but omits Ghostty-specific features
+such as styled underlines.

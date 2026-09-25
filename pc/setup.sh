@@ -10,9 +10,10 @@ role_prepare() {
 }
 
 role_setup() {
-    mkdir -p ~/.config/zed
+    mkdir -p ~/.config/zed ~/.local/bin
+    link "$ROLE_DIR/tssh" ~/.local/bin/tssh
     git config --global core.editor "zed --wait"
-    link "$PC_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
+    link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
 
     # FileVault requires the login password and returns a personal recovery key.
     if fdesetup isactive >/dev/null 2>&1; then
