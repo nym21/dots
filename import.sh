@@ -182,9 +182,15 @@ if [ "$ROLE" = "server" ]; then
 
     # Disable Spotlight indexing.
     sudo mdutil -a -i off
+    mdutil -a -s
 
     # Keep the machine reachable while allowing the display to sleep.
-    sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 powernap 0
+    sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1
+
+    # Disable unused sharing features through their supported controls.
+    sudo systemsetup -setremoteappleevents off
+    sudo AssetCacheManagerUtil deactivate
+    sudo cupsctl -h localhost --no-share-printers
 
     # Mount external disks without requiring a GUI user login.
     sudo defaults write /Library/Preferences/SystemConfiguration/autodiskmount AutomountDisksWithoutUserLogin -bool true
@@ -202,17 +208,15 @@ if [ "$ROLE" = "server" ]; then
     # sshd still handles authentication.
     sudo systemsetup -setremotelogin on
 
-    # Screen Sharing over Tailscale.
-    sudo launchctl enable system/com.apple.screensharing
-    sudo launchctl kickstart -k system/com.apple.screensharing
-
-    # SMB File Sharing.
+    # Keep Screen Sharing and SMB available on demand, without restarting
+    # active connections when the import is rerun.
     sudo sysadminctl -smbGuestAccess off
-    sudo launchctl enable system/com.apple.smbd
-    if ! sudo launchctl print system/com.apple.smbd >/dev/null 2>&1; then
-        sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist
-    fi
-    sudo launchctl kickstart -k system/com.apple.smbd
+    for service in com.apple.screensharing com.apple.smbd; do
+        sudo launchctl enable "system/$service"
+        if ! sudo launchctl print "system/$service" >/dev/null 2>&1; then
+            sudo launchctl bootstrap system "/System/Library/LaunchDaemons/$service.plist"
+        fi
+    done
 
     # Disable unused wireless radios. Refuse to turn off the server's active
     # network path so a remote import cannot strand the machine.
@@ -266,6 +270,8 @@ if [ "$ROLE" = "server" ]; then
     echo "Manual steps remaining:"
     echo "  - System Settings > General > Sharing > Remote Login > Allow full disk access for remote users."
     echo "  - System Settings > General > Sharing > File Sharing > Allow full disk access for all users."
+    echo "  - Complete the macOS 27 background-feature settings in $DOTS_DIR/SERVER.md."
+    echo "  - Audit services and indexing with $DOTS_DIR/server-audit.sh."
     echo "  - Run in your current terminal: exec fish -l"
 else
     echo "Manual steps remaining:"
