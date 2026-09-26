@@ -93,9 +93,9 @@ send `SIGSTOP` to `audiomxd`, then exits. It does not terminate the daemon or
 retry after a successful suspension.
 If `audiomxd` restarts later in the same boot, it is left running.
 
-Audio/media operations may stall while the daemon is suspended, including the
-sound used by `server/locate.sh`. This is a workaround for the macOS bug and does
-not change SIP.
+Audio/media operations may stall while the daemon is suspended.
+`server/locate.sh` temporarily resumes it for playback and restores suspension
+on exit. This is a workaround for the macOS bug and does not change SIP.
 
 Verify that the daemon's state contains `T` and check whether `configd` CPU falls:
 
@@ -158,8 +158,10 @@ Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 settings do not require a config file. An existing config file still supplies
 other settings.
 
+Both launchers create `/Volumes/External/bitview` if it does not exist.
+
 The benchmark uses `/Volumes/External/bitcoin` and
-`/Volumes/External/bitview-bench`. Existing benchmark data is reused; change the
+`/Volumes/External/bitview`. Existing data is reused; change the
 script's `--bitviewdir` to an empty directory for a full rebuild. Bitcoin Core
 must be running and synced. The benchmark exits after bootstrap without starting
 the HTTP server and prints its results directory. Results are stored under
@@ -200,6 +202,10 @@ The script downloads nothing. It unmutes the current output and sets its volume
 to 100%. If `SwitchAudioSource` is already installed, it prefers the built-in
 speaker; otherwise, select it in **System Settings > Sound > Output** if needed.
 Ctrl-C stops playback and restores the previous output, volume, and mute state.
+If `audiomxd` was suspended, the script uses `sudo` to resume it before touching
+audio settings and suspends the same process again after restoring them. It
+also cleans up on termination, SSH disconnection, or command failure. A daemon
+that was already running is left running.
 
 ## Verification
 

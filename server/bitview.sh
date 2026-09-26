@@ -16,6 +16,8 @@ rustup update
 
 RUSTFLAGS="-C target-cpu=native" cargo install "${install_args[@]}" bitviewd
 
+mkdir -p /Volumes/External/bitview
+
 RUST_BACKTRACE=1 LOG=debug exec bitviewd \
     --bitcoindir /Volumes/External/bitcoin \
     --bitviewdir /Volumes/External/bitview \
