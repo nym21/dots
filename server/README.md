@@ -82,6 +82,43 @@ them only if enabled during setup:
 - **Privacy & Security > Analytics & Improvements:** turn off other optional
   contributions. The profile blocks automatic diagnostic submission only.
 
+## Optional audiomxd workaround
+
+On a mini affected by the logged-out `audiomxd` CPU loop, install the suspension
+workaround separately:
+
+```sh
+./server/suspend-audiomxd.sh
+```
+
+This installs `com.local.suspend-audiomxd` under `/Library/LaunchDaemons` and
+replaces the earlier periodic job if present. It runs immediately and at each
+boot, waits up to two minutes to successfully send `SIGSTOP` to `audiomxd`, then
+exits. It does not terminate the daemon or retry after a successful suspension.
+If `audiomxd` restarts later in the same boot, it is left running.
+
+Audio/media operations may stall while the daemon is suspended, including the
+sound used by `server/locate.sh`. This is an opt-in workaround, not part of the
+normal server import or a fix for the macOS bug. It does not change SIP.
+
+Verify that the daemon's state contains `T` and check whether `configd` CPU falls:
+
+```sh
+ps -axo pid,state,pcpu,comm | rg 'PID|audiomxd|configd'
+sudo launchctl print system/com.local.suspend-audiomxd
+```
+
+After the helper exits, its `last exit code` should be `0`. If it cannot suspend
+the daemon within the startup wait, it exits with an error and is not retried.
+
+To remove the workaround and resume audio, run in this order:
+
+```sh
+sudo launchctl bootout system/com.local.suspend-audiomxd
+sudo rm /Library/LaunchDaemons/com.local.suspend-audiomxd.plist
+sudo killall -CONT audiomxd
+```
+
 ## Workloads
 
 Run each workload in its own terminal or tmux pane:
