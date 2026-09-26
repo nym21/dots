@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
-# Sourced by import.sh; common packages, dotfiles, and system setup.
+# Sourced by the role setup, which sets ROLE and runs shared_setup.
+
+case "${ROLE:-}" in
+    pc|server) ;;
+    *)
+        echo "Run ./pc/setup.sh or ./server/setup.sh." >&2
+        exit 1
+        ;;
+esac
+
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "This setup only supports macOS." >&2
+    exit 1
+fi
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Run this as the target login user, not with sudo." >&2
+    exit 1
+fi
+
+SHARED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROLE_DIR="$(dirname "$SHARED_DIR")/$ROLE"
 
 link() {
     if [ -L "$2" ]; then

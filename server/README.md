@@ -9,7 +9,7 @@ Setup requires Full Disk Access on the mini. If the startup access check fails:
 - **In a local terminal:** System Settings > Privacy & Security > Full Disk
   Access > enable the terminal app, then quit and reopen it.
 
-From the repository root, run `./server/import.sh` as the server's administrator, without `sudo`.
+From the repository root, run `./server/setup.sh` as the server's administrator, without `sudo`.
 The script uses `sudo` where needed; it does not grant macOS Full Disk Access.
 Before making setup changes, it authenticates with `sudo` and checks read access
 to a protected system file. If access cannot be verified, it stops with the
@@ -34,13 +34,14 @@ For an existing session reporting `missing or unsuitable terminal: xterm-ghostty
 TERM=xterm-256color tmux
 ```
 
-The server import keeps SSH, Screen Sharing, and SMB enabled. It disables
+Server setup keeps SSH, Screen Sharing, and SMB enabled. It disables
 Spotlight indexing on mounted volumes, Content Caching, printer sharing, and
 remote Apple Events. It also prevents idle sleep and enables restart after power
 loss. Screen Sharing and SMB start on demand without being restarted on reruns.
-The import runs the read-only server audit at the end. Fish is configured as the
-login shell for future terminal and SSH sessions; `exec fish -l` is only needed
-to switch the terminal that launched the import immediately.
+Setup also installs the once-per-boot `audiomxd` suspension workaround below.
+Fish is configured as the login shell for future terminal and SSH sessions;
+`exec fish -l` is only needed
+to switch the terminal that launched setup immediately.
 
 ## Finish once in System Settings
 
@@ -82,24 +83,19 @@ them only if enabled during setup:
 - **Privacy & Security > Analytics & Improvements:** turn off other optional
   contributions. The profile blocks automatic diagnostic submission only.
 
-## Optional audiomxd workaround
+## audiomxd workaround
 
-On a mini affected by the logged-out `audiomxd` CPU loop, install the suspension
-workaround separately:
-
-```sh
-./server/suspend-audiomxd.sh
-```
-
-This installs `com.local.suspend-audiomxd` under `/Library/LaunchDaemons` and
-replaces the earlier periodic job if present. It runs immediately and at each
-boot, waits up to two minutes to successfully send `SIGSTOP` to `audiomxd`, then
-exits. It does not terminate the daemon or retry after a successful suspension.
+Server setup installs the suspension workaround for the logged-out
+`audiomxd` CPU loop directly. It installs `com.local.suspend-audiomxd` under
+`/Library/LaunchDaemons` and replaces the earlier periodic job if present.
+It runs immediately and at each boot, waits up to two minutes to successfully
+send `SIGSTOP` to `audiomxd`, then exits. It does not terminate the daemon or
+retry after a successful suspension.
 If `audiomxd` restarts later in the same boot, it is left running.
 
 Audio/media operations may stall while the daemon is suspended, including the
-sound used by `server/locate.sh`. This is an opt-in workaround, not part of the
-normal server import or a fix for the macOS bug. It does not change SIP.
+sound used by `server/locate.sh`. This is a workaround for the macOS bug and does
+not change SIP.
 
 Verify that the daemon's state contains `T` and check whether `configd` CPU falls:
 
@@ -118,6 +114,8 @@ sudo launchctl bootout system/com.local.suspend-audiomxd
 sudo rm /Library/LaunchDaemons/com.local.suspend-audiomxd.plist
 sudo killall -CONT audiomxd
 ```
+
+Running server setup again reinstalls the workaround.
 
 ## Workloads
 
@@ -177,16 +175,7 @@ to 100%. If `SwitchAudioSource` is already installed, it prefers the built-in
 speaker; otherwise, select it in **System Settings > Sound > Output** if needed.
 Ctrl-C stops playback and restores the previous output, volume, and mute state.
 
-## Audit and verify
-
-The import runs `./server/audit.sh` automatically; run it separately whenever
-you want another snapshot, including before cleanup. It reports service
-registrations, launchd jobs, indexing status, and a process snapshot; it does not
-stop services or uninstall software. A registered job is not necessarily a
-running process, and a process snapshot alone does not establish sustained load.
-
-Use sustained CPU activity, disk activity, and memory pressure to decide whether
-further cleanup is useful.
+## Verification
 
 After attaching a new data disk, check `mdutil -as`. Disable indexing for that
 specific volume if needed with `sudo mdutil -i off "/Volumes/your-data-disk"`.

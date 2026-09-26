@@ -6,17 +6,17 @@ Run commands from this repository's root as your normal login user.
 ## Setup
 
 ```sh
-./pc/import.sh
+./pc/setup.sh
 ```
 
 For a headless mini, follow the [server setup instructions](server/README.md),
 then run:
 
 ```sh
-./server/import.sh
+./server/setup.sh
 ```
 
-The importer installs the shared packages and the selected role's additions.
+Setup installs the shared packages and the selected role's additions.
 It links `shared/home/` and the role's dotfiles into your home directory,
 preserving existing files as `.backup`. Edit those repository files to change
 the linked settings.
@@ -25,7 +25,10 @@ the linked settings.
 
 - `shared/`: common packages, dotfiles, setup internals, and maintenance tools.
 - `pc/`: workstation applications, Zed settings, desktop setup, and `tssh`.
-- `server/`: headless setup, profile, diagnostics, and workload launchers.
+- `server/`: headless setup, profile, and workload launchers.
+
+Each role's `setup.sh` contains its setup and sources `shared/setup.sh` for
+common setup.
 
 Each folder has its own `Brewfile`. Shared Cargo packages are listed in
 `shared/cargo.txt`; Helix and its configuration are shared between both roles.
