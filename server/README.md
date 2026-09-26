@@ -125,6 +125,7 @@ Run each workload in its own terminal or tmux pane:
 | --- | --- |
 | `server/bitcoin.sh` | Run Bitcoin Core with data in `/Volumes/External/bitcoin`. |
 | `server/bitview.sh` | Update Rust, install Bitview, and run the indexer/server. |
+| `server/bench.sh` | Update Rust, install `bitviewd_bench`, and run the bootstrap benchmark. |
 | `server/mcp.sh` | Install and run the Bitview MCP server. |
 | `server/tunnels.sh` | Run and monitor the three Cloudflare tunnels together. |
 
@@ -136,9 +137,34 @@ the initial sync with the larger cache:
 ./server/bitcoin.sh -dbcache=8196
 ```
 
-Bitview and MCP preserve the caller's working directory. Their builds use the
+The launchers preserve the caller's working directory. Bitview and the benchmark
+set `RUSTFLAGS="-C target-cpu=native"` explicitly for installation. MCP uses the
 shared native-CPU settings in `shared/home/.cargo/config.toml`, linked during setup.
 These are foreground launchers; use LaunchDaemons for automatic startup at boot.
+
+Bitview and the benchmark install from crates.io by default. Each accepts one
+optional argument: a branch of the official `bitcoinresearchkit/mono` repository.
+They do not require a local checkout or forward runtime arguments:
+
+```sh
+./server/bitview.sh        # crates.io
+./server/bitview.sh main   # official repository's main branch
+./server/bench.sh          # crates.io
+./server/bench.sh main     # official repository's main branch
+```
+
+Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
+`--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
+settings do not require a config file. An existing config file still supplies
+other settings.
+
+The benchmark uses `/Volumes/External/bitcoin` and
+`/Volumes/External/bitview-bench`. Existing benchmark data is reused; change the
+script's `--bitviewdir` to an empty directory for a full rebuild. Bitcoin Core
+must be running and synced. The benchmark exits after bootstrap without starting
+the HTTP server and prints its results directory. Results are stored under
+`benches/bitviewd/run-<timestamp>/` in the source workspace used to build it;
+with a Git installation, that workspace is in Cargo's Git checkout cache.
 
 ## Cloudflare tunnels
 
