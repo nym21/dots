@@ -1,0 +1,18 @@
+theme = dark:Monokai Remastered,light:Novel
+font-family = Zed Plex Mono
+font-size = 15
+window-padding-x = 20
+window-padding-y = 20
+adjust-cell-height = 20%
+
+mouse-hide-while-typing = true
+mouse-scroll-multiplier = 2
+
+window-padding-balance = true
+window-save-state = always
+window-colorspace = "display-p3"
+keybind = shift+enter=text:\n
+
+scrollback-limit = 100_000_000
+
+shell-integration-features = ssh-env,ssh-terminfo

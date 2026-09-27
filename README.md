@@ -24,7 +24,7 @@ the linked settings.
 ## Layout
 
 - `shared/`: common packages, dotfiles, setup internals, and maintenance tools.
-- `pc/`: workstation applications, Zed settings, desktop setup, and `tssh`.
+- `pc/`: workstation applications, Ghostty and Zed settings, desktop setup, and Tailscale SSH/copy commands.
 - `server/`: headless setup, profile, and workload launchers.
 
 Each role's `setup.sh` contains its setup and sources `shared/setup.sh` for
@@ -43,11 +43,20 @@ Each folder has its own `Brewfile`. Shared Cargo packages are listed in
 
 ## SSH over Tailscale
 
-PC setup makes `tssh` available on your PATH:
+PC setup makes `tssh` and `tcopy` available on your PATH:
 
 ```sh
 tssh mini@tailscale-host
 ```
+
+Copy a directory using `tcopy SOURCE DESTINATION`:
+
+```sh
+tcopy mini@m6-1:/absolute/path/to/run-folder/ "$HOME/bench-m6-1-main/"
+```
+
+It uses rsync over `tssh`, with progress and partial transfers retained for
+resuming. A trailing `/` on the source copies the directory's contents.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.

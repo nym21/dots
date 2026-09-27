@@ -17,10 +17,13 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 
 shared_setup
 
-mkdir -p ~/.config/zed ~/.local/bin
+mkdir -p ~/.config/zed ~/.local/bin "$HOME/Library/Application Support/com.mitchellh.ghostty"
 link "$ROLE_DIR/tssh" ~/.local/bin/tssh
+link "$ROLE_DIR/tcopy" ~/.local/bin/tcopy
 git config --global core.editor "zed --wait"
 link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
+link "$ROLE_DIR/home/.config/ghostty/config.ghostty" \
+    "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
 
 # FileVault requires the login password and returns a personal recovery key.
 if fdesetup isactive >/dev/null 2>&1; then

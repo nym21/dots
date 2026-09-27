@@ -164,9 +164,9 @@ The benchmark uses `/Volumes/External/bitcoin` and
 `/Volumes/External/bitview`. Existing data is reused; change the
 script's `--bitviewdir` to an empty directory for a full rebuild. Bitcoin Core
 must be running and synced. The benchmark exits after bootstrap without starting
-the HTTP server and prints its results directory. Results are stored under
-`benches/bitviewd/run-<timestamp>/` in the source workspace used to build it;
-with a Git installation, that workspace is in Cargo's Git checkout cache.
+the HTTP server. Results are stored under
+`/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`, following
+`--bitviewdir`. It prints that path before bootstrap starts and after completion.
 
 ## Cloudflare tunnels
 
