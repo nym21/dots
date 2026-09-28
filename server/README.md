@@ -127,7 +127,7 @@ Run each workload in its own terminal or tmux pane:
 | `server/bitview.sh` | Update Rust, install Bitview, and run the indexer/server. |
 | `server/bench.sh` | Update Rust, install `bitviewd_bench`, and run the bootstrap benchmark. |
 | `server/mcp.sh` | Install and run the Bitview MCP server. |
-| `server/tunnels.sh` | Run and monitor the three Cloudflare tunnels together. |
+| `server/tunnels.sh` | Run and monitor all configured Cloudflare tunnels together. |
 
 The Bitcoin launcher requires the external volume to be mounted and creates
 its data directory if needed. Extra Bitcoin Core arguments are forwarded; for
@@ -170,15 +170,25 @@ the HTTP server. Results are stored under
 
 ## Cloudflare tunnels
 
-Place the raw token for each tunnel in its corresponding local file:
+Place all raw tunnel tokens in `server/tunnels.tokens`, one per line. Blank lines
+and lines starting with `#` are ignored; surrounding whitespace is trimmed:
 
-| File | Route |
-| --- | --- |
-| `server/shared.token` | Shared `bitview.space` domain. |
-| `server/node.token` | This server's `euX.bitview.space` domain. |
-| `server/mcp.token` | MCP endpoint. |
+```text
+# Shared bitview.space domain
+PASTE_SHARED_TOKEN_HERE
 
-Token files are ignored by Git. They are resolved relative to `tunnels.sh`, so
+# This server's euX.bitview.space domain
+PASTE_NODE_TOKEN_HERE
+
+# MCP endpoint
+PASTE_MCP_TOKEN_HERE
+```
+
+The launcher runs every token, regardless of its comment or position in the list.
+Move tokens from the old `shared.token`, `node.token`, and `mcp.token` files into
+this list if upgrading an existing setup.
+
+The token file is ignored by Git and resolved relative to `tunnels.sh`, so
 the launcher works from any directory. Start Bitcoin Core and Bitview first,
 then run:
 
@@ -186,7 +196,7 @@ then run:
 ./server/tunnels.sh
 ```
 
-All three tunnels log to the same terminal. Ctrl-C stops the tunnels started by
+All tunnels log to the same terminal. Ctrl-C stops the tunnels started by
 this launcher. If Bitcoin Core, Bitview, or any tunnel exits, the launcher stops
 its remaining tunnels and exits; rerun it once the problem is resolved.
 

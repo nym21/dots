@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
-TUNNELS=(shared node mcp)
+TOKEN_FILE="$SERVER_DIR/tunnels.tokens"
+TOKENS=()
 PIDS=()
 
 backends_running() {
@@ -14,14 +15,22 @@ command -v cloudflared >/dev/null || {
     exit 1
 }
 
-# Validate all tokens before starting any tunnel. Their contents stay private.
-for tunnel in "${TUNNELS[@]}"; do
-    token_file="$SERVER_DIR/$tunnel.token"
-    if [ ! -r "$token_file" ] || [ ! -s "$token_file" ]; then
-        echo "Missing or empty token file: $token_file" >&2
-        exit 1
-    fi
-done
+if [ ! -r "$TOKEN_FILE" ]; then
+    echo "Missing or unreadable token file: $TOKEN_FILE" >&2
+    exit 1
+fi
+
+while IFS=$' \t\r' read -r token || [ -n "$token" ]; do
+    case "$token" in
+        ''|\#*) continue ;;
+    esac
+    TOKENS+=("$token")
+done < "$TOKEN_FILE"
+
+if [ "${#TOKENS[@]}" -eq 0 ]; then
+    echo "No tokens found in $TOKEN_FILE" >&2
+    exit 1
+fi
 
 if ! backends_running; then
     echo "Start bitcoind and bitviewd before starting the tunnels." >&2
@@ -41,9 +50,9 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for tunnel in "${TUNNELS[@]}"; do
-    echo "Starting $tunnel tunnel..."
-    cloudflared tunnel run --token-file "$SERVER_DIR/$tunnel.token" &
+for index in "${!TOKENS[@]}"; do
+    echo "Starting tunnel $((index + 1))..."
+    cloudflared tunnel run --token-file <(printf '%s' "${TOKENS[$index]}") &
     PIDS+=("$!")
 done
 
@@ -55,7 +64,7 @@ while true; do
     for index in "${!PIDS[@]}"; do
         pid="${PIDS[$index]}"
         if ! kill -0 "$pid" 2>/dev/null; then
-            echo "${TUNNELS[$index]} tunnel exited; stopping this session's tunnels." >&2
+            echo "Tunnel $((index + 1)) exited; stopping this session's tunnels." >&2
             unset 'PIDS[index]'
             wait "$pid"
             exit 1
