@@ -1,3 +1,3 @@
 .DS_Store
 *.token
-server/tunnels.tokens
+server/.tokens

@@ -170,7 +170,7 @@ the HTTP server. Results are stored under
 
 ## Cloudflare tunnels
 
-Place all raw tunnel tokens in `server/tunnels.tokens`, one per line. Blank lines
+Place all raw tunnel tokens in `server/.tokens`, one per line. Blank lines
 and lines starting with `#` are ignored; surrounding whitespace is trimmed:
 
 ```text

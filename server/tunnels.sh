@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOKEN_FILE="$SERVER_DIR/tunnels.tokens"
+TOKEN_FILE="$SERVER_DIR/.tokens"
 TOKENS=()
 PIDS=()
 
