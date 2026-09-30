@@ -11,11 +11,6 @@ source "$(dirname "$0")/../shared/setup.sh"
 
 SERVER_USER="$(id -un)"
 
-if ! id -Gn "$SERVER_USER" | tr ' ' '\n' | grep -qx admin; then
-    echo "Server user '$SERVER_USER' must be an administrator for full-volume file sharing." >&2
-    exit 1
-fi
-
 sudo -v
 # Probe an actual read: file mode checks do not establish Full Disk Access.
 # sudo handles Unix permissions; macOS privacy checks still apply.
@@ -80,6 +75,10 @@ sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1
 
 # Disable unused sharing features through their supported controls.
 sudo systemsetup -setremoteappleevents off
+sudo launchctl disable system/com.apple.smbd
+if sudo launchctl print system/com.apple.smbd >/dev/null 2>&1; then
+    sudo launchctl bootout system/com.apple.smbd
+fi
 CONTENT_CACHE_STATUS="$(AssetCacheManagerUtil -j status)"
 CONTENT_CACHE_ACTIVATED="$(plutil -extract result.Activated raw -expect bool - <<< "$CONTENT_CACHE_STATUS")"
 if [ "$CONTENT_CACHE_ACTIVATED" = true ]; then
@@ -105,15 +104,12 @@ done
 # sshd still handles authentication.
 sudo systemsetup -setremotelogin on
 
-# Keep Screen Sharing and SMB available on demand, without restarting
+# Keep Screen Sharing available on demand, without restarting
 # active connections when setup is rerun.
-sudo sysadminctl -smbGuestAccess off
-for service in com.apple.screensharing com.apple.smbd; do
-    sudo launchctl enable "system/$service"
-    if ! sudo launchctl print "system/$service" >/dev/null 2>&1; then
-        sudo launchctl bootstrap system "/System/Library/LaunchDaemons/$service.plist"
-    fi
-done
+sudo launchctl enable system/com.apple.screensharing
+if ! sudo launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+    sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist
+fi
 
 # Disable unused wireless radios. Refuse to turn off the server's active
 # network path so remote setup cannot strand the machine.

@@ -9,7 +9,7 @@ Setup requires Full Disk Access on the mini. If the startup access check fails:
 - **In a local terminal:** System Settings > Privacy & Security > Full Disk
   Access > enable the terminal app, then quit and reopen it.
 
-From the repository root, run `./server/setup.sh` as the server's administrator, without `sudo`.
+From the repository root, run `./server/setup.sh` as the server's user, without `sudo`.
 The script uses `sudo` where needed; it does not grant macOS Full Disk Access.
 Before making setup changes, it authenticates with `sudo` and checks read access
 to a protected system file. If access cannot be verified, it stops with the
@@ -34,10 +34,11 @@ For an existing session reporting `missing or unsuitable terminal: xterm-ghostty
 TERM=xterm-256color tmux
 ```
 
-Server setup keeps SSH, Screen Sharing, and SMB enabled. It disables
-Spotlight indexing on mounted volumes, Content Caching, printer sharing, and
-remote Apple Events. It also prevents idle sleep and enables restart after power
-loss. Screen Sharing and SMB start on demand without being restarted on reruns.
+Server setup keeps SSH and Screen Sharing enabled. File transfers use `tcopy`
+over SSH. It disables File Sharing (SMB), Spotlight indexing on mounted volumes,
+Content Caching, printer sharing, and remote Apple Events. It also prevents idle
+sleep and enables restart after power loss. Screen Sharing starts on demand
+without being restarted on reruns.
 Setup also installs the once-per-boot `audiomxd` suspension workaround below.
 Fish is configured as the login shell for future terminal and SSH sessions;
 `exec fish -l` is only needed
@@ -65,7 +66,7 @@ from Device Management to release its restrictions.
 
 macOS requires approval in System Settings to install local configuration
 profiles. The profile does not modify Full Disk Access; the initial setup check
-covers the process running setup, not File Sharing.
+covers the process running setup.
 No TCC database edits or undocumented preference writes are used for these
 settings. Turning a feature off does not guarantee its process disappears.
 
@@ -223,6 +224,6 @@ After attaching a new data disk, check `mdutil -as`. Disable indexing for that
 specific volume if needed with `sudo mdutil -i off "/Volumes/your-data-disk"`.
 An idle `mds` process does not by itself indicate that indexing is enabled.
 
-After a planned reboot, verify from another machine that Tailscale, SSH, SMB,
+After a planned reboot, verify from another machine that Tailscale, SSH, `tcopy`,
 and Screen Sharing work while the mini remains at the login screen. Also verify
 that data volumes mount and workloads resume without a desktop login.
