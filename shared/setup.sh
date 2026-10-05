@@ -58,6 +58,26 @@ setup_fish_shell() {
     fi
 }
 
+# macOS's bundled terminfo lacks tmux-256color, which tmux.conf uses, so
+# programs inside tmux would not recognize the terminal. Compile Homebrew's
+# entry with the system tic into ~/.terminfo, where system ncurses finds it.
+# The system ncurses cannot represent more than 32767 color pairs.
+install_tmux_terminfo() {
+    local source
+    if /usr/bin/infocmp tmux-256color >/dev/null 2>&1; then
+        return 0
+    fi
+    source="$(mktemp)"
+    if "$(brew --prefix ncurses)/bin/infocmp" -x tmux-256color |
+        sed -E 's/pairs#(0x10000|65536)/pairs#32767/' > "$source" &&
+        /usr/bin/tic -x -o "$HOME/.terminfo" "$source"; then
+        echo "Installed tmux-256color terminfo."
+    else
+        echo "Could not install tmux-256color terminfo; programs inside tmux may misbehave." >&2
+    fi
+    rm -f "$source"
+}
+
 shared_setup() {
     mkdir -p "$HOME/Developer"
 
@@ -119,6 +139,7 @@ shared_setup() {
     link "$SHARED_DIR/home/.config/tmux/tmux.conf" ~/.config/tmux/tmux.conf
     link "$SHARED_DIR/home/.config/tmux/save-layout.sh" ~/.config/tmux/save-layout.sh
     link "$SHARED_DIR/home/.config/tmux/restore-layout.sh" ~/.config/tmux/restore-layout.sh
+    install_tmux_terminfo
     link "$SHARED_DIR/home/.config/helix/config.toml" ~/.config/helix/config.toml
 
     # Shared firewall setting.

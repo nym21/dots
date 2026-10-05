@@ -39,7 +39,7 @@ over SSH. It disables File Sharing (SMB), Spotlight indexing on mounted volumes,
 Content Caching, printer sharing, and remote Apple Events. It also prevents idle
 sleep and enables restart after power loss. Screen Sharing starts on demand
 without being restarted on reruns.
-Setup also installs the once-per-boot `audiomxd` suspension workaround below.
+Setup also installs the login-aware `audiomxd` suspension workaround below.
 Fish is configured as the login shell for future terminal and SSH sessions;
 `exec fish -l` is only needed
 to switch the terminal that launched setup immediately.
@@ -86,27 +86,38 @@ them only if enabled during setup:
 
 ## audiomxd workaround
 
-Server setup installs the suspension workaround for the logged-out
-`audiomxd` CPU loop directly. It installs `com.local.suspend-audiomxd` under
-`/Library/LaunchDaemons` and replaces the earlier periodic job if present.
-It runs immediately and at each boot, waits up to two minutes to successfully
-send `SIGSTOP` to `audiomxd`, then exits. It does not terminate the daemon or
-retry after a successful suspension.
-If `audiomxd` restarts later in the same boot, it is left running.
+macOS's `audiomxd` loops on the CPU while no one is logged in. Server setup
+installs `com.local.suspend-audiomxd` under `/Library/LaunchDaemons`, a small
+guard that replaces earlier versions of this workaround. Every two seconds it
+checks who owns the console:
 
-Audio/media operations may stall while the daemon is suspended.
-`server/locate.sh` temporarily resumes it for playback and restores suspension
-on exit. This is a workaround for the macOS bug and does not change SIP.
+- At the login screen, it suspends `audiomxd` with `SIGSTOP`, including a
+  daemon that restarted since the last check.
+- Once a user logs in, locally or through Screen Sharing, it resumes the
+  daemon with `SIGCONT`.
 
-Verify that the daemon's state contains `T` and check whether `configd` CPU falls:
+macOS does not restart a suspended daemon, so every app that touches audio
+waits on it indefinitely. Suspending it during a desktop session makes apps,
+Safari, and the menu bar hang, which is why the guard applies only at the
+login screen. Audio may take up to two seconds to resume after logging in.
+
+`server/locate.sh` keeps the daemon running during playback by refreshing
+`/var/run/com.local.audiomxd-hold`. The guard ignores a hold older than one
+minute, so an interrupted script cannot leave the workaround off for long.
+This is a workaround for the macOS bug and does not change SIP.
+
+At the login screen, verify that the daemon's state contains `T` and check
+whether `configd` CPU falls; in a desktop session the state should not
+contain `T`:
 
 ```sh
 ps -axo pid,state,pcpu,comm | rg 'PID|audiomxd|configd'
 sudo launchctl print system/com.local.suspend-audiomxd
 ```
 
-After the helper exits, its `last exit code` should be `0`. If it cannot suspend
-the daemon within the startup wait, it exits with an error and is not retried.
+The guard should be listed as running. If a desktop session is frozen by an
+earlier version of the workaround, run `sudo killall -CONT audiomxd`, then
+rerun server setup.
 
 To remove the workaround and resume audio, run in this order:
 
@@ -135,7 +146,7 @@ its data directory if needed. Extra Bitcoin Core arguments are forwarded; for
 the initial sync with the larger cache:
 
 ```sh
-./server/bitcoin.sh -dbcache=8196
+./server/bitcoin.sh -dbcache=8192
 ```
 
 The launchers preserve the caller's working directory. Bitview and the benchmark
@@ -190,16 +201,16 @@ Move tokens from the old `shared.token`, `node.token`, and `mcp.token` files int
 this list if upgrading an existing setup.
 
 The token file is ignored by Git and resolved relative to `tunnels.sh`, so
-the launcher works from any directory. Start Bitcoin Core and Bitview first,
-then run:
+the launcher works from any directory. Start Bitcoin Core, Bitview, and the MCP
+server first, then run:
 
 ```sh
 ./server/tunnels.sh
 ```
 
 All tunnels log to the same terminal. Ctrl-C stops the tunnels started by
-this launcher. If Bitcoin Core, Bitview, or any tunnel exits, the launcher stops
-its remaining tunnels and exits; rerun it once the problem is resolved.
+this launcher. If Bitcoin Core, Bitview, the MCP server, or any tunnel exits, the
+launcher stops its remaining tunnels and exits; rerun it once the problem is resolved.
 
 ## Locate a mini
 
@@ -213,10 +224,10 @@ The script downloads nothing. It unmutes the current output and sets its volume
 to 100%. If `SwitchAudioSource` is already installed, it prefers the built-in
 speaker; otherwise, select it in **System Settings > Sound > Output** if needed.
 Ctrl-C stops playback and restores the previous output, volume, and mute state.
-If `audiomxd` was suspended, the script uses `sudo` to resume it before touching
-audio settings and suspends the same process again after restoring them. It
-also cleans up on termination, SSH disconnection, or command failure. A daemon
-that was already running is left running.
+At the login screen, the script uses `sudo` to hold `audiomxd` running before
+touching audio settings and releases the hold after restoring them; the guard
+then suspends it again within two seconds. It also cleans up on termination,
+SSH disconnection, or command failure.
 
 ## Verification
 

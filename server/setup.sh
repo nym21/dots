@@ -142,7 +142,11 @@ fi
 blueutil --power off
 echo "Bluetooth power: $(blueutil --power)"
 
-# Suspend the logged-out audio loop once now and after each boot.
+# Keep audiomxd suspended only while the console is at the login screen.
+# A suspended audiomxd is not restarted by macOS, so during a desktop session
+# every app that touches audio would hang on it. The guard resumes it as soon
+# as a user logs in. locate.sh holds it running for playback by refreshing
+# the hold file; holds older than a minute are ignored.
 PLIST_DEST="/Library/LaunchDaemons/com.local.suspend-audiomxd.plist"
 SERVICE="system/com.local.suspend-audiomxd"
 
@@ -162,19 +166,27 @@ cat > "$PLIST_TMP" <<'PLIST'
         <string>/bin/sh</string>
         <string>-c</string>
         <string>
-attempt=0
-while [ "$attempt" -lt 120 ]; do
-    if /usr/bin/killall -STOP audiomxd 2>/dev/null; then
-        exit 0
+hold=/var/run/com.local.audiomxd-hold
+while :; do
+    signal=CONT
+    if [ "$(/usr/bin/stat -f %Su /dev/console 2>/dev/null)" = root ]; then
+        signal=STOP
+        if mtime="$(/usr/bin/stat -f %m "$hold" 2>/dev/null)"; then
+            if [ "$(( $(/bin/date +%s) - mtime ))" -lt 60 ]; then
+                signal=CONT
+            fi
+        fi
     fi
-    /bin/sleep 1
-    attempt=$((attempt + 1))
+    /usr/bin/killall -"$signal" audiomxd 2>/dev/null
+    /bin/sleep 2
 done
-exec /usr/bin/killall -STOP audiomxd
         </string>
     </array>
 
     <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
     <true/>
 </dict>
 </plist>
@@ -193,8 +205,7 @@ sudo launchctl bootstrap system "$PLIST_DEST"
 rm -f "$PLIST_TMP"
 trap - EXIT
 
-echo "Installed: suspend audiomxd once now and after each boot."
-echo "Startup wait is limited to two minutes; there is no periodic retry after that."
+echo "Installed: audiomxd is suspended only while the console is at the login screen."
 
 echo
 echo "Server setup complete."

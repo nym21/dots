@@ -14,7 +14,8 @@ original_output=""
 playback_output=""
 saved_volume=""
 saved_mute=""
-resumed_audiomxd_pids=""
+AUDIOMXD_HOLD=/var/run/com.local.audiomxd-hold
+holding_audiomxd=false
 
 restore_audio() {
     if [ -n "$saved_volume" ] && [ -n "$saved_mute" ]; then
@@ -28,28 +29,28 @@ restore_audio() {
     if [ -n "$original_output" ]; then
         select_output "$original_output" || echo "Could not restore the previous audio output." >&2
     fi
-    for pid in $resumed_audiomxd_pids; do
-        if [ "$(ps -p "$pid" -o comm=)" = /usr/libexec/audiomxd ]; then
-            sudo -n /bin/kill -STOP "$pid" ||
-                echo "Could not suspend audiomxd (PID $pid) again." >&2
-        fi
-    done
+    # The server's login-screen guard suspends audiomxd again once released.
+    if [ "$holding_audiomxd" = true ]; then
+        sudo -n /bin/rm -f "$AUDIOMXD_HOLD" ||
+            echo "Could not release the audiomxd hold; it expires within a minute." >&2
+    fi
 }
 
 trap restore_audio EXIT
 trap 'exit 0' INT TERM HUP
 
-stopped_audiomxd_pids="$(
-    ps -axo pid=,state=,comm= |
-        awk '$2 ~ /T/ && $3 == "/usr/libexec/audiomxd" { print $1 }'
+# At the login screen the server's guard keeps audiomxd suspended. Hold it
+# running for playback; the guard honors a hold refreshed within a minute.
+stopped_audiomxd="$(
+    ps -axo state=,comm= |
+        awk '$1 ~ /T/ && $2 == "/usr/libexec/audiomxd" { found = 1 } END { if (found) print "yes" }'
 )"
-if [ -n "$stopped_audiomxd_pids" ]; then
+if [ "$(stat -f %Su /dev/console)" = root ] || [ -n "$stopped_audiomxd" ]; then
     sudo -v
     echo "Temporarily resuming audiomxd for playback."
-    for pid in $stopped_audiomxd_pids; do
-        resumed_audiomxd_pids="$resumed_audiomxd_pids $pid"
-        sudo -n /bin/kill -CONT "$pid"
-    done
+    holding_audiomxd=true
+    sudo -n /usr/bin/touch "$AUDIOMXD_HOLD"
+    sudo -n /usr/bin/killall -CONT audiomxd || true
 fi
 
 # Use an existing selector if available; never install anything.
@@ -74,9 +75,9 @@ osascript -e 'set volume output volume 100 output muted false'
 
 echo "Playing a short sound repeatedly on $(hostname) at 100% volume. Press Ctrl-C to stop."
 while true; do
-    # Keep cleanup authorized if playback runs beyond sudo's timestamp timeout.
-    if [ -n "$resumed_audiomxd_pids" ]; then
-        sudo -n -v
+    # Refresh the hold; this also keeps sudo authorized for cleanup.
+    if [ "$holding_audiomxd" = true ]; then
+        sudo -n /usr/bin/touch "$AUDIOMXD_HOLD"
     fi
     afplay /System/Library/Sounds/Ping.aiff
     sleep 1

@@ -7,7 +7,9 @@ TOKENS=()
 PIDS=()
 
 backends_running() {
-    pgrep -x bitcoind >/dev/null && pgrep -x bitviewd >/dev/null
+    pgrep -x bitcoind >/dev/null &&
+        pgrep -x bitviewd >/dev/null &&
+        pgrep -x bitview_mcp >/dev/null
 }
 
 command -v cloudflared >/dev/null || {
@@ -33,7 +35,7 @@ if [ "${#TOKENS[@]}" -eq 0 ]; then
 fi
 
 if ! backends_running; then
-    echo "Start bitcoind and bitviewd before starting the tunnels." >&2
+    echo "Start bitcoind, bitviewd, and bitview_mcp before starting the tunnels." >&2
     exit 1
 fi
 
@@ -58,7 +60,7 @@ done
 
 while true; do
     if ! backends_running; then
-        echo "bitcoind or bitviewd is down; stopping this session's tunnels." >&2
+        echo "bitcoind, bitviewd, or bitview_mcp is down; stopping this session's tunnels." >&2
         exit 1
     fi
     for index in "${!PIDS[@]}"; do
