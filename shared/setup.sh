@@ -119,8 +119,10 @@ shared_setup() {
     if [ -L ~/.codex/config.toml ]; then
         rm ~/.codex/config.toml
     fi
-    sudo mkdir -p /etc/codex
-    sudo ln -sfn "$SHARED_DIR/etc/codex/config.toml" /etc/codex/config.toml
+    if [ "$(readlink /etc/codex/config.toml)" != "$SHARED_DIR/etc/codex/config.toml" ]; then
+        sudo mkdir -p /etc/codex
+        sudo ln -sfn "$SHARED_DIR/etc/codex/config.toml" /etc/codex/config.toml
+    fi
 
     # --- Claude Code ---
     echo "Linking Claude Code settings..."
