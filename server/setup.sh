@@ -104,13 +104,6 @@ done
 # sshd still handles authentication.
 sudo systemsetup -setremotelogin on
 
-# Keep Screen Sharing available on demand, without restarting
-# active connections when setup is rerun.
-sudo launchctl enable system/com.apple.screensharing
-if ! sudo launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
-    sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist
-fi
-
 # Disable unused wireless radios. Refuse to turn off the server's active
 # network path so remote setup cannot strand the machine.
 WIFI_DEVICE="$(
@@ -238,17 +231,28 @@ if { [ "$PROFILE_STATE" = missing ] || [ "$PROFILE_STATE" = outdated ]; } &&
     open "$SERVER_PROFILE" || echo "Open $SERVER_PROFILE manually to review and install it." >&2
 fi
 
+# Screen Sharing gets permission to capture the screen only when it is turned
+# on in System Settings. Enabled with launchctl, it accepts connections but
+# fails them with "Screen Sharing is not permitted".
+REMAINING=''
+if ! launchctl print-disabled system 2>/dev/null |
+    grep -Eq '"com\.apple\.screensharing" => (enabled|false)'; then
+    REMAINING="$REMAINING
+  - General > Sharing: turn on Screen Sharing."
+fi
+
 echo
 case "$PROFILE_STATE" in
-    missing | outdated)
-        echo "Remaining in System Settings:"
-        if [ "$PROFILE_STATE" = missing ]; then
-            echo "  - General > Device Management: install the server profile."
-        else
-            echo "  - General > Device Management: reinstall the server profile."
-            echo "    It changed since it was installed."
-        fi
-        echo "    Open $SERVER_PROFILE on this Mac first if it is not listed."
+    missing)
+        REMAINING="$REMAINING
+  - General > Device Management: install the server profile.
+    Open $SERVER_PROFILE on this Mac first if it is not listed."
+        ;;
+    outdated)
+        REMAINING="$REMAINING
+  - General > Device Management: reinstall the server profile.
+    It changed since it was installed.
+    Open $SERVER_PROFILE on this Mac first if it is not listed."
         ;;
     current)
         echo "Server profile is installed and current."
@@ -258,5 +262,8 @@ case "$PROFILE_STATE" in
         echo "  $SERVER_PROFILE."
         ;;
 esac
+if [ -n "$REMAINING" ]; then
+    echo "Remaining in System Settings:$REMAINING"
+fi
 echo "Optional cleanup: $ROLE_DIR/README.md"
 echo "Then log out of the desktop."

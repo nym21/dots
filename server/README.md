@@ -34,12 +34,11 @@ For an existing session reporting `missing or unsuitable terminal: xterm-ghostty
 TERM=xterm-256color tmux
 ```
 
-Server setup keeps SSH enabled and starts Screen Sharing, which must still be
-turned on once in System Settings (below). File transfers use `tcopy`
-over SSH. It disables File Sharing (SMB), Spotlight indexing on mounted volumes,
-Content Caching, printer sharing, and remote Apple Events. It also prevents idle
-sleep and enables restart after power loss. Screen Sharing starts on demand
-without being restarted on reruns.
+Server setup keeps SSH enabled; Screen Sharing is turned on once in System
+Settings (below). File transfers use `tcopy` over SSH. It disables File Sharing
+(SMB), Spotlight indexing on mounted volumes, Content Caching, printer sharing,
+and remote Apple Events. It also prevents idle sleep and enables restart after
+power loss.
 Setup also installs the login-aware `audiomxd` suspension workaround below.
 Fish is configured as the login shell for future terminal and SSH sessions;
 `exec fish -l` is only needed
@@ -47,12 +46,14 @@ to switch the terminal that launched setup immediately.
 
 ## Finish once in System Settings
 
-For a new Mac, use its desktop or Screen Sharing. Skip items already completed.
+For a new Mac, use its desktop. Skip items already completed; setup lists the
+ones it can detect as remaining.
 
-In **General > Sharing**, turn **Screen Sharing** off and on again, and check
-that the server's user is allowed. Setup starts the service, but macOS refuses
-connections with "Screen Sharing is not permitted" until it is turned on here,
-so this step needs the mini's own desktop.
+In **General > Sharing**, turn on **Screen Sharing** and check that the server's
+user is allowed. Only this switch gives Screen Sharing permission to capture the
+screen. Enabled from the command line, as earlier versions of setup did, it
+accepts connections but fails them with "Screen Sharing is not permitted"; turn
+it off and on again here to fix that.
 
 In **General > Device Management**, install **Headless Mac mini server** from
 [profile.mobileconfig](profile.mobileconfig). Local setup opens the file if
