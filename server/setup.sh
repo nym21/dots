@@ -211,25 +211,52 @@ echo
 echo "Server setup complete."
 
 # macOS requires approval in System Settings to install local profiles.
+# The profile's top-level PayloadUUID changes with its contents, so an
+# installed profile with a different UUID is out of date.
 SERVER_PROFILE="$ROLE_DIR/profile.mobileconfig"
 PROFILE_IDENTIFIER="$(plutil -extract PayloadIdentifier raw "$SERVER_PROFILE")"
-PROFILE_INSTALLED=false
+PROFILE_UUID="$(plutil -extract PayloadUUID raw "$SERVER_PROFILE")"
+PROFILE_STATE=missing
 if sudo profiles list -type configuration | awk -v identifier="$PROFILE_IDENTIFIER" '
     $3 == "profileIdentifier:" && $4 == identifier { found = 1 }
     END { exit !found }
 '; then
-    PROFILE_INSTALLED=true
-elif [ -z "${SSH_CONNECTION:-}" ]; then
+    PROFILE_STATE=unknown
+    INSTALLED_UUID="$(sudo profiles show -type configuration 2>/dev/null | awk -v identifier="$PROFILE_IDENTIFIER" '
+        $2 == "attribute:" { attributes[$1, $3] = $4 }
+        $2 == "attribute:" && $3 == "profileIdentifier:" && $4 == identifier { profile = $1 }
+        END { if (profile != "") print attributes[profile, "profileUUID:"] }
+    ')"
+    if [ "$INSTALLED_UUID" = "$PROFILE_UUID" ]; then
+        PROFILE_STATE=current
+    elif [ -n "$INSTALLED_UUID" ]; then
+        PROFILE_STATE=outdated
+    fi
+fi
+if { [ "$PROFILE_STATE" = missing ] || [ "$PROFILE_STATE" = outdated ]; } &&
+    [ -z "${SSH_CONNECTION:-}" ]; then
     open "$SERVER_PROFILE" || echo "Open $SERVER_PROFILE manually to review and install it." >&2
 fi
 
 echo
-if [ "$PROFILE_INSTALLED" = false ]; then
-    echo "Remaining in System Settings:"
-    echo "  - General > Device Management: install the server profile."
-    echo "    Open $SERVER_PROFILE on this Mac first if it is not listed."
-else
-    echo "Server profile is already installed."
-fi
+case "$PROFILE_STATE" in
+    missing | outdated)
+        echo "Remaining in System Settings:"
+        if [ "$PROFILE_STATE" = missing ]; then
+            echo "  - General > Device Management: install the server profile."
+        else
+            echo "  - General > Device Management: reinstall the server profile."
+            echo "    It changed since it was installed."
+        fi
+        echo "    Open $SERVER_PROFILE on this Mac first if it is not listed."
+        ;;
+    current)
+        echo "Server profile is installed and current."
+        ;;
+    *)
+        echo "Server profile is installed; could not check whether it matches"
+        echo "  $SERVER_PROFILE."
+        ;;
+esac
 echo "Optional cleanup: $ROLE_DIR/README.md"
 echo "Then log out of the desktop."

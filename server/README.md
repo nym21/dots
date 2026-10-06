@@ -60,9 +60,10 @@ Siri, external AI integrations, and supported Apple Intelligence features off.
 It also forces settings that have no restriction off: "Hey Siri", the Siri menu
 bar icon, automatic summaries in Mail, Messages, and notifications, inline text
 predictions, and Spatial Photos. It adds no background service.
-Reinstall the profile after changing `server/profile.mobileconfig`; setup checks whether
-its identifier is installed, not whether its contents have changed. Remove it
-from Device Management to release its restrictions.
+When changing `server/profile.mobileconfig`, replace its top-level `PayloadUUID`
+with a new `uuidgen` value. Setup compares it with the installed profile and
+asks for a reinstall when they differ. Remove the profile from Device
+Management to release its restrictions.
 
 macOS requires approval in System Settings to install local configuration
 profiles. The profile does not modify Full Disk Access; the initial setup check

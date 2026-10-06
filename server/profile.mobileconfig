@@ -219,8 +219,9 @@
 	<string>System</string>
 	<key>PayloadType</key>
 	<string>Configuration</string>
+	<!-- Replace with a new uuidgen value whenever this file changes. -->
 	<key>PayloadUUID</key>
-	<string>AEC8F728-B5BD-4688-B9EF-9C4B2B8DF32E</string>
+	<string>74773529-E5B8-448E-95FE-7969FC57558C</string>
 	<key>PayloadVersion</key>
 	<integer>1</integer>
 </dict>
