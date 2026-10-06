@@ -20,6 +20,7 @@ shared_setup
 mkdir -p ~/.config/zed ~/.local/bin "$HOME/Library/Application Support/com.mitchellh.ghostty"
 link "$ROLE_DIR/tssh" ~/.local/bin/tssh
 link "$ROLE_DIR/tcopy" ~/.local/bin/tcopy
+link "$ROLE_DIR/tscreen" ~/.local/bin/tscreen
 git config --global core.editor "zed --wait"
 link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
 link "$ROLE_DIR/home/.config/ghostty/config.ghostty" \

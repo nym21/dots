@@ -43,20 +43,36 @@ Each folder has its own `Brewfile`. Shared Cargo packages are listed in
 
 ## SSH over Tailscale
 
-PC setup makes `tssh` and `tcopy` available on your PATH:
+PC setup makes `tssh`, `tcopy`, and `tscreen` available on your PATH:
 
 ```sh
 tssh mini@tailscale-host
 ```
 
-Copy a directory using `tcopy SOURCE DESTINATION`:
+Copy a directory in either direction using `tcopy SOURCE DESTINATION`:
 
 ```sh
 tcopy mini@m6-1:/absolute/path/to/run-folder/ "$HOME/bench-m6-1-main/"
+tcopy "$HOME/bench-m6-1-main/" mini@m6-1:/absolute/path/to/run-folder/
 ```
 
 It uses rsync over `tssh`, with progress and partial transfers retained for
 resuming. A trailing `/` on the source copies the directory's contents.
+
+Open Screen Sharing to a Tailscale host with `tscreen`:
+
+```sh
+tscreen mini@m6-2
+```
+
+Tailscale host names only resolve inside `tssh`, so `vnc://m6-2` does not work
+directly. When `tailscale ping` reaches the host directly at a private LAN
+address, `tscreen` opens Screen Sharing on that address, which allows High
+Performance mode. Otherwise it forwards the host's Screen Sharing port through
+`tssh` to a free local port from 5901 and opens Screen Sharing on it in Standard
+mode. The tunnel closes after Screen Sharing disconnects, or after a minute if it
+never connects. `tssh --tailscale ARGS` runs other `tailscale` commands, such as
+`status`, against the same daemon.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.

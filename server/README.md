@@ -34,7 +34,8 @@ For an existing session reporting `missing or unsuitable terminal: xterm-ghostty
 TERM=xterm-256color tmux
 ```
 
-Server setup keeps SSH and Screen Sharing enabled. File transfers use `tcopy`
+Server setup keeps SSH enabled and starts Screen Sharing, which must still be
+turned on once in System Settings (below). File transfers use `tcopy`
 over SSH. It disables File Sharing (SMB), Spotlight indexing on mounted volumes,
 Content Caching, printer sharing, and remote Apple Events. It also prevents idle
 sleep and enables restart after power loss. Screen Sharing starts on demand
@@ -47,6 +48,11 @@ to switch the terminal that launched setup immediately.
 ## Finish once in System Settings
 
 For a new Mac, use its desktop or Screen Sharing. Skip items already completed.
+
+In **General > Sharing**, turn **Screen Sharing** off and on again, and check
+that the server's user is allowed. Setup starts the service, but macOS refuses
+connections with "Screen Sharing is not permitted" until it is turned on here,
+so this step needs the mini's own desktop.
 
 In **General > Device Management**, install **Headless Mac mini server** from
 [profile.mobileconfig](profile.mobileconfig). Local setup opens the file if

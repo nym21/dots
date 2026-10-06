@@ -1,0 +1,63 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    echo "usage: $0 [ssh-options] user@tailscale-host" >&2
+    exit 2
+}
+
+[ "$#" -gt 0 ] || usage
+
+# Prefill the remote user in Screen Sharing's login prompt.
+for destination; do :; done
+host="${destination#*@}"
+case "$destination" in
+    *@*) vnc_user="${destination%%@*}@" ;;
+    *) vnc_user='' ;;
+esac
+
+# On the same network, connect straight to the host's LAN address so Screen
+# Sharing can use High Performance, which the ssh tunnel cannot carry.
+# Tailscale only reports a pong via an address after the host's own keys
+# answered from it, so credentials never go to another machine there.
+echo "Looking for a direct connection to $host..." >&2
+direct="$(tssh --tailscale ping -c 3 --timeout 2s "$host" 2>/dev/null |
+    sed -n 's/^pong from .* via \([0-9.]*\):[0-9]* in .*/\1/p' | tail -n 1)"
+case "$direct" in
+    10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*)
+        if nc -z -G 2 "$direct" 5900 2>/dev/null; then
+            echo "Connecting directly to $direct." >&2
+            exec open "vnc://$vnc_user$direct"
+        fi
+        ;;
+esac
+
+# Screen Sharing refuses this Mac's own port 5900, so forward a free one above it.
+port=5901
+while nc -z 127.0.0.1 "$port" 2>/dev/null; do
+    port=$((port + 1))
+    if [ "$port" -gt 5999 ]; then
+        echo "error: no free local port between 5901 and 5999" >&2
+        exit 1
+    fi
+done
+
+# Open Screen Sharing once ssh has authenticated and the forward listens.
+# The poller stops on its own when this script exits.
+(
+    while kill -0 "$$" 2>/dev/null; do
+        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+            open "vnc://${vnc_user}127.0.0.1:$port"
+            exit 0
+        fi
+        sleep 0.2
+    done
+) &
+
+echo "No direct connection; tunneling through tssh (Standard mode only)." >&2
+echo "Screen Sharing opens once connected; the tunnel closes after it disconnects." >&2
+
+# ssh exits once the remote sleep ends and every forwarded connection has
+# closed, so the minute only bounds how long Screen Sharing has to connect.
+tssh -o ExitOnForwardFailure=yes -L "127.0.0.1:$port:localhost:5900" "$@" sleep 60

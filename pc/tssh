@@ -4,10 +4,19 @@ set -eu
 
 usage() {
     echo "usage: $0 [ssh-options] user@tailscale-host" >&2
+    echo "       $0 --tailscale tailscale-arguments" >&2
     exit 2
 }
 
 [ "$#" -gt 0 ] || usage
+
+# --tailscale runs a tailscale command against the shared daemon instead of ssh.
+mode=ssh
+if [ "$1" = "--tailscale" ]; then
+    mode=tailscale
+    shift
+    [ "$#" -gt 0 ] || usage
+fi
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "error: this wrapper currently supports macOS only" >&2
@@ -166,6 +175,14 @@ done
 # settings reuses the connection, and retries setup if a previous login failed.
 "$tailscale_bin" --socket="$socket" up --accept-dns=false
 exec 9>&-
+
+if [ "$mode" = tailscale ]; then
+    set +e
+    "$tailscale_bin" --socket="$socket" "$@"
+    tailscale_status=$?
+    set -e
+    exit "$tailscale_status"
+fi
 
 proxy_command="$tailscale_bin --socket=$socket nc %h %p"
 
