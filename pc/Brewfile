@@ -1,4 +1,3 @@
-cask "codex"
 cask "iina"
 cask "oversight"
 cask "raycast"

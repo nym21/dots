@@ -21,6 +21,11 @@ It links `shared/home/` and the role's dotfiles into your home directory,
 preserving existing files as `.backup`. Edit those repository files to change
 the linked settings.
 
+Codex settings are the exception: Codex rewrites `~/.codex/config.toml` with
+machine state, so `shared/etc/codex/config.toml` is linked to
+`/etc/codex/config.toml` instead. Codex reads that as defaults that
+`~/.codex/config.toml` overrides.
+
 ## Layout
 
 - `shared/`: common packages, dotfiles, setup internals, and maintenance tools.
