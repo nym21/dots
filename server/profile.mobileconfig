@@ -36,6 +36,8 @@
 			<false/>
 			<key>allowExternalIntelligenceIntegrations</key>
 			<false/>
+			<key>allowExternalIntelligenceIntegrationsSignIn</key>
+			<false/>
 			<key>allowAppleIntelligenceReport</key>
 			<false/>
 			<key>allowGenmoji</key>
@@ -54,6 +56,153 @@
 			<false/>
 			<key>allowSafariSummary</key>
 			<false/>
+		</dict>
+		<!--
+			Undocumented preference keys for settings without a restriction, and
+			download overrides that point each Apple Intelligence model set at a
+			closed local port so macOS does not download it again. Mapped by
+			RemoveMacAI (github.com/omlahore/RemoveMacAI) and pared
+			(github.com/4evy/pared), both MIT. A macOS update can stop honoring them.
+		-->
+		<dict>
+			<key>PayloadDescription</key>
+			<string>Force Apple Intelligence settings that have no restriction off and block its model downloads.</string>
+			<key>PayloadDisplayName</key>
+			<string>Apple Intelligence settings and model downloads</string>
+			<key>PayloadIdentifier</key>
+			<string>com.k.dots.server.preferences</string>
+			<key>PayloadType</key>
+			<string>com.apple.ManagedClient.preferences</string>
+			<key>PayloadUUID</key>
+			<string>C3E3876A-7AFB-4EAD-AAA2-180E5FD9ECD0</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>PayloadContent</key>
+			<dict>
+				<!-- Siri, "Hey Siri", and the menu bar icon -->
+				<key>com.apple.assistant.support</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>Assistant Enabled</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+				<key>com.apple.Siri</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>StatusMenuVisible</key>
+								<false/>
+								<key>VoiceTriggerUserEnabled</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+
+				<!-- Automatic summaries in Mail, Messages, and notifications -->
+				<key>group.com.apple.mail</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>DisableAutomaticMessageSummarization</key>
+								<true/>
+								<key>PersonalizedSmartReplies</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+				<key>com.apple.MobileSMS</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>messageSummarizationEnabled</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+				<key>group.com.apple.usernoted</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>summarize_previews</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+
+				<!-- Inline text predictions and Spatial Photos -->
+				<key>.GlobalPreferences</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>NSAutomaticInlinePredictionEnabled</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+				<key>com.apple.spatialphotosrelive</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>LocallyDisabled</key>
+								<true/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+
+				<!-- Model downloads -->
+				<key>com.apple.MobileAsset</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>DownloadServerBaseURLOverride-com.apple.MobileAsset.UAF.FM.GenerativeModels</key>
+								<string>https://127.0.0.1:9/blocked/</string>
+								<key>DownloadServerBaseURLOverride-com.apple.MobileAsset.UAF.FM.Visual</key>
+								<string>https://127.0.0.1:9/blocked/</string>
+								<key>DownloadServerBaseURLOverride-com.apple.MobileAsset.UAF.FM.CodeLM</key>
+								<string>https://127.0.0.1:9/blocked/</string>
+								<key>DownloadServerBaseURLOverride-com.apple.MobileAsset.UAF.Photos.MagicCleanup</key>
+								<string>https://127.0.0.1:9/blocked/</string>
+								<key>DownloadServerBaseURLOverride-com.apple.MobileAsset.UAF.Photos.SpatialPhotosRelive</key>
+								<string>https://127.0.0.1:9/blocked/</string>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+			</dict>
 		</dict>
 	</array>
 	<key>PayloadDescription</key>

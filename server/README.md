@@ -57,9 +57,9 @@ sessions. Recheck these settings after a major macOS upgrade.
 
 The profile configures Handoff, AirDrop, AirPlay Receiver, diagnostic submission,
 Siri, external AI integrations, and supported Apple Intelligence features off.
-It adds no background service. Its Mail summary restriction covers manually
-requested summaries, not automatic summaries; Mail and Messages need no setup
-on a fresh server without those accounts configured.
+It also forces settings that have no restriction off: "Hey Siri", the Siri menu
+bar icon, automatic summaries in Mail, Messages, and notifications, inline text
+predictions, and Spatial Photos. It adds no background service.
 Reinstall the profile after changing `server/profile.mobileconfig`; setup checks whether
 its identifier is installed, not whether its contents have changed. Remove it
 from Device Management to release its restrictions.
@@ -67,12 +67,32 @@ from Device Management to release its restrictions.
 macOS requires approval in System Settings to install local configuration
 profiles. The profile does not modify Full Disk Access; the initial setup check
 covers the process running setup.
-No TCC database edits or undocumented preference writes are used for these
-settings. Turning a feature off does not guarantee its process disappears.
+No TCC database edits are used. The forced settings and model download block use
+undocumented preference keys, mapped by
+[RemoveMacAI](https://github.com/omlahore/RemoveMacAI) and
+[pared](https://github.com/4evy/pared); recheck them after a macOS upgrade.
+Turning a feature off does not guarantee its process disappears.
 
 Apple references: [profile installation](https://support.apple.com/guide/mac-help/mh35561/mac),
 [profile restrictions](https://developer.apple.com/documentation/devicemanagement/restrictions),
 [managed privacy permissions](https://developer.apple.com/documentation/devicemanagement/privacypreferencespolicycontrol).
+
+### Apple Intelligence models
+
+The profile stops macOS downloading the Apple Intelligence models again, but it
+does not delete models already on disk. To delete them once, on the mini's
+desktop or through Screen Sharing:
+
+```sh
+brew install omlahore/tap/removemacai
+removemacai off
+```
+
+RemoveMacAI installs its own profile before deleting the models. Check the
+result with `removemacai status`, then remove the **RemoveMacAI** profile in
+**General > Device Management** and run `brew uninstall removemacai`. The server
+profile keeps the downloads blocked. macOS deletes the model files on its own
+schedule, so Storage settings can count them for a while.
 
 ## Optional cleanup
 
@@ -80,7 +100,6 @@ These settings are not applied by the profile. On a fresh headless Mac, review
 them only if enabled during setup:
 
 - **General > Sharing:** turn off Media Sharing and Bluetooth Sharing.
-- **Notifications:** turn off notification summaries.
 - **Privacy & Security > Analytics & Improvements:** turn off other optional
   contributions. The profile blocks automatic diagnostic submission only.
 
