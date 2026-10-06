@@ -113,16 +113,15 @@ shared_setup() {
 
     # --- Codex ---
     # Codex rewrites ~/.codex/config.toml with machine state (trusted projects,
-    # app preferences), replacing any symlink. Shared settings go in the system
-    # layer instead, which Codex only reads and ~/.codex/config.toml overrides.
-    echo "Linking Codex settings..."
+    # app preferences), replacing any symlink. Shared settings are merged into
+    # it instead, overwriting the keys they set and keeping the rest.
+    echo "Merging Codex settings..."
+    mkdir -p ~/.codex
     if [ -L ~/.codex/config.toml ]; then
         rm ~/.codex/config.toml
     fi
-    if [ "$(readlink /etc/codex/config.toml)" != "$SHARED_DIR/etc/codex/config.toml" ]; then
-        sudo mkdir -p /etc/codex
-        sudo ln -sfn "$SHARED_DIR/etc/codex/config.toml" /etc/codex/config.toml
-    fi
+    uv run --quiet "$SHARED_DIR/merge-toml.py" \
+        "$SHARED_DIR/home/.codex/config.toml" ~/.codex/config.toml
 
     # --- Claude Code ---
     echo "Linking Claude Code settings..."

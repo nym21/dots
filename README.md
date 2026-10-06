@@ -22,9 +22,11 @@ preserving existing files as `.backup`. Edit those repository files to change
 the linked settings.
 
 Codex settings are the exception: Codex rewrites `~/.codex/config.toml` with
-machine state, so `shared/etc/codex/config.toml` is linked to
-`/etc/codex/config.toml` instead. Codex reads that as defaults that
-`~/.codex/config.toml` overrides.
+machine state, replacing any symlink, so setup merges
+`shared/home/.codex/config.toml` into it instead. Shared keys overwrite the
+machine's values and everything else is kept; re-run setup after changing the
+shared file. Removing a key from the shared file does not remove it from
+machines that already have it.
 
 ## Layout
 
