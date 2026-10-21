@@ -81,19 +81,23 @@ mode. The tunnel closes after Screen Sharing disconnects, or after a minute if i
 never connects. `tssh --tailscale ARGS` runs other `tailscale` commands, such as
 `status`, against the same daemon.
 
-Keep a server's Rex reachable from the Rex app with `trex`, then add the
-printed `http://127.0.0.1:PORT` URL in Rex with Add Remote Host, and name it
-in Settings > Remote Hosts:
+Keep every server's Rex reachable from the Rex app with `trex`, then add each
+printed `http://127.0.0.1:PORT` URL in Rex with Add Remote Host, named after
+its server:
 
 ```sh
-trex mini@m6-2 7402
-trex --remove mini@m6-2
+trex         # forward every server on the tailnet
+trex --stop  # stop them all until the next trex
 ```
 
-It runs `tssh` as a LaunchAgent that starts at login and reconnects on its own,
-so the host needs key-based SSH login. The Rex app only accepts http(s) hosts
-and Rex has no login on them, so any process on this Mac can use the port to
-act as the server's user. Remove the forward when you don't need it.
+The servers are the other Macs on the tailnet, under their Tailscale names.
+`trex` checks a new one once and skips it unless it accepts your SSH key as
+`mini` and runs a Rex server. Each server keeps the port it was first given, in
+`~/Library/Application Support/trex/ports`, so saved hosts stay valid; run
+`trex` again after adding a server. Each forward runs `tssh` as a LaunchAgent
+that starts at login and reconnects on its own. The Rex app only accepts
+http(s) hosts and Rex has no login on them, so any process on this Mac can use
+the ports to act as the servers' users.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.
