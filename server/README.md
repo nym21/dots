@@ -239,6 +239,33 @@ All tunnels log to the same terminal. Ctrl-C stops the tunnels started by
 this launcher. If Bitcoin Core, Bitview, the MCP server, or any tunnel exits, the
 launcher stops its remaining tunnels and exits; rerun it once the problem is resolved.
 
+## Rex
+
+`server/rex.sh` installs the Rex server from Rex's update feed and runs it at
+boot as the `com.local.rex` LaunchDaemon under the server's user, so it works at
+the login screen. The Rex app's own updater only runs in a desktop session.
+
+The feed is not public, so its URL lives in the Git-ignored `server/.rex-feed`.
+Copy it from the Rex app on your other Mac:
+
+```sh
+plutil -extract SUFeedURL raw "/Applications/Rex Beta.app/Contents/Info.plist" |
+    tssh mini@tailscale-host 'cat > ~/Developer/dots/server/.rex-feed'
+```
+
+Then, on the mini:
+
+```sh
+./server/rex.sh
+```
+
+It downloads the newest build when it is not installed, checks its Developer ID
+signature, and installs it in `~/Applications/Rex Server.app`,
+linked as `~/.local/bin/rex`. Run it again to update. Restarting the server
+ends its sessions and every program running in them, so when sessions are open
+it asks first; without a terminal to ask in, it leaves the running server alone.
+The server logs to `~/Library/Logs/rex-server.log`.
+
 ## Locate a mini
 
 Run `./server/locate.sh` on the mini to loop a short sound, or start it remotely:
