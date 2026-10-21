@@ -50,7 +50,7 @@ Each folder has its own `Brewfile`. Shared Cargo packages are listed in
 
 ## SSH over Tailscale
 
-PC setup makes `tssh`, `tcopy`, and `tscreen` available on your PATH:
+PC setup makes `tssh`, `tcopy`, `tscreen`, and `trex` available on your PATH:
 
 ```sh
 tssh mini@tailscale-host
@@ -80,6 +80,20 @@ Performance mode. Otherwise it forwards the host's Screen Sharing port through
 mode. The tunnel closes after Screen Sharing disconnects, or after a minute if it
 never connects. `tssh --tailscale ARGS` runs other `tailscale` commands, such as
 `status`, against the same daemon.
+
+Keep a server's Rex reachable from the Rex app with `trex`, then add the
+printed `http://127.0.0.1:PORT` URL in Rex with Add Remote Host, and name it
+in Settings > Remote Hosts:
+
+```sh
+trex mini@m6-2 7402
+trex --remove mini@m6-2
+```
+
+It runs `tssh` as a LaunchAgent that starts at login and reconnects on its own,
+so the host needs key-based SSH login. The Rex app only accepts http(s) hosts
+and Rex has no login on them, so any process on this Mac can use the port to
+act as the server's user. Remove the forward when you don't need it.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.

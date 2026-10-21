@@ -1,0 +1,123 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    echo "usage: $0 user@tailscale-host local-port" >&2
+    echo "       $0 --remove user@tailscale-host" >&2
+    exit 2
+}
+
+# Keep a host's Rex server reachable at http://127.0.0.1:PORT through tssh, as
+# a LaunchAgent that starts at login and reconnects on its own. Needs key-based
+# SSH login. The Rex app only takes http(s) hosts, and Rex has no login on
+# them, so any process on this Mac can use the port to act as the host's user.
+
+remove=0
+if [ "${1:-}" = "--remove" ]; then
+    remove=1
+    shift
+    [ "$#" -eq 1 ] || usage
+else
+    [ "$#" -eq 2 ] || usage
+fi
+destination="$1"
+case "$destination" in
+    *@*) ;;
+    *) usage ;;
+esac
+user="${destination%%@*}"
+host="${destination#*@}"
+
+label="com.local.trex.$host"
+domain="gui/$(id -u)"
+plist="$HOME/Library/LaunchAgents/$label.plist"
+log="$HOME/Library/Logs/trex-$host.log"
+
+launchctl bootout "$domain/$label" 2>/dev/null || true
+# bootout can return before launchd finishes removing the service, and an
+# immediate bootstrap then fails with an I/O error.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    launchctl print "$domain/$label" >/dev/null 2>&1 || break
+    sleep 0.25
+done
+
+if [ "$remove" -eq 1 ]; then
+    rm -f "$plist"
+    echo "Stopped forwarding Rex on $host."
+    exit 0
+fi
+
+port="$2"
+case "$port" in
+    ''|*[!0-9]*) usage ;;
+esac
+if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+    echo "error: something else already listens on 127.0.0.1:$port" >&2
+    exit 1
+fi
+
+tssh="$(command -v tssh)"
+remote_socket="/Users/$user/Library/Application Support/rex/server.sock"
+
+mkdir -p "$(dirname "$plist")" "$(dirname "$log")"
+cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$label</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$tssh</string>
+        <string>-N</string>
+        <string>-o</string>
+        <string>BatchMode=yes</string>
+        <string>-o</string>
+        <string>ExitOnForwardFailure=yes</string>
+        <string>-o</string>
+        <string>ServerAliveInterval=15</string>
+        <string>-o</string>
+        <string>ServerAliveCountMax=3</string>
+        <string>-L</string>
+        <string>127.0.0.1:$port:$remote_socket</string>
+        <string>$destination</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>$log</string>
+    <key>StandardErrorPath</key>
+    <string>$log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
+PLIST
+
+plutil -lint "$plist" >/dev/null
+launchctl bootstrap "$domain" "$plist"
+
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+        echo "Rex on $host: http://127.0.0.1:$port"
+        exit 0
+    fi
+    sleep 0.5
+done
+echo "Not connected yet; log: $log" >&2
+exit 1
