@@ -5,6 +5,21 @@ brew upgrade
 brew cleanup
 cargo install-update --all --locked
 
+# Mullvad's split tunneling excludes cloudflared by its versioned Cellar path,
+# which an upgrade replaces. Move an existing exclusion to the current binary.
+if command -v mullvad >/dev/null 2>&1 && command -v cloudflared >/dev/null 2>&1; then
+    cloudflared_bin="$(readlink -f "$(command -v cloudflared)")"
+    excluded="$(mullvad split-tunnel get | grep '/Cellar/cloudflared/.*/bin/cloudflared$' || true)"
+    if [ -n "$excluded" ]; then
+        while IFS= read -r path; do
+            [ "$path" = "$cloudflared_bin" ] || mullvad split-tunnel app remove "$path"
+        done <<< "$excluded"
+        if ! grep -Fxq "$cloudflared_bin" <<< "$excluded"; then
+            mullvad split-tunnel app add "$cloudflared_bin"
+        fi
+    fi
+fi
+
 # Restart last: a server update may be running over this Tailscale connection.
 if launchctl print system/com.local.tailscaled >/dev/null 2>&1; then
     sudo launchctl kickstart -k system/com.local.tailscaled
