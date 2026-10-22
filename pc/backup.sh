@@ -63,22 +63,36 @@ if [ -z "$volume" ]; then
     echo "Connect the backup disk $name, then run ship backup again." >&2
     exit 1
 fi
-# Its password, asked once and kept in the login keychain, so later backups
-# unlock it without anyone there: macOS does not ask for a backup disk's.
-if [ "$(diskutil info "$volume" | awk -F ': *' '/^ *Mounted:/ { print $2 }')" != Yes ]; then
+# Its password, asked once, checked, and kept in the login keychain, so later
+# backups unlock it without anyone there: macOS does not ask for a backup
+# disk's. An unencrypted disk has none.
+user="$(diskutil apfs listCryptoUsers "$volume" 2>/dev/null | awk '/^\+--/ { print $2; exit }')"
+if [ -n "$user" ]; then
     item="dots backup disk $name"
+    valid() {
+        printf '%s' "$1" | diskutil apfs unlockVolume "$volume" -user "$user" -verify -stdinpassphrase >/dev/null 2>&1
+    }
     password="$(security find-generic-password -s "$item" -w 2>/dev/null || true)"
-    if [ -z "$password" ] || ! printf '%s' "$password" | diskutil apfs unlockVolume "$volume" -stdinpassphrase >/dev/null; then
+    if [ -z "$password" ] || ! valid "$password"; then
         read -r -s -p "Password of the backup disk $name: " password </dev/tty
         echo
-        printf '%s' "$password" | diskutil apfs unlockVolume "$volume" -stdinpassphrase >/dev/null
+        if ! valid "$password"; then
+            echo "That is not $name's password." >&2
+            exit 1
+        fi
         security add-generic-password -U -s "$item" -a "$USER" -w "$password"
-        echo "Unlocked $name, its password kept in the login keychain for next time."
-    else
-        echo "Unlocked $name."
+        echo "Kept $name's password in the login keychain."
     fi
-    unset password
 fi
+if [ "$(diskutil info "$volume" | awk -F ': *' '/^ *Mounted:/ { print $2 }')" != Yes ]; then
+    if [ -n "$user" ]; then
+        printf '%s' "$password" | diskutil apfs unlockVolume "$volume" -stdinpassphrase >/dev/null
+    else
+        diskutil mount "$volume" >/dev/null
+    fi
+    echo "Unlocked $name."
+fi
+unset password
 
 before="$(tmutil latestbackup 2>/dev/null || true)"
 if running; then
