@@ -7,11 +7,16 @@ set -euo pipefail
 # tssh, as mini, and runs ship there. A server keeps what it was given, so it
 # boots and serves without the workstation.
 #
-#   fleet status [SERVER...]   one line per server, and how it differs from fleet.conf
-#   fleet update [SERVER...]   give each server its mode and tunnels, then run ship
-#                              update there: those not in prod first, then prod one
-#                              at a time, each serving again before the next
-#   fleet restart [SERVER...]  stop and start each server's workloads, in that order
+#   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
+#   fleet update [SERVER...]   bring the servers to the newest version of their mode
+#   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
+#
+# A tunnel never serves two versions. An update pins one version per mode for
+# the whole run, and updates the servers that share a tunnel together: each
+# leaves the shared tunnels while it updates, the others still serving them,
+# and the updated ones take them back before the last one leaves. Servers not
+# in prod go first, so a bad version shows there before prod, and each must
+# serve again before the next.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
@@ -39,14 +44,212 @@ entries() {
     done
 }
 
+# The servers that share a tunnel with each other, one group per line, the
+# groups not in prod first, each in fleet.conf's order. With servers given,
+# only their groups.
+groups() {
+    local group server
+    awk '
+        function root(x) { while (parent[x] != x) x = parent[x]; return x }
+        !/^#/ && NF >= 2 {
+            servers[++count] = $1
+            mode[$1] = $2
+            parent[$1] = $1
+            for (i = 3; i <= NF; i++) {
+                if ($i in holder) parent[root($1)] = root(holder[$i])
+                else holder[$i] = $1
+            }
+        }
+        END {
+            for (i = 1; i <= count; i++) {
+                r = root(servers[i])
+                if (!(r in members)) order[++groups] = r
+                members[r] = members[r] " " servers[i]
+            }
+            for (prod = 0; prod <= 1; prod++)
+                for (g = 1; g <= groups; g++)
+                    if ((mode[order[g]] == "prod") == prod) print substr(members[order[g]], 2)
+        }' "$CONF" | while read -r group; do
+        if [ "$#" -eq 0 ]; then
+            echo "$group"
+            continue
+        fi
+        for server; do
+            case " $group " in
+                *" $server "*) echo "$group"; break ;;
+            esac
+        done
+    done
+}
+
+# The tunnels two or more of the servers given share.
+shared() {
+    entries "$@" | awk '
+        { for (i = 3; i <= NF; i++) count[$i]++ }
+        END { for (tunnel in count) if (count[tunnel] > 1) printf "%s ", tunnel }'
+}
+
 on() {
     local server="$1"
     shift
     "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$server" "$@" </dev/null
 }
 
+wait_serving() {
+    local server="$1" waited=0
+    until on "$server" "$SHIP status --check" 2>/dev/null; do
+        if [ "$waited" -ge "$ready_timeout" ]; then
+            echo "$server does not serve again after $((ready_timeout / 60)) minutes; stopping here." >&2
+            exit 1
+        fi
+        sleep 15
+        waited=$((waited + 15))
+    done
+    echo "$server: $(on "$server" "$SHIP status")"
+}
+
+# Give SERVER the tokens of TUNNEL..., only those, and when that changes
+# them, restart its tunnels on them and wait until it serves again.
+give_tunnels() {
+    local server="$1" tokens tunnel
+    shift
+    tokens="$(for tunnel; do awk -v name="$tunnel" '$1 == name { print $1, $2 }' "$TUNNELS"; done)"
+    if [ "$(on "$server" 'shasum ~/Developer/dots/server/.tokens 2>/dev/null' | cut -d ' ' -f 1)" = \
+        "$(printf '%s\n' "$tokens" | shasum | cut -d ' ' -f 1)" ]; then
+        return 0
+    fi
+    echo "$server: serving tunnels ${*:-none}"
+    printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
+        'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
+    on "$server" "bash -c '$SHIP stop tunnels && $SHIP start'"
+    wait_serving "$server"
+}
+
+# The versions to install in MODE, bitviewd's and bitview_mcp's, resolved
+# once per run: the newest crates.io releases in prod, the branch's commit
+# otherwise. None for local, which fleet copies.
+resolve() {
+    local commit
+    case "$1" in
+        prod)
+            for crate in bitviewd bitview_mcp; do
+                curl -s -m 10 -A fleet "https://crates.io/api/v1/crates/$crate" | jq -er '.crate.max_stable_version'
+            done | paste -s -d ' ' -
+            ;;
+        local) ;;
+        *)
+            commit="$(git ls-remote https://github.com/bitcoinresearchkit/mono "refs/heads/$1" | cut -f 1)"
+            [ -n "$commit" ] && echo "$commit $commit"
+            ;;
+    esac
+}
+
+# Update SERVER in its mode to the run's pinned versions, without the
+# tunnels HELD while others still serve them.
+update_server() {
+    local server="$1" held="$2" mode tunnels tunnel give='' pins
+    read -r _ mode tunnels < <(entries "$server")
+    for tunnel in $tunnels; do
+        case " $held " in
+            *" $tunnel "*) ;;
+            *) give="$give $tunnel" ;;
+        esac
+    done
+    pins="$(cat "$work/pins.$mode")"
+    echo "== $server: $mode${pins:+ ${pins%% *}}"
+    on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
+    # shellcheck disable=SC2086
+    give_tunnels "$server" $give
+    on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode'"
+    if [ "$mode" = local ]; then
+        echo "$server: copying ~/Developer/mono..."
+        rsync -a --delete --exclude /target/ -e "$tssh -T" \
+            "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/"
+    fi
+
+    # The connection ends early when the update restarts Tailscale or the Mac;
+    # whether the server serves again is what counts.
+    "$tssh" -t "$server_user@$server" "$SHIP update" || true
+    until on "$server" true 2>/dev/null; do
+        sleep 15
+    done
+    echo "$server: waiting until it serves again..."
+    wait_serving "$server"
+}
+
+# Update a group of servers sharing tunnels, so each tunnel serves one
+# version at a time, but for a few seconds while the last server hands its
+# shared tunnels to the updated ones.
+update_group() {
+    local held server tunnels last="${*: -1}"
+    held="$(shared "$@")"
+    for server; do
+        if [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
+            for server; do
+                [ "$server" != "$last" ] || continue
+                read -r _ _ tunnels < <(entries "$server")
+                # shellcheck disable=SC2086
+                give_tunnels "$server" $tunnels
+            done
+            server="$last"
+        fi
+        update_server "$server" "$held"
+    done
+    read -r _ _ tunnels < <(entries "$last")
+    # shellcheck disable=SC2086
+    give_tunnels "$last" $tunnels
+}
+
+update() {
+    local server mode tunnels tunnel group
+    if ! awk '!/^#/ && NF >= 2 {
+            for (i = 3; i <= NF; i++) {
+                if (($i in m) && m[$i] != $2) {
+                    printf "%s is shared by servers in %s and %s; give them one mode.\n", $i, m[$i], $2
+                    bad = 1
+                }
+                m[$i] = $2
+            }
+        }
+        END { exit bad }' "$CONF" >&2; then
+        exit 1
+    fi
+    while read -r server _ tunnels; do
+        for tunnel in $tunnels; do
+            if ! awk -v name="$tunnel" '$1 == name { found = 1 } END { exit !found }' "$TUNNELS"; then
+                echo "fleet.conf gives $server the tunnel $tunnel, which $TUNNELS lacks." >&2
+                exit 1
+            fi
+        done
+    done < <(entries "$@")
+
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    for mode in $(entries | awk '{ print $2 }' | sort -u); do
+        if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
+            echo "Could not find the newest version of $mode." >&2
+            exit 1
+        fi
+    done
+    while read -r group; do
+        # shellcheck disable=SC2086
+        update_group $group
+    done < <(groups "$@")
+}
+
+restart() {
+    local group server
+    while read -r group; do
+        for server in $group; do
+            echo "== $server"
+            on "$server" "bash -c '$SHIP stop && $SHIP start'"
+            wait_serving "$server"
+        done
+    done < <(groups "$@")
+}
+
 status() {
-    local work server mode tunnels line
+    local work server mode tunnels line tunnel versions
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' RETURN
     while read -r server _; do
@@ -65,93 +268,12 @@ status() {
                 '' "$mode" "${tunnels:-none}" "$server"
         fi
     done < <(entries "$@")
-}
-
-update_one() {
-    local server="$1" mode tunnels tokens changed=0 waited=0
-    read -r _ mode tunnels < <(entries "$server")
-    # shellcheck disable=SC2086
-    tunnels="$(echo $tunnels)"
-    echo "== $server: $mode, tunnels ${tunnels:-none}"
-    on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
-
-    # Only its own tunnels' tokens, so a server holds no other's.
-    tokens="$(for tunnel in $tunnels; do awk -v name="$tunnel" '$1 == name { print $1, $2 }' "$TUNNELS"; done)"
-    if [ "$(on "$server" 'shasum ~/Developer/dots/server/.tokens 2>/dev/null' | cut -d ' ' -f 1)" != \
-        "$(printf '%s\n' "$tokens" | shasum | cut -d ' ' -f 1)" ]; then
-        printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
-            'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
-        changed=1
-    fi
-
-    on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode > ~/.config/dots/mode'"
-    if [ "$mode" = local ]; then
-        echo "$server: copying ~/Developer/mono..."
-        rsync -a --delete --exclude /target/ -e "$tssh -T" \
-            "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/"
-    fi
-
-    # The connection ends early when the update restarts Tailscale or the Mac;
-    # whether the server serves again is what counts.
-    "$tssh" -t "$server_user@$server" "$SHIP update" || true
-
-    until on "$server" true 2>/dev/null; do
-        sleep 15
-    done
-    if [ "$changed" -eq 1 ]; then
-        echo "$server: restarting the tunnels on their new tokens..."
-        on "$server" "bash -c '$SHIP stop tunnels && $SHIP start'"
-    fi
-
-    wait_serving "$server"
-}
-
-wait_serving() {
-    local server="$1" waited=0
-    echo "$server: waiting until it serves again..."
-    until on "$server" "$SHIP status --check" 2>/dev/null; do
-        if [ "$waited" -ge "$ready_timeout" ]; then
-            echo "$server does not serve again after $((ready_timeout / 60)) minutes; stopping before the next server." >&2
-            exit 1
+    for tunnel in $(shared "$@"); do
+        versions="$(entries "$@" | awk -v tunnel="$tunnel" '{ for (i = 3; i <= NF; i++) if ($i == tunnel) print $1 }' |
+            while read -r server; do awk '{ print $2 }' "$work/$server"; done | tr -d ',' | sort -u)"
+        if [ "$(wc -l <<< "$versions")" -gt 1 ]; then
+            echo "$tunnel serves more than one version: $(echo $versions); run fleet update"
         fi
-        sleep 15
-        waited=$((waited + 15))
-    done
-    echo "$server: $(on "$server" "$SHIP status")"
-}
-
-# The servers given, or all, in the order fleet goes through them: those not
-# in prod first, so a bad change shows there before prod, then prod.
-ordered() {
-    local server mode first='' last=''
-    while read -r server mode _; do
-        if [ "$mode" = prod ]; then last="$last $server"; else first="$first $server"; fi
-    done < <(entries "$@")
-    echo $first $last
-}
-
-# Stop and start each server's workloads cleanly, one server at a time.
-restart() {
-    local server
-    for server in $(ordered "$@"); do
-        echo "== $server"
-        on "$server" "bash -c '$SHIP stop && $SHIP start'"
-        wait_serving "$server"
-    done
-}
-
-update() {
-    local server tunnels tunnel
-    while read -r server _ tunnels; do
-        for tunnel in $tunnels; do
-            if ! awk -v name="$tunnel" '$1 == name { found = 1 } END { exit !found }' "$TUNNELS"; then
-                echo "fleet.conf gives $server the tunnel $tunnel, which $TUNNELS lacks." >&2
-                exit 1
-            fi
-        done
-    done < <(entries "$@")
-    for server in $(ordered "$@"); do
-        update_one "$server"
     done
 }
 

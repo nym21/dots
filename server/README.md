@@ -162,9 +162,10 @@ the workstation's `~/Developer/mono`, which `fleet` copies to the mini
 (**local**). `ship install` installs both servers in the mini's mode, restarts
 the workloads that changed version, and starts whatever is not running, so a run
 with nothing new leaves a running mini alone; `ship update` runs it, so prod
-takes a new crates.io release and next the latest commit. Given a mode, as in
-`ship install next`, it switches the mini to it until `fleet update` sets it
-back. Its first run asks for `sudo` to install `com.local.workloads`, which
+takes a new crates.io release and next the latest commit, unless `fleet update`
+pinned a version, which it does so servers sharing a tunnel run the same one.
+Given a mode, as in `ship install next`, it switches the mini to it, at its
+newest, until `fleet update` sets it back. Its first run asks for `sudo` to install `com.local.workloads`, which
 starts the workloads at boot.
 
 The workloads run in the Rex session `server`, one block each, under the Rex

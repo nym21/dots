@@ -5,19 +5,28 @@ set -euo pipefail
 # Run this mini in MODE, or in the mode it has: install Bitview and the MCP
 # server in it, restart the workloads that changed version, and start
 # whatever is not running. A run with nothing new leaves a running mini alone.
-# The first run asks for sudo, to have them start at boot.
+# fleet passes the versions to pin, bitviewd's and bitview_mcp's, so servers
+# sharing a tunnel run the same one; without, it takes the newest. The first
+# run asks for sudo, to have them start at boot.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [prod | next | BRANCH | local]" >&2
+if [ "$#" -gt 3 ]; then
+    echo "Usage: $0 [prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
     exit 1
 fi
 
 source "$SERVER_DIR/crate.sh"
 
-mode="${1:-$(cat "$MODE_FILE" 2>/dev/null || bitview_mode)}"
-if [ -z "$mode" ]; then
+if [ "$#" -gt 0 ]; then
+    mode="$1" pin="${2:-}" mcp_pin="${3:-${2:-}}"
+elif [ -r "$MODE_FILE" ]; then
+    read -r mode pin mcp_pin < "$MODE_FILE" || true
+    mcp_pin="${mcp_pin:-$pin}"
+else
+    mode="$(bitview_mode)" pin='' mcp_pin=''
+fi
+if [ -z "${mode:-}" ]; then
     echo "This mini has no mode yet; give one: prod, next, a branch, or local." >&2
     exit 1
 fi
@@ -84,10 +93,10 @@ bitviewd_before="$(installed bitviewd)"
 mcp_before="$(installed bitview_mcp)"
 
 rustup update
-install_crate bitviewd "$mode"
-install_crate bitview_mcp "$mode"
+install_crate bitviewd "$mode" "$pin"
+install_crate bitview_mcp "$mode" "$mcp_pin"
 mkdir -p "$(dirname "$MODE_FILE")"
-echo "$mode" > "$MODE_FILE"
+echo "$mode${pin:+ $pin}${pin:+ $mcp_pin}" > "$MODE_FILE"
 
 # The tunnels stop before a server restarts, so no traffic reaches it
 # meanwhile.

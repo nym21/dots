@@ -4,7 +4,9 @@
 # take their native-CPU flags from shared/home/.cargo/config.toml, linked
 # during setup.
 
-# The mode this mini was given, which ship install records.
+# The mode this mini was given, which ship install records, followed by the
+# versions fleet pinned for it, bitviewd's then bitview_mcp's: a crates.io
+# release in prod, a commit on a branch.
 MODE_FILE="$HOME/.config/dots/mode"
 
 # The mode bitviewd was installed in, by its source. Empty when cargo did not
@@ -23,12 +25,12 @@ bitview_mode() {
         }'
 }
 
-# install_crate CRATE MODE
+# install_crate CRATE MODE [PIN] installs the PIN version, or the newest.
 install_crate() {
-    local crate="$1"
-    case "$2" in
+    local crate="$1" mode="$2" pin="${3:-}"
+    case "$mode" in
         prod)
-            cargo install --locked "$crate"
+            cargo install --locked "$crate" ${pin:+--version "$pin"}
             ;;
         local)
             # Build apart from the checkout's own target directory, so an
@@ -38,8 +40,11 @@ install_crate() {
                 --target-dir "$HOME/Library/Caches/dots/mono-target"
             ;;
         *)
-            cargo install --locked \
-                --git https://github.com/bitcoinresearchkit/mono --branch "$2" "$crate"
+            if [ -n "$pin" ]; then
+                cargo install --locked --git https://github.com/bitcoinresearchkit/mono --rev "$pin" "$crate"
+            else
+                cargo install --locked --git https://github.com/bitcoinresearchkit/mono --branch "$mode" "$crate"
+            fi
             ;;
     esac
 }

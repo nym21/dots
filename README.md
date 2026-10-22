@@ -78,20 +78,29 @@ owner's password, so without a terminal `ship update` only downloads it.
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
 servers, each with its mode, prod, next, or local, and its tunnels; their tokens
-live only in the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line. For each
-server, `fleet update SERVER...` (all of them by default):
+live only in the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line, and each
+server gets only those of its own tunnels. `fleet update SERVER...`, all of
+them by default, brings the servers to the newest version of their mode:
 
-1. writes the tokens of its own tunnels, if they changed, and its mode;
-2. in local mode, copies `~/Developer/mono` to it;
-3. runs `ship update` there, which changes only what is new;
-4. restarts its tunnels if their tokens changed;
-5. waits until it serves again, workloads running, tunnels connected, and
-   Bitview at the tip.
+1. It pins one version per mode for the whole run, the newest crates.io release
+   in prod and the branch's current commit otherwise, so servers in the same
+   mode end on the same version even when the branch moves meanwhile.
+2. It updates the servers that share a tunnel together, so a tunnel never serves
+   two versions. Each leaves the shared tunnels while it updates, the others
+   still serving them; the updated ones take them back before the last one
+   leaves, which overlaps two versions for a few seconds rather than leaving
+   the tunnel without a server.
+3. For each server it writes its mode and tunnels, in local mode copies
+   `~/Developer/mono` to it, runs `ship update` there, which changes only what
+   is new, and waits until it serves again: workloads running, tunnels
+   connected, and Bitview at the tip.
 
-It updates the servers not in prod first, then one prod server at a time, so
-prod never loses two at once, and stops if one does not serve again within 45
-minutes. `fleet status` prints a line per server and flags one that differs
-from `fleet.conf`.
+Groups not in prod go first, so a bad version shows there before prod, and one
+server at a time, so prod never loses two at once. It stops if a server does
+not serve again within 45 minutes. Selecting a server selects every server it
+shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
+`fleet status` prints a line per server and flags a server that differs from
+`fleet.conf` or a tunnel that serves more than one version.
 
 ## SSH over Tailscale
 

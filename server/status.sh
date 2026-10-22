@@ -52,7 +52,8 @@ if [ "$check" -eq 1 ]; then
     exit
 fi
 
-mode="$(bitview_mode)"
+mode="$(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true)"
+mode="${mode:-$(bitview_mode)}"
 version="$(cargo install --list | awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }')"
 printf '%s %s, workloads %s/%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
     "${mode:-no mode}" "${version:-}" "$workloads" "$expected" "${down:+ (down:$down)}" \
