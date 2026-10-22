@@ -5,8 +5,8 @@ set -euo pipefail
 # as LaunchDaemons under this user, each restarted whenever it exits. They
 # start in order by exiting until what they need is up: bitcoin.sh and
 # bitview.sh wait for the external volume, and tunnels.sh for the three
-# backends. bitview.sh and
-# mcp.sh choose which version runs; this only installs the daemons.
+# backends. install.sh chooses which version runs; this only installs the
+# daemons.
 # Logs go to ~/Library/Logs and are trimmed hourly.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,8 +18,8 @@ LOG_LIMIT=$((100 * 1024 * 1024))
 # name, process name, command
 SERVICES=(
     "bitcoind|bitcoind|$SERVER_DIR/bitcoin.sh"
-    "bitviewd|bitviewd|$SERVER_DIR/bitview.sh --run"
-    "bitview-mcp|bitview_mcp|$SERVER_DIR/mcp.sh --run"
+    "bitviewd|bitviewd|$SERVER_DIR/bitview.sh"
+    "bitview-mcp|bitview_mcp|$SERVER_DIR/mcp.sh"
     "tunnels|cloudflared|$SERVER_DIR/tunnels.sh"
 )
 
@@ -166,6 +166,6 @@ install_daemon com.local.trim-logs "$WORK/com.local.trim-logs.plist"
 
 for binary in bitviewd bitview_mcp; do
     if ! command -v "$binary" >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/$binary" ]; then
-        echo "Warning: $binary is not installed; run ./server/bitview.sh or ./server/mcp.sh." >&2
+        echo "Warning: $binary is not installed; run ./server/install.sh." >&2
     fi
 done

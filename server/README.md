@@ -168,8 +168,8 @@ that already runs outside launchd, in tmux for example; stop that copy first.
 | Daemon | Runs | Log in `~/Library/Logs` |
 | --- | --- | --- |
 | `com.local.bitcoind` | `server/bitcoin.sh` | `bitcoind.log` |
-| `com.local.bitviewd` | `server/bitview.sh --run` | `bitviewd.log` |
-| `com.local.bitview-mcp` | `server/mcp.sh --run` | `bitview-mcp.log` |
+| `com.local.bitviewd` | `server/bitview.sh` | `bitviewd.log` |
+| `com.local.bitview-mcp` | `server/mcp.sh` | `bitview-mcp.log` |
 | `com.local.tunnels` | `server/tunnels.sh` | `tunnels.log` |
 
 The daemons need no start order: a launcher exits until what it needs is up,
@@ -190,22 +190,22 @@ tail -f ~/Library/Logs/bitviewd.log
 Every mini runs the same setup in one of three modes, chosen by how Bitview is
 installed: **prod** from crates.io, **next** from the official
 `bitcoinresearchkit/mono` repository's `next` branch, or **local** from the
-checkout in `~/Developer/mono`. `bitview.sh` and `mcp.sh` install a version and
-restart their daemon on it. The daemons only run the installed binaries, so a
-reboot keeps the version installed last:
+checkout in `~/Developer/mono`. `install.sh` installs Bitview and the MCP server
+from the same source, then restarts the daemons whose binary changed, so a run
+with nothing new restarts nothing. The daemons only run the installed binaries,
+so a reboot keeps the version installed last:
 
 ```sh
-./server/bitview.sh            # prod: crates.io
-./server/bitview.sh next       # next: the official repository's next branch
-./server/bitview.sh --local    # local: ~/Developer/mono
-./server/mcp.sh                # the same choices for the MCP server
+./server/install.sh            # prod: crates.io
+./server/install.sh next       # next: the official repository's next branch
+./server/install.sh --local    # local: ~/Developer/mono
 ```
 
 Any other branch name works too, and becomes the mode. `cargo install --list`
 shows each installed version, with the branch and commit or the checkout's
-path. Bitview sets `RUSTFLAGS="-C target-cpu=native"` explicitly for
-installation. MCP uses the shared native-CPU settings in
-`shared/home/.cargo/config.toml`, linked during setup.
+path. Builds use the native-CPU settings in `shared/home/.cargo/config.toml`,
+linked during setup. A local build uses its own target directory in
+`~/Library/Caches/dots`, so it never touches the checkout's `target`.
 
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 `--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
@@ -219,7 +219,7 @@ for example `dbcache=8192` for the initial sync, then restart the daemon.
 ### Benchmark
 
 `server/bench.sh` runs in the foreground, like a terminal command. It installs
-`bitviewd_bench` with the same choices as `bitview.sh`:
+`bitviewd_bench` with the same choices as `install.sh`:
 
 ```sh
 ./server/bench.sh            # crates.io
@@ -255,9 +255,12 @@ local   local       PASTE_TOKEN_HERE
 
 The token file is ignored by Git and resolved relative to `tunnels.sh`. The
 `com.local.tunnels` daemon starts this mini's tunnels once Bitcoin Core,
-Bitview, and the MCP server run. If one of them or any tunnel exits, the
-launcher stops its remaining tunnels and exits, and launchd starts it again.
-`bitview.sh` restarts it after installing, since the mode may have changed.
+Bitview, and the MCP server run, both servers answer, and Bitview has reached
+Bitcoin Core's tip (`blocks_behind` in `/api/server/sync`; a version without it
+counts as at the tip), so a restarting node gets no public traffic. If a backend
+or any tunnel exits, the launcher stops its remaining tunnels and exits, and
+launchd starts it again.
+`install.sh` restarts it when Bitview changed, since the mode may have too.
 After changing `server/.tokens`, restart it with
 `sudo launchctl kickstart -k system/com.local.tunnels`.
 

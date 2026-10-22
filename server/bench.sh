@@ -19,7 +19,7 @@ source "$SERVER_DIR/crate.sh"
 
 rustup update
 
-RUSTFLAGS="-C target-cpu=native" install_crate bitviewd_bench "$@"
+install_crate bitviewd_bench "$@"
 
 source "$SERVER_DIR/external.sh"
 mkdir -p "$EXTERNAL_VOLUME/bitview"

@@ -38,7 +38,7 @@ mode="$(cargo install --list | awk '
         exit
     }')"
 if [ -z "$mode" ]; then
-    echo "bitviewd is not installed with cargo; run ./server/bitview.sh first." >&2
+    echo "bitviewd is not installed with cargo; run ./server/install.sh first." >&2
     exit 1
 fi
 
@@ -78,6 +78,41 @@ fi
 if ! backends_running; then
     echo "Start bitcoind, bitviewd, and bitview_mcp before starting the tunnels." >&2
     exit 1
+fi
+
+# The tunnels send public traffic here as soon as they connect, so wait until
+# both servers answer, on the ports the tunnels route to, and Bitview has
+# reached Bitcoin Core's tip.
+at_tip() {
+    local response body
+    response="$(curl -s -m 5 -w '\n%{http_code}' http://127.0.0.1:3110/api/server/sync)" || return 1
+    body="${response%$'\n'*}"
+    case "${response##*$'\n'}" in
+        2*)
+            # The API differs between versions; one without the sync status
+            # counts as at the tip.
+            if jq -e 'type == "object" and has("blocks_behind")' >/dev/null 2>&1 <<< "$body"; then
+                jq -e '.blocks_behind == 0' >/dev/null <<< "$body"
+            fi
+            ;;
+        404) ;;
+        *) return 1 ;;
+    esac
+}
+ready() {
+    curl -sf -m 5 -o /dev/null http://127.0.0.1:3110/ &&
+        curl -sf -m 5 -o /dev/null http://127.0.0.1:3111/ &&
+        at_tip
+}
+if ! ready; then
+    echo "Waiting for Bitview to reach the tip and both servers to answer..."
+    until ready; do
+        if ! backends_running; then
+            echo "bitcoind, bitviewd, or bitview_mcp is down; not starting the tunnels." >&2
+            exit 1
+        fi
+        sleep 10
+    done
 fi
 
 cleanup() {
