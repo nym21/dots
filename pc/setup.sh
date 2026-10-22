@@ -22,14 +22,27 @@ shared_setup
 echo "Merging Codex and Claude Code settings..."
 merge_agent_settings
 
-# --- Mullvad ---
-# Mullvad VPN updates itself, so it is installed once rather than kept in the
-# Brewfile. Tailscale's packets, tssh's among them, need an MTU of 1380 in its
+# --- Apps ---
+# Apps that update themselves, or that were installed before Homebrew, which
+# cannot adopt them without App Management access: installed from their casks
+# only when missing, rather than kept in the Brewfile.
+while IFS=: read -r cask app; do
+    if [ ! -d "/Applications/$app.app" ]; then
+        echo "Installing $app..."
+        brew install --cask "$cask"
+    fi
+done <<'APPS'
+mullvad-vpn:Mullvad VPN
+mullvad-browser:Mullvad Browser
+chatgpt:ChatGPT
+claude:Claude
+discord:Discord
+signal:Signal
+sparrow:Sparrow
+APPS
+
+# Tailscale's packets, tssh's among them, need an MTU of 1380 in Mullvad's
 # tunnel: on its own, Mullvad lowers it below what they fit in. No IPv6.
-if [ ! -d "/Applications/Mullvad VPN.app" ]; then
-    echo "Installing Mullvad VPN..."
-    brew install --cask mullvad-vpn
-fi
 mullvad tunnel set mtu 1380
 mullvad tunnel set ipv6 off
 

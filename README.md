@@ -33,9 +33,11 @@ Shared keys overwrite the machine's values and everything else is kept.
 Removing a key from a shared file does not remove it from machines that
 already have it.
 
-PC setup also installs Mullvad VPN when missing, which then updates itself,
-and pins its tunnel's MTU to 1380, which Tailscale's packets need, with IPv6
-off.
+PC setup also installs, from their casks, the apps that update themselves or
+predate Homebrew here, such as Mullvad VPN, ChatGPT, Claude, Discord, Signal,
+and Sparrow, only when missing: Homebrew cannot adopt an existing copy without
+App Management access. It pins Mullvad's tunnel MTU to 1380, which Tailscale's
+packets need, with IPv6 off.
 
 Rex's settings work the same way: Rex keeps them in its preferences, so
 `pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
