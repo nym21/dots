@@ -90,7 +90,7 @@ for service in "${SERVICES[@]}"; do
     label="com.local.$name"
     log="$LOG_DIR/$name.log"
 
-    # A copy started by hand, in tmux for example, would hold the same data
+    # A copy started by hand, in a Rex pane for example, would hold the same data
     # and ports as the daemon.
     if ! sudo launchctl print "system/$label" >/dev/null 2>&1 && pgrep -x "$process" >/dev/null; then
         echo "$label: skipped, $process already runs outside launchd; stop it, then run this again." >&2

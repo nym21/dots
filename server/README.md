@@ -28,11 +28,6 @@ sessions started with the older, single-session `tssh` before using this version
 
 `tssh` uses `xterm-256color` when connecting from Ghostty, so the mini needs no
 extra terminal definition. Reconnect with the updated local `tssh` to apply it.
-For an existing session reporting `missing or unsuitable terminal: xterm-ghostty`:
-
-```sh
-TERM=xterm-256color tmux
-```
 
 Server setup keeps SSH enabled; Screen Sharing is turned on once in System
 Settings (below). File transfers use `tcopy` over SSH. It disables File Sharing
@@ -163,7 +158,8 @@ Cloudflare tunnels as LaunchDaemons under the server's user, so they start at
 boot while the mini stays at the login screen, and restart whenever they exit.
 Run it as that user, without `sudo`; it uses `sudo` where needed. Running it
 again restarts only the daemons whose definition changed. It skips a workload
-that already runs outside launchd, in tmux for example; stop that copy first.
+that already runs outside launchd, in a Rex pane for example; stop that copy
+first.
 
 | Daemon | Runs | Log in `~/Library/Logs` |
 | --- | --- | --- |
