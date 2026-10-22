@@ -18,11 +18,6 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 shared_setup
 
 # --- Agents ---
-# Claude Code's own installer, which keeps it updated.
-if ! command -v claude >/dev/null 2>&1 && [ ! -x ~/.local/bin/claude ]; then
-    echo "Installing Claude Code..."
-    curl -fsSL https://claude.ai/install.sh | bash
-fi
 echo "Merging Codex and Claude Code settings..."
 merge_agent_settings
 

@@ -1,6 +1,7 @@
 brew "bun"
 brew "mcp-publisher"
 brew "uv"
+cask "claude-code@latest"
 cask "codex"
 cask "iina"
 cask "oversight"
