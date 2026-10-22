@@ -1,0 +1,44 @@
+#!/bin/bash
+set -euo pipefail
+
+# Set up a new Mac from this script alone, as its user, not with sudo:
+#
+#   curl -fsSL https://raw.githubusercontent.com/nym21/dots/main/bootstrap | bash -s -- pc
+#
+# or `server` for a headless mini. It installs the Command Line Tools, which
+# Git needs, clones dots into ~/Developer/dots over HTTPS, and runs the role's
+# setup, which says at the end what is left for you.
+
+role="${1:-}"
+case "$role" in
+    pc|server) ;;
+    *)
+        echo "Usage: bootstrap pc | server" >&2
+        exit 1
+        ;;
+esac
+dots="$HOME/Developer/dots"
+
+if ! xcode-select -p >/dev/null 2>&1; then
+    echo "Installing the Command Line Tools..."
+    # softwareupdate offers them only while this file exists.
+    marker=/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+    touch "$marker"
+    label="$(softwareupdate --list 2>/dev/null |
+        sed -n 's/^\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -1)"
+    if [ -z "$label" ]; then
+        rm -f "$marker"
+        echo "softwareupdate offers no Command Line Tools; run xcode-select --install, then this again." >&2
+        exit 1
+    fi
+    sudo softwareupdate --install "$label" --agree-to-license </dev/tty
+    rm -f "$marker"
+fi
+
+if [ ! -d "$dots/.git" ]; then
+    mkdir -p "$(dirname "$dots")"
+    git clone https://github.com/nym21/dots.git "$dots"
+fi
+
+# Piped into bash, this script's input is itself; setup's is the terminal.
+exec "$dots/$role/setup.sh" </dev/tty

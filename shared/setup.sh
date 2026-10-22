@@ -74,6 +74,31 @@ link_commands() {
     rm -f ~/.local/bin/dots
 }
 
+# Codex and Claude Code write machine state into their settings (trusted
+# projects, hooks, auto mode), replacing a symlink or dirtying the repository
+# through it. So the shared settings are merged into each machine's own file
+# instead, overwriting the keys they set and keeping the rest; ship update
+# merges them again.
+merge_agent_settings() {
+    local file tmp
+    mkdir -p ~/.codex ~/.claude
+    for file in ~/.codex/config.toml ~/.claude/settings.json; do
+        if [ -L "$file" ]; then
+            tmp="$(mktemp)"
+            cat "$file" > "$tmp" 2>/dev/null || true
+            rm "$file"
+            mv "$tmp" "$file"
+        fi
+    done
+    uv run --quiet "$SHARED_DIR/merge-toml.py" \
+        "$SHARED_DIR/home/.codex/config.toml" ~/.codex/config.toml
+    file=~/.claude/settings.json
+    [ -s "$file" ] || echo '{}' > "$file"
+    tmp="$(mktemp)"
+    jq -s '.[0] * .[1]' "$file" "$SHARED_DIR/home/.claude/settings.json" > "$tmp"
+    mv "$tmp" "$file"
+}
+
 # What ship update runs as root without a password: Apple's updates, and on a
 # server the restarts of the daemons it updates. Anything else that needs
 # root, such as installing a daemon, asks. Done only when missing, so it asks

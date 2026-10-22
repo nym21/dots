@@ -63,6 +63,7 @@ cargo install-update --allow-no-update --locked \
 
 case "$ROLE" in
     pc)
+        merge_agent_settings
         # Cloudflare's cf, which Bun installs and runs in place of Node.
         bun add -g --silent cf@latest
 

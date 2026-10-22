@@ -67,6 +67,18 @@ wait_ready() {
     fi
 }
 
+# Start the tunnel at INDEX in NAMES and TOKENS, or stop it.
+start_tunnel() {
+    echo "Starting tunnel ${NAMES[$1]}..."
+    cloudflared tunnel run --token-file <(printf '%s' "${TOKENS[$1]}") &
+    PIDS[$1]=$!
+}
+stop_tunnel() {
+    kill "${PIDS[$1]}" 2>/dev/null || true
+    wait "${PIDS[$1]}" 2>/dev/null || true
+    unset "PIDS[$1]"
+}
+
 stop_tunnels() {
     if [ "${#PIDS[@]}" -gt 0 ]; then
         kill "${PIDS[@]}" 2>/dev/null || true
@@ -85,27 +97,60 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# This mini's own tunnel, the one named after it on the tailnet, as fleet
+# names it: its index in NAMES, if it has one.
+self="$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName | split(".")[0]' 2>/dev/null || true)"
+OWN=''
+for index in "${!NAMES[@]}"; do
+    [ "${NAMES[$index]}" != "$self" ] || OWN="$index"
+done
+
+# How long Bitview may stay behind the tip, in seconds, checked every minute,
+# before this mini's own tunnel goes down.
+STUCK_AFTER=600
+CHECK_EVERY=60
+
 # Serve while the other workloads run. While one is down, the tunnels are
 # down too, so the other servers serve, and they come back once it serves
-# again. A tunnel that exits ends them all, for the supervisor to log and start
-# again.
+# again. Bitview stuck behind the tip would serve on what it has: then only
+# this mini's own tunnel goes down, so Cloudflare's alert names it, while the
+# shared ones serve on, as the other servers may be stuck as well; it comes
+# back once Bitview reaches the tip. A tunnel that exits ends them all, for
+# the supervisor to log and start again.
 while true; do
     wait_ready
     for index in "${!TOKENS[@]}"; do
-        echo "Starting tunnel ${NAMES[$index]}..."
-        cloudflared tunnel run --token-file <(printf '%s' "${TOKENS[$index]}") &
-        PIDS+=("$!")
+        start_tunnel "$index"
     done
+    behind_since=''
+    checked=$SECONDS
     while backends_running; do
-        for index in "${!PIDS[@]}"; do
-            pid="${PIDS[$index]}"
-            if ! kill -0 "$pid" 2>/dev/null; then
-                echo "Tunnel ${NAMES[$index]} exited; stopping this session's tunnels." >&2
-                unset 'PIDS[index]'
-                wait "$pid"
-                exit 1
+        if [ "${#PIDS[@]}" -gt 0 ]; then
+            for index in "${!PIDS[@]}"; do
+                pid="${PIDS[$index]}"
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    echo "Tunnel ${NAMES[$index]} exited; stopping this session's tunnels." >&2
+                    unset "PIDS[$index]"
+                    wait "$pid"
+                    exit 1
+                fi
+            done
+        fi
+        if [ -n "$OWN" ] && [ $((SECONDS - checked)) -ge "$CHECK_EVERY" ]; then
+            checked=$SECONDS
+            if at_tip; then
+                behind_since=''
+                if [ -z "${PIDS[$OWN]:-}" ]; then
+                    echo "Bitview is at the tip again; tunnel ${NAMES[$OWN]} serves again."
+                    start_tunnel "$OWN"
+                fi
+            elif [ -z "$behind_since" ]; then
+                behind_since=$SECONDS
+            elif [ $((SECONDS - behind_since)) -ge "$STUCK_AFTER" ] && [ -n "${PIDS[$OWN]:-}" ]; then
+                echo "Bitview has been behind the tip for $((STUCK_AFTER / 60)) minutes; tunnel ${NAMES[$OWN]} waits for it." >&2
+                stop_tunnel "$OWN"
             fi
-        done
+        fi
         sleep 1
     done
     echo "bitcoind, bitviewd, or bitview_mcp is down; the tunnels wait for it." >&2

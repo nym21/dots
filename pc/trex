@@ -11,7 +11,8 @@ usage() {
 # http://127.0.0.1:PORT through tssh, as LaunchAgents that start at login and
 # reconnect on their own. Servers log in as mini with your SSH key; one where
 # that fails or no Rex server runs is skipped. Each server keeps the port it
-# was first given, so the Rex app's saved hosts stay valid.
+# was first given, and is a host of your Rex home under its name, at that
+# port, so the Rex app lists it and rex -S NAME reaches it.
 # The Rex app only takes http(s) hosts, and Rex has no login on them, so any
 # process on this Mac can use the ports to act as the servers' users.
 
@@ -29,6 +30,20 @@ ports="$HOME/Library/Application Support/trex/ports"
 agents="$HOME/Library/LaunchAgents"
 domain="gui/$(id -u)"
 tssh="$(command -v tssh)"
+
+# Make HOST a Rex host reached at http://127.0.0.1:PORT, adding or correcting
+# it as needed, and say where it is.
+register() {
+    url="http://127.0.0.1:$2"
+    current="$(rex hosts list --json 2>/dev/null |
+        jq -r --arg host "$1" '.hosts[]? | select(.host.label == $host) | .host.endpoints | join(" ")')"
+    if [ -z "$current" ]; then
+        rex hosts add "$1" "$url" --icon macmini >/dev/null
+    elif [ "$current" != "$url" ]; then
+        rex hosts edit "$1" --endpoint "$url" >/dev/null
+    fi
+    echo "$1: $url"
+}
 
 unload() {
     # launchd signals only tssh, whose shell runs its cleanup once ssh exits,
@@ -129,7 +144,7 @@ for host in $hosts; do
     write_plist "$host" "$port" "$work/$label.plist"
     if cmp -s "$work/$label.plist" "$agents/$label.plist" &&
         launchctl print "$domain/$label" >/dev/null 2>&1; then
-        echo "$host: http://127.0.0.1:$port"
+        register "$host" "$port"
         continue
     fi
     unload "$label"
@@ -172,7 +187,7 @@ for entry in $pending; do
         sleep 0.5
     done
     if [ "$connected" -eq 1 ]; then
-        echo "$host: http://127.0.0.1:$port"
+        register "$host" "$port"
     else
         echo "$host: not connected yet; log: $HOME/Library/Logs/trex-$host.log" >&2
         failed=1

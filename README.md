@@ -5,28 +5,37 @@ Run commands from this repository's root as your normal login user.
 
 ## Setup
 
+On a new Mac, as its user, with nothing installed yet:
+
 ```sh
-./pc/setup.sh
+curl -fsSL https://raw.githubusercontent.com/nym21/dots/main/bootstrap | bash -s -- pc
 ```
+
+`bootstrap` installs the Command Line Tools, clones this repository into
+`~/Developer/dots` over HTTPS, and runs `./pc/setup.sh`, which also installs
+Claude Code and has dots push over SSH. Setup ends by listing what is left for
+you, such as logins and Lockdown Mode, only while it is missing; run it again
+to check. From a clone, run `./pc/setup.sh` directly.
 
 For a headless mini, follow the [server setup instructions](server/README.md),
-then run:
-
-```sh
-./server/setup.sh
-```
+then run `bootstrap` with `server`, or `./server/setup.sh` from a clone.
 
 Setup installs the shared packages and the selected role's additions.
 It links `shared/home/` and the role's dotfiles into your home directory,
 preserving existing files as `.backup`. Edit those repository files to change
 the linked settings.
 
-Codex settings are the exception: Codex rewrites `~/.codex/config.toml` with
-machine state, replacing any symlink, so PC setup merges
-`shared/home/.codex/config.toml` into it instead. Shared keys overwrite the
-machine's values and everything else is kept; re-run setup after changing the
-shared file. Removing a key from the shared file does not remove it from
-machines that already have it.
+Codex and Claude Code settings are the exception: both write machine state
+into them, such as trusted projects, hooks, and auto mode, so PC setup and
+`ship update` merge `shared/home/.codex/config.toml` and
+`shared/home/.claude/settings.json` into each machine's own file instead.
+Shared keys overwrite the machine's values and everything else is kept.
+Removing a key from a shared file does not remove it from machines that
+already have it.
+
+PC setup also installs Mullvad VPN when missing, which then updates itself,
+and pins its tunnel's MTU to 1380, which Tailscale's packets need, with IPv6
+off.
 
 Rex's settings work the same way: Rex keeps them in its preferences, so
 `pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
@@ -80,10 +89,12 @@ owner's password, so without a terminal `ship update` only downloads it.
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
 servers by their Tailscale names, each with its mode, prod, next, or local, and
-the tunnels it shares; their tokens live only in the Git-ignored `pc/.tunnels`,
-one `NAME TOKEN` per line, and each server gets only those of its own tunnels.
-Each server also serves the tunnel named after it, if `pc/.tunnels` has one, to
-reach that server alone, at a hostname such as `m4-1.bitview.space`.
+the tunnels it shares. Cloudflare holds their tokens, and `fleet` keeps them
+at hand in the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line, fetching
+any it lacks with `cf`, so a new workstation needs only `cf auth login`. Each
+server gets only those of its own tunnels. Each server also serves the tunnel
+named after it, if there is one, to reach that server alone, at a hostname
+such as `m4-1.bitview.space`.
 A tunnel is named after what it serves: a mode's site (`prod`, `next`,
 `local`), `mcp`, or a server. `fleet tunnels SERVER...`, all of them by
 default, keeps Cloudflare to that with `cf`, once `cf auth login` has run: it
@@ -160,9 +171,9 @@ mode. The tunnel closes after Screen Sharing disconnects, or after a minute if i
 never connects. `tssh --tailscale ARGS` runs other `tailscale` commands, such as
 `status`, against the same daemon.
 
-Keep every server's Rex reachable from the Rex app with `trex`, then add each
-printed `http://127.0.0.1:PORT` URL in Rex with Add Remote Host, named after
-its server:
+Keep every server's Rex reachable from the Rex app with `trex`, which also
+makes each server a host of your Rex home, named after it, so the Rex app lists
+it and `rex -S SERVER` reaches it:
 
 ```sh
 trex         # forward every server in pc/fleet.conf
@@ -172,7 +183,7 @@ trex --stop  # stop them all until the next trex
 The servers are those in `pc/fleet.conf`, by their Tailscale names. `trex`
 checks a new one once and skips it unless it accepts your SSH key as
 `mini` and runs a Rex server. Each server keeps the port it was first given, in
-`~/Library/Application Support/trex/ports`, so saved hosts stay valid; run
+`~/Library/Application Support/trex/ports`, so its host stays valid; run
 `trex` again after adding a server to `fleet.conf`. Each forward runs `tssh` as a LaunchAgent
 that starts at login and reconnects on its own. The Rex app only accepts
 http(s) hosts and Rex has no login on them, so any process on this Mac can use

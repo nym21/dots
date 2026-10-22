@@ -253,8 +253,8 @@ completion. Run `ship start` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
-The tunnel tokens live only on the workstation, in the Git-ignored `pc/.tunnels`,
-one `NAME TOKEN` per line. `fleet update` writes to each mini's Git-ignored
+Cloudflare holds the tunnel tokens, and the workstation keeps them at hand in
+the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line. `fleet update` writes to each mini's Git-ignored
 `server/.tokens` only the tunnels `pc/fleet.conf` gives it, so a mini holds no
 other mini's tokens, and restarts its tunnels when they changed.
 
@@ -266,6 +266,12 @@ takes the tunnels down and waits until the node serves again. If a tunnel
 exits, it stops the others and exits, and starts again 10 seconds later,
 logged as a crash. `ship install` restarts them when Bitview changes version,
 and `ship update` when it upgraded `cloudflared`.
+
+While serving, `tunnels.sh` checks every minute that Bitview is at the tip. One
+stuck behind it for 10 minutes would serve on what it has, so the mini's own
+tunnel, the one named after it on the tailnet, goes down until it catches up,
+and Cloudflare's alert names the mini. The shared tunnels serve on, since the
+other servers may be stuck at the same block.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
 tunnel of the account. Since each server also serves its own tunnel, its

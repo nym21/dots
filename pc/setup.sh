@@ -18,20 +18,24 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 shared_setup
 
 # --- Agents ---
-# Codex rewrites ~/.codex/config.toml with machine state (trusted projects,
-# app preferences), replacing any symlink. Shared settings are merged into
-# it instead, overwriting the keys they set and keeping the rest.
-echo "Merging Codex settings..."
-mkdir -p ~/.codex
-if [ -L ~/.codex/config.toml ]; then
-    rm ~/.codex/config.toml
+# Claude Code's own installer, which keeps it updated.
+if ! command -v claude >/dev/null 2>&1 && [ ! -x ~/.local/bin/claude ]; then
+    echo "Installing Claude Code..."
+    curl -fsSL https://claude.ai/install.sh | bash
 fi
-uv run --quiet "$SHARED_DIR/merge-toml.py" \
-    "$SHARED_DIR/home/.codex/config.toml" ~/.codex/config.toml
+echo "Merging Codex and Claude Code settings..."
+merge_agent_settings
 
-echo "Linking Claude Code settings..."
-mkdir -p ~/.claude
-link "$SHARED_DIR/home/.claude/settings.json" ~/.claude/settings.json
+# --- Mullvad ---
+# Mullvad VPN updates itself, so it is installed once rather than kept in the
+# Brewfile. Tailscale's packets, tssh's among them, need an MTU of 1380 in its
+# tunnel: on its own, Mullvad lowers it below what they fit in. No IPv6.
+if [ ! -d "/Applications/Mullvad VPN.app" ]; then
+    echo "Installing Mullvad VPN..."
+    brew install --cask mullvad-vpn
+fi
+mullvad tunnel set mtu 1380
+mullvad tunnel set ipv6 off
 
 mkdir -p ~/.config/zed ~/.local/bin
 link "$ROLE_DIR/tssh" ~/.local/bin/tssh
@@ -42,6 +46,11 @@ link "$ROLE_DIR/cf" ~/.local/bin/cf
 echo "Installing Cloudflare's cf..."
 bun add -g --silent cf@latest
 git config --global core.editor "zed --wait"
+# Cloned over HTTPS, as by bootstrap, dots pushes over SSH: the workstation
+# makes every Git write.
+if [ "$(git -C "$ROLE_DIR/.." remote get-url origin)" = https://github.com/nym21/dots.git ]; then
+    git -C "$ROLE_DIR/.." remote set-url --push origin git@github.com:nym21/dots.git
+fi
 link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
 
 # Rex keeps its settings in its preferences, which it rewrites, so they are
@@ -63,8 +72,32 @@ else
     sudo fdesetup enable -user "$(id -un)" -prompt
 fi
 
+# What only you can do, listed while it is still missing.
+remaining=()
+[ "$(defaults read .GlobalPreferences LDMGlobalEnabled 2>/dev/null)" = 1 ] ||
+    remaining+=("Turn on Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode, then restart.")
+mullvad account get 2>/dev/null | grep -q '^Mullvad account:' ||
+    remaining+=("Log in to Mullvad VPN: mullvad account login.")
+ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1 |
+    grep -q 'successfully authenticated' ||
+    remaining+=("Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys.")
+cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null 2>&1 ||
+    remaining+=("Log in to Cloudflare: cf auth login.")
+[ "$(tssh --tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
+    remaining+=("Log in to the tailnet: tssh mini@SERVER once, and open the link it prints.")
+ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
+    remaining+=("Install the Rex app.")
+hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
+for server in $(awk '!/^#/ && NF { print $1 }' "$ROLE_DIR/fleet.conf"); do
+    if ! grep -qx "$server" <<< "$hosts"; then
+        remaining+=("Run trex, which gives the Rex app the servers' Rex.")
+        break
+    fi
+done
+
 echo
 echo "PC setup complete."
-echo "Manual steps remaining:"
-echo "  - Enable Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode > Turn On & Restart."
-echo "  - If you postpone Lockdown Mode, restart your terminal manually."
+if [ "${#remaining[@]}" -gt 0 ]; then
+    echo "Remaining:"
+    printf '  - %s\n' "${remaining[@]}"
+fi

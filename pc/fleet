@@ -3,7 +3,8 @@ set -euo pipefail
 
 # fleet: the servers, from the workstation, which decides what each runs.
 # pc/fleet.conf lists them by their Tailscale names, with their mode and the
-# tunnels they share, and the git-ignored pc/.tunnels holds the tunnel tokens.
+# tunnels they share. Cloudflare holds the tunnel tokens, and the git-ignored
+# pc/.tunnels keeps them at hand, fetched with cf when missing.
 # Each server also serves the tunnel named after it, if there is one, which
 # reaches it alone. fleet gives each server its part over tssh, as mini, and
 # runs ship there. A server keeps what it was given, so it boots and serves
@@ -340,17 +341,18 @@ update() {
         END { exit bad }' "$CONF" >&2; then
         exit 1
     fi
+    cf_logged_in
+    fetch_tokens
     while read -r server _ tunnels; do
         for tunnel in $tunnels; do
-            if ! awk -v name="$tunnel" '$1 == name { found = 1 } END { exit !found }' "$TUNNELS"; then
-                echo "fleet.conf gives $server the tunnel $tunnel, which $TUNNELS lacks." >&2
+            if [ -z "$(tunnel_id "$tunnel")" ]; then
+                echo "fleet.conf gives $server the tunnel $tunnel, which Cloudflare lacks." >&2
                 exit 1
             fi
         done
     done < <(entries "$@")
 
     check_names "$@" || exit 1
-    cf_logged_in
 
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
@@ -424,6 +426,22 @@ cf_logged_in() {
     fi
 }
 
+# Save in pc/.tunnels each token it lacks of a tunnel fleet.conf names, or
+# named after a server, from Cloudflare, which holds them all: pc/.tunnels only
+# keeps them at hand, so a new workstation needs no more than cf's login.
+fetch_tokens() {
+    local list name id token
+    list="$(cf tunnels list --is-deleted false)"
+    for name in $(awk '!/^#/ && NF >= 2 { for (i = 1; i <= NF; i++) if (i != 2) print $i }' "$CONF" | sort -u); do
+        [ -z "$(tunnel_id "$name")" ] || continue
+        id="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .id' <<< "$list" | head -1)"
+        [ -n "$id" ] || continue
+        echo "$name: saving its token, from Cloudflare, in $TUNNELS"
+        token="$(cf tunnels token get "$id" | jq -er .)"
+        (umask 077; echo "$name $token" >> "$TUNNELS")
+    done
+}
+
 # The id of the tunnel whose token pc/.tunnels has as NAME, which the token
 # holds. Empty without one.
 tunnel_id() {
@@ -439,6 +457,7 @@ tunnel_id() {
 tunnels() {
     local list dns name id cf_name server hostname token ingress config target record current
     cf_logged_in
+    fetch_tokens
     list="$(cf tunnels list --is-deleted false)"
     dns="$(cf dns records list --zone "$DOMAIN")"
 
@@ -515,7 +534,6 @@ case "$command" in
         purge $(entries "$@" | awk '{ print $1 }')
         ;;
     update)
-        [ -r "$TUNNELS" ] || { echo "Missing $TUNNELS, the tunnel tokens: NAME TOKEN per line." >&2; exit 1; }
         update "$@"
         ;;
     *) usage ;;
