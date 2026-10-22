@@ -77,9 +77,14 @@ it too. Installing a daemon still asks. A macOS update always asks for the Mac
 owner's password, so without a terminal `ship update` only downloads it.
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
-servers, each with its mode, prod, next, or local, and its tunnels; their tokens
-live only in the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line, and each
-server gets only those of its own tunnels. `fleet update SERVER...`, all of
+servers by their Tailscale names, each with its mode, prod, next, or local, and
+the tunnels it shares; their tokens live only in the Git-ignored `pc/.tunnels`,
+one `NAME TOKEN` per line, and each server gets only those of its own tunnels.
+Each server also serves the tunnel named after it, if `pc/.tunnels` has one, to
+reach that server alone, at a hostname such as `m4-1.bitview.space`. Since
+tokens go out by name, `fleet update` first checks that every server is on the
+tailnet under its `fleet.conf` name and calls itself that, and `fleet status`
+also names a Mac on the tailnet that `fleet.conf` lacks. `fleet update SERVER...`, all of
 them by default, brings the servers to the newest version of their mode:
 
 1. It pins one version per mode for the whole run, the newest crates.io release

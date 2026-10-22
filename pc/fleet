@@ -2,10 +2,12 @@
 set -euo pipefail
 
 # fleet: the servers, from the workstation, which decides what each runs.
-# pc/fleet.conf lists them with their mode and tunnels, and the git-ignored
-# pc/.tunnels holds the tunnel tokens. fleet gives each server its part over
-# tssh, as mini, and runs ship there. A server keeps what it was given, so it
-# boots and serves without the workstation.
+# pc/fleet.conf lists them by their Tailscale names, with their mode and the
+# tunnels they share, and the git-ignored pc/.tunnels holds the tunnel tokens.
+# Each server also serves the tunnel named after it, if there is one, which
+# reaches it alone. fleet gives each server its part over tssh, as mini, and
+# runs ship there. A server keeps what it was given, so it boots and serves
+# without the workstation.
 #
 #   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
 #   fleet update [SERVER...]   bring the servers to the newest version of their mode
@@ -89,6 +91,44 @@ shared() {
         END { for (tunnel in count) if (count[tunnel] > 1) printf "%s ", tunnel }'
 }
 
+# The tunnels SERVER serves: those fleet.conf gives it, and the one named after
+# it, if pc/.tunnels has one.
+tunnels_of() {
+    local tunnels
+    read -r _ _ tunnels < <(entries "$1")
+    if awk -v name="$1" '$1 == name { found = 1 } END { exit !found }' "$TUNNELS" 2>/dev/null; then
+        tunnels="$tunnels $1"
+    fi
+    # shellcheck disable=SC2086
+    echo $tunnels
+}
+
+# fleet hands out tokens by name, so every server must be on the tailnet under
+# its fleet.conf name and call itself that. A Mac on the tailnet missing from
+# fleet.conf may be a new or renamed server.
+check_names() {
+    local peers peer server self bad=0
+    peers="$("$tssh" --tailscale status --json |
+        jq -r '.Peer[]? | select(.OS == "macOS") | .DNSName | split(".")[0]')"
+    while read -r server _; do
+        if ! grep -qx "$server" <<< "$peers"; then
+            echo "$server is not on the tailnet under that name; was it renamed?" >&2
+            bad=1
+            continue
+        fi
+        self="$(on "$server" '/opt/homebrew/bin/tailscale status --json' 2>/dev/null |
+            jq -r '.Self.DNSName | split(".")[0]' 2>/dev/null || true)"
+        if [ -n "$self" ] && [ "$self" != "$server" ]; then
+            echo "$server calls itself $self on the tailnet; rename one of them." >&2
+            bad=1
+        fi
+    done < <(entries "$@")
+    for peer in $peers; do
+        [ -n "$(entries "$peer")" ] || echo "$peer is on the tailnet but not in fleet.conf." >&2
+    done
+    return "$bad"
+}
+
 on() {
     local server="$1"
     shift
@@ -147,9 +187,9 @@ resolve() {
 # Update SERVER in its mode to the run's pinned versions, without the
 # tunnels HELD while others still serve them.
 update_server() {
-    local server="$1" held="$2" mode tunnels tunnel give='' pins
-    read -r _ mode tunnels < <(entries "$server")
-    for tunnel in $tunnels; do
+    local server="$1" held="$2" mode tunnel give='' pins
+    read -r _ mode _ < <(entries "$server")
+    for tunnel in $(tunnels_of "$server"); do
         case " $held " in
             *" $tunnel "*) ;;
             *) give="$give $tunnel" ;;
@@ -181,23 +221,21 @@ update_server() {
 # version at a time, but for a few seconds while the last server hands its
 # shared tunnels to the updated ones.
 update_group() {
-    local held server tunnels last="${*: -1}"
+    local held server last="${*: -1}"
     held="$(shared "$@")"
     for server; do
         if [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
             for server; do
                 [ "$server" != "$last" ] || continue
-                read -r _ _ tunnels < <(entries "$server")
-                # shellcheck disable=SC2086
-                give_tunnels "$server" $tunnels
+                # shellcheck disable=SC2046
+                give_tunnels "$server" $(tunnels_of "$server")
             done
             server="$last"
         fi
         update_server "$server" "$held"
     done
-    read -r _ _ tunnels < <(entries "$last")
-    # shellcheck disable=SC2086
-    give_tunnels "$last" $tunnels
+    # shellcheck disable=SC2046
+    give_tunnels "$last" $(tunnels_of "$last")
 }
 
 update() {
@@ -222,6 +260,8 @@ update() {
             fi
         done
     done < <(entries "$@")
+
+    check_names "$@" || exit 1
 
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
@@ -256,18 +296,18 @@ status() {
         { on "$server" "$SHIP status" >"$work/$server" 2>/dev/null || echo unreachable >"$work/$server"; } &
     done < <(entries "$@")
     wait
-    while read -r server mode tunnels; do
+    while read -r server mode _; do
         line="$(cat "$work/$server")"
         printf '%-6s %s\n' "$server" "$line"
         [ "$line" != unreachable ] || continue
-        # shellcheck disable=SC2086
-        tunnels="$(echo $tunnels)"
+        tunnels="$(tunnels_of "$server")"
         if [ "${line%% *}" != "$mode" ] ||
             [ "$(sed -nE 's/.*, tunnels (.*) [0-9]+\/[0-9]+ ready,.*/\1/p' <<< "$line")" != "${tunnels:-none}" ]; then
             printf '%-6s fleet.conf gives it %s with tunnels %s; run fleet update %s\n' \
                 '' "$mode" "${tunnels:-none}" "$server"
         fi
     done < <(entries "$@")
+    check_names "$@" || true
     for tunnel in $(shared "$@"); do
         versions="$(entries "$@" | awk -v tunnel="$tunnel" '{ for (i = 3; i <= NF; i++) if ($i == tunnel) print $1 }' |
             while read -r server; do awk '{ print $2 }' "$work/$server"; done | tr -d ',' | sort -u)"
