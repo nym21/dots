@@ -2,11 +2,13 @@
 
 set -euo pipefail
 
-# Install bitview_mcp from crates.io, or from a branch of the official
-# repository, and restart the com.local.bitview-mcp daemon on it. The daemon
-# runs this script with --run, which starts the installed bitview_mcp without
-# installing anything, so reboots and restarts keep the version installed here.
+# Install bitview_mcp from crates.io, a branch of the official repository, or
+# the checkout in ~/Developer/mono, and restart the com.local.bitview-mcp
+# daemon on it. The daemon runs this script with --run, which starts the
+# installed bitview_mcp without installing anything, so reboots and restarts
+# keep the version installed here.
 
+SERVER_DIR="$(dirname "$0")"
 SERVICE="com.local.bitview-mcp"
 
 if [ "$#" -eq 1 ] && [ "$1" = "--run" ]; then
@@ -17,16 +19,13 @@ if [ "$#" -eq 1 ] && [ "$1" = "--run" ]; then
 fi
 
 if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [branch | --run]" >&2
+    echo "Usage: $0 [branch | --local | --run]" >&2
     exit 1
 fi
 
-install_args=(--locked)
-if [ "$#" -eq 1 ]; then
-    install_args+=(--git https://github.com/bitcoinresearchkit/mono --branch "$1")
-fi
+source "$SERVER_DIR/crate.sh"
 
-cargo install "${install_args[@]}" bitview_mcp
+install_crate bitview_mcp "$@"
 
 if [ -f "/Library/LaunchDaemons/$SERVICE.plist" ]; then
     sudo launchctl kickstart -k "system/$SERVICE"

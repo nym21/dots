@@ -2,8 +2,10 @@
 
 set -euo pipefail
 
+SERVER_DIR="$(dirname "$0")"
+
 if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [branch]" >&2
+    echo "Usage: $0 [branch | --local]" >&2
     exit 1
 fi
 
@@ -13,18 +15,15 @@ if pgrep -x bitviewd >/dev/null; then
     exit 1
 fi
 
-install_args=(--locked)
-if [ "$#" -eq 1 ]; then
-    install_args+=(--git https://github.com/bitcoinresearchkit/mono --branch "$1")
-fi
+source "$SERVER_DIR/crate.sh"
 
 rustup update
 
-RUSTFLAGS="-C target-cpu=native" cargo install "${install_args[@]}" bitviewd_bench
+RUSTFLAGS="-C target-cpu=native" install_crate bitviewd_bench "$@"
 
-source "$(dirname "$0")/external.sh"
-mkdir -p "$EXTERNAL_VOLUME/bitview/data"
+source "$SERVER_DIR/external.sh"
+mkdir -p "$EXTERNAL_VOLUME/bitview"
 
 exec bitviewd_bench \
     --bitcoindir "$EXTERNAL_VOLUME/bitcoin" \
-    --bitviewdir "$EXTERNAL_VOLUME/bitview/data"
+    --bitviewdir "$EXTERNAL_VOLUME/bitview"

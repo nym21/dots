@@ -187,27 +187,30 @@ tail -f ~/Library/Logs/bitviewd.log
 
 ### Versions
 
-`bitview.sh` and `mcp.sh` choose the version their daemon runs. Each installs
-from crates.io, or from a branch of the official `bitcoinresearchkit/mono`
-repository, then restarts its daemon on it. The daemons only run the installed
-binaries, so a reboot keeps the version installed last:
+Every mini runs the same setup in one of three modes, chosen by how Bitview is
+installed: **prod** from crates.io, **next** from the official
+`bitcoinresearchkit/mono` repository's `next` branch, or **local** from the
+checkout in `~/Developer/mono`. `bitview.sh` and `mcp.sh` install a version and
+restart their daemon on it. The daemons only run the installed binaries, so a
+reboot keeps the version installed last:
 
 ```sh
-./server/bitview.sh        # crates.io
-./server/bitview.sh next   # the official repository's next branch
-./server/mcp.sh            # crates.io
-./server/mcp.sh next
+./server/bitview.sh            # prod: crates.io
+./server/bitview.sh next       # next: the official repository's next branch
+./server/bitview.sh --local    # local: ~/Developer/mono
+./server/mcp.sh                # the same choices for the MCP server
 ```
 
-`cargo install --list` shows each installed version, with the branch and commit
-for a branch build. Bitview sets `RUSTFLAGS="-C target-cpu=native"` explicitly
-for installation. MCP uses the shared native-CPU settings in
+Any other branch name works too, and becomes the mode. `cargo install --list`
+shows each installed version, with the branch and commit or the checkout's
+path. Bitview sets `RUSTFLAGS="-C target-cpu=native"` explicitly for
+installation. MCP uses the shared native-CPU settings in
 `shared/home/.cargo/config.toml`, linked during setup.
 
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
-`--bitviewdir /Volumes/External/bitview/data`, and `--cdn true` directly, so
-those settings do not require a config file. An existing config file still
-supplies other settings.
+`--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
+settings do not require a config file. An existing config file still supplies
+other settings.
 
 Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its daemon passes
 no arguments, so put lasting options in `/Volumes/External/bitcoin/bitcoin.conf`,
@@ -216,47 +219,46 @@ for example `dbcache=8192` for the initial sync, then restart the daemon.
 ### Benchmark
 
 `server/bench.sh` runs in the foreground, like a terminal command. It installs
-`bitviewd_bench` from crates.io or from the branch given, like `bitview.sh`:
+`bitviewd_bench` with the same choices as `bitview.sh`:
 
 ```sh
-./server/bench.sh          # crates.io
-./server/bench.sh next     # the official repository's next branch
+./server/bench.sh            # crates.io
+./server/bench.sh next       # the official repository's next branch
+./server/bench.sh --local    # ~/Developer/mono
 ```
 
-It reuses and writes Bitview's data in `/Volumes/External/bitview/data`, so stop
-the Bitview daemon first; the script exits while `bitviewd` runs. Change the
+It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop the
+Bitview daemon first; the script exits while `bitviewd` runs. Change the
 script's `--bitviewdir` to an empty directory for a full rebuild. Bitcoin Core
 must be running and synced. The benchmark exits after bootstrap without starting
 the HTTP server. Results are stored under
-`/Volumes/External/bitview/data/benches/bitviewd/run-<timestamp>/`, following
+`/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`, following
 `--bitviewdir`. It prints that path before bootstrap starts and after completion.
 Run `./server/services.sh` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
-Place all raw tunnel tokens in `server/.tokens`, one per line. Blank lines
-and lines starting with `#` are ignored; surrounding whitespace is trimmed:
+`server/.tokens` lists every tunnel, and is the same on every mini. Each line is
+a name, where the tunnel runs, and its raw token. A mini runs the tunnels whose
+list includes its mode or its Tailscale name. Blank lines and lines starting
+with `#` are ignored:
 
 ```text
-# Shared bitview.space domain
-PASTE_SHARED_TOKEN_HERE
-
-# This server's euX.bitview.space domain
-PASTE_NODE_TOKEN_HERE
-
-# MCP endpoint
-PASTE_MCP_TOKEN_HERE
+# NAME  RUNS-ON...  TOKEN
+global  prod        PASTE_TOKEN_HERE
+mcp     prod        PASTE_TOKEN_HERE
+eu1     m4-1        PASTE_TOKEN_HERE
+eu2     m4-2        PASTE_TOKEN_HERE
+next    next        PASTE_TOKEN_HERE
+local   local       PASTE_TOKEN_HERE
 ```
 
-The launcher runs every token, regardless of its comment or position in the list.
-Move tokens from the old `shared.token`, `node.token`, and `mcp.token` files into
-this list if upgrading an existing setup.
-
 The token file is ignored by Git and resolved relative to `tunnels.sh`. The
-`com.local.tunnels` daemon starts every tunnel once Bitcoin Core, Bitview, and
-the MCP server run. If one of them or any tunnel exits, the launcher stops its
-remaining tunnels and exits, and launchd starts it again. After changing
-`server/.tokens`, restart it with
+`com.local.tunnels` daemon starts this mini's tunnels once Bitcoin Core,
+Bitview, and the MCP server run. If one of them or any tunnel exits, the
+launcher stops its remaining tunnels and exits, and launchd starts it again.
+`bitview.sh` restarts it after installing, since the mode may have changed.
+After changing `server/.tokens`, restart it with
 `sudo launchctl kickstart -k system/com.local.tunnels`.
 
 ## Rex
