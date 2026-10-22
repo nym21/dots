@@ -26,15 +26,29 @@ exclude=(
     "$HOME/Library/Developer"
     "$HOME/Library/Application Support/Claude/vm_bundles"
 )
+echo "Leaving out what can be rebuilt or downloaded again..."
 for path in "${exclude[@]}" "$HOME"/Developer/*/target; do
     [ -e "$path" ] || continue
     tmutil isexcluded "$path" | grep -q '^\[Excluded\]' || tmutil addexclusion "$path"
 done
 
-if tmutil status | grep -q 'Running = 1'; then
-    echo "A backup is already running." >&2
-    exit 1
-fi
+running() {
+    tmutil status | grep -q 'Running = 1'
+}
+
+# Until the running backup ends, its phase and progress every half minute.
+follow() {
+    local line last=''
+    while running; do
+        line="$(tmutil status | awk -F ' = ' '
+            /BackupPhase/ { gsub(/[";]/, "", $2); phase = $2 }
+            /^ *Percent/ { gsub(/[";]/, "", $2); if ($2 >= 0) percent = sprintf(", %d%%", $2 * 100) }
+            END { print phase percent }')"
+        [ "$line" = "$last" ] || echo "  $line"
+        last="$line"
+        sleep 30
+    done
+}
 
 # The backup volume, by the name Time Machine last knew it under.
 name="$(defaults read /Library/Preferences/com.apple.TimeMachine Destinations 2>/dev/null |
@@ -49,14 +63,40 @@ if [ -z "$volume" ]; then
     echo "Connect the backup disk $name, then run ship backup again." >&2
     exit 1
 fi
+# Its password, asked once and kept in the login keychain, so later backups
+# unlock it without anyone there: macOS does not ask for a backup disk's.
 if [ "$(diskutil info "$volume" | awk -F ': *' '/^ *Mounted:/ { print $2 }')" != Yes ]; then
-    echo "Unlocking $name..."
-    diskutil apfs unlockVolume "$volume"
+    item="dots backup disk $name"
+    password="$(security find-generic-password -s "$item" -w 2>/dev/null || true)"
+    if [ -z "$password" ] || ! printf '%s' "$password" | diskutil apfs unlockVolume "$volume" -stdinpassphrase >/dev/null; then
+        read -r -s -p "Password of the backup disk $name: " password </dev/tty
+        echo
+        printf '%s' "$password" | diskutil apfs unlockVolume "$volume" -stdinpassphrase >/dev/null
+        security add-generic-password -U -s "$item" -a "$USER" -w "$password"
+        echo "Unlocked $name, its password kept in the login keychain for next time."
+    else
+        echo "Unlocked $name."
+    fi
+    unset password
 fi
 
-echo "Backing up to $name; the first backup takes a while..."
-tmutil startbackup --block
-echo "Backed up: $(tmutil latestbackup 2>/dev/null | sed 's#.*/##')"
+before="$(tmutil latestbackup 2>/dev/null || true)"
+if running; then
+    echo "A backup to $name is already running; following it..."
+else
+    echo "Backing up to $name..."
+    tmutil startbackup
+    until running; do
+        sleep 2
+    done
+fi
+follow
+after="$(tmutil latestbackup 2>/dev/null || true)"
+if [ -n "$after" ] && [ "$after" != "$before" ]; then
+    echo "Backed up: ${after##*/}"
+else
+    echo "The backup did not complete; Time Machine's log says why." >&2
+fi
 
 # The disk under the volume's APFS container, ejected whole.
 store="$(diskutil info "$volume" | awk -F ': *' '/APFS Physical Store/ { print $2 }')"
