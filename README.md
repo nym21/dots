@@ -1,6 +1,6 @@
 # dots
 
-Shared macOS dotfiles and setup for a workstation or headless Mac mini.
+Shared macOS dotfiles and setup for a workstation and headless Mac minis.
 Run commands from this repository's root as your normal login user.
 
 ## Setup
@@ -12,132 +12,152 @@ curl -fsSL https://raw.githubusercontent.com/nym21/dots/main/bootstrap | bash -s
 ```
 
 `bootstrap` installs the Command Line Tools, clones this repository into
-`~/Developer/dots` over HTTPS, and runs `./pc/setup.sh`, which also installs
-Claude Code and has dots push over SSH. Setup ends by listing what is left for
-you, such as logins and Lockdown Mode, only while it is missing; run it again
-to check. From a clone, run `./pc/setup.sh` directly.
+`~/Developer/dots` over HTTPS, and runs `./pc/setup.sh`; from a clone, run that
+directly. For a headless mini, follow the
+[server setup instructions](server/README.md), then run `bootstrap` with
+`server`, or `./server/setup.sh`. Setup ends by listing what only you can do,
+such as logins, Lockdown Mode, App Store apps, or a backup, while it is
+missing; run it again to check.
 
-For a headless mini, follow the [server setup instructions](server/README.md),
-then run `bootstrap` with `server`, or `./server/setup.sh` from a clone.
+Setup installs the shared packages and the role's, from the `Brewfile` and
+`cargo.txt` in `shared/` and in the role's directory. It links `shared/home/`
+and the role's dotfiles into your home directory, keeping existing files as
+`.backup`; edit the repository's files to change them. On the workstation, it
+also has dots push over SSH, as the workstation makes every Git write.
 
-Setup installs the shared packages and the selected role's additions.
-It links `shared/home/` and the role's dotfiles into your home directory,
-preserving existing files as `.backup`. Edit those repository files to change
-the linked settings.
+Some settings cannot be linked, as their programs rewrite them:
 
-Codex and Claude Code settings are the exception: both write machine state
-into them, such as trusted projects, hooks, and auto mode, so PC setup and
-`ship update` merge `shared/home/.codex/config.toml` and
-`shared/home/.claude/settings.json` into each machine's own file instead.
-Shared keys overwrite the machine's values and everything else is kept.
-Removing a key from a shared file does not remove it from machines that
-already have it.
+- **Codex and Claude Code** write machine state into their settings, such as
+  trusted projects, hooks, and auto mode, so setup and `ship update` merge
+  `shared/home/.codex/config.toml` and `shared/home/.claude/settings.json`
+  into each machine's own file. Shared keys overwrite the machine's values and
+  the rest is kept; removing a key from a shared file does not remove it from
+  machines that have it.
+- **Rex and macOS** keep theirs in their preferences, so `ship save` saves
+  them to `pc/rex-settings` and `pc/macos-settings`, and setup writes them
+  back. For macOS, those are the Dock, Finder, keyboard, trackpad, and
+  screenshot settings this Mac sets among the ones `pc/save.sh` lists; add a
+  `DOMAIN KEY` line there to keep another.
 
-PC setup also installs, from their casks, the apps that update themselves or
-predate Homebrew here, such as Mullvad VPN, ChatGPT, Claude, Discord, Signal,
-and GPG Suite, only when missing: Homebrew cannot adopt an existing copy
-without App Management access. It pins Mullvad's tunnel MTU to 1380, which
-Tailscale's packets need, with IPv6 off.
+Some apps cannot come from the Brewfile:
 
-Sparrow Wallet has its own installer, `pc/sparrow.sh`, which setup and `ship
-update` run, as a wallet must be its author's: it installs a release only once
-its manifest is signed by Craig Raw's PGP key, pinned by fingerprint, and lists
-the installer's checksum, and once the app is signed by his Developer ID and
-notarized, as [Sparrow asks](https://sparrowwallet.com/download/). It leaves a
-running Sparrow alone, and `pc/sparrow.sh --check` checks the installed one.
-`cargo-hawk` comes from Astral's installer, which setup and `ship update` run
-when a newer release is out: Cargo cannot build it, as each release is built
-against one stable Rust, so a Rust update needs its newest.
+- **Apps that update themselves or predate Homebrew here,** such as Mullvad
+  VPN, ChatGPT, Claude, Discord, Signal, and GPG Suite: setup installs them from
+  their casks only when missing, since Homebrew cannot adopt an existing copy
+  without App Management access.
+- **Sparrow Wallet** has its own installer, `pc/sparrow.sh`, which setup and
+  `ship update` run, as a wallet must be its author's: it installs a release
+  only once its manifest is signed by Craig Raw's PGP key, pinned by
+  fingerprint, and lists the installer's checksum, and the app is signed by his
+  Developer ID and notarized, as [Sparrow asks](https://sparrowwallet.com/download/).
+  It leaves a running Sparrow alone; `pc/sparrow.sh --check` checks the
+  installed one.
+- **`cargo-hawk`** comes from Astral's installer, which setup and `ship update`
+  run when a newer release is out: Cargo cannot build it, and each release is
+  built against one stable Rust, so a Rust update needs its newest.
+- **App Store apps** stay out, as Homebrew cannot see them without Spotlight's
+  index; setup lists any missing.
 
-Rex's settings work the same way: Rex keeps them in its preferences, so
-`pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
-So do the macOS settings `pc/save.sh` lists, those of the Dock, Finder,
-keyboard, trackpad, and screenshots that this Mac sets, in
-`pc/macos-settings`; add a `DOMAIN KEY` line there to keep another. Both roles
-turn the firewall on and Spotlight's index off. App Store apps are not in the
-Brewfile, as Homebrew cannot see them without that index; PC setup lists any
-missing.
+Both roles turn the firewall on and Spotlight's index off. On the workstation,
+setup pins Mullvad's tunnel MTU to 1380, which Tailscale's packets need, with
+IPv6 off, and keeps Time Machine's automatic backups off (see
+[Backups](#backups)).
 
 ## Layout
 
-- `shared/`: what both roles use: packages, shell and editor dotfiles, setup internals, and maintenance tools.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, Tailscale SSH/copy commands, and Cloudflare's `cf`, which Bun runs since the workstation has no Node.
-- `server/`: headless setup, profile, and workload launchers.
+- `shared/`: what both roles use: packages, shell and editor dotfiles, setup internals, and `ship`.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
+- `server/`: headless setup, profile, and the workloads.
 
-Each role's `setup.sh` contains its setup and sources `shared/setup.sh` for
-common setup. Servers stay lean: development happens on the workstation,
-which also makes every Git write.
-
-Each role has its own `Brewfile` and `cargo.txt`, installed after the shared
-ones; Helix and its configuration are shared between both roles.
+Each role's `setup.sh` sources `shared/setup.sh` for what both share. Servers
+stay lean: development happens on the workstation.
 
 ## Maintenance
 
 Every Mac has `ship`, for itself; the workstation also has `fleet`, for the
 servers. Setup links them into `~/.local/bin` and records the Mac's role in
-`~/.config/dots/role`, and `ship update` keeps them there. They run the scripts
-in this repository, so pulling it updates them too. `ship` alone lists the
-commands this Mac has.
+`~/.config/dots/role`. They run the scripts in this repository, so pulling it
+updates them. `ship` alone lists this Mac's commands.
 
 ```sh
 ship update    # Update everything and restart what changed; macOS last.
 ship clean     # Free what caches and old builds take; ship update runs it too.
 ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
-fleet status   # On the workstation: one line per server.
-fleet update   # On the workstation: give each server its part and update it, in turn.
+fleet status   # On the workstation: one line per server, and what is due.
+fleet update   # On the workstation: build on every server at once, then update them in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 fleet tunnels  # On the workstation: give each server a tunnel named after it.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 ```
 
-`ship update` pulls this repository and runs the version pulled. It then
-installs what the Brewfiles and Cargo lists gained, upgrades Homebrew, Rust,
-and the listed Cargo tools, and on a server updates Rex and the workloads within
-the mini's mode (see the [server instructions](server/README.md)). Last, if
-macOS has an update or upgrade, it downloads the newest, waits 30 seconds for
-Ctrl-C, stops a server's workloads cleanly, installs it, and restarts; the
-workloads come back at boot. Without one, it installs the newest of the other
+`ship update` pulls this repository and runs the version pulled. It installs
+what the Brewfiles and Cargo lists gained, upgrades Homebrew, Rust, and the
+listed Cargo tools, and names anything installed that the lists lack, so the
+Macs stay alike: add it to one, or uninstall it. On a server it updates Rex and
+the workloads within the mini's mode (see the
+[server instructions](server/README.md)); on the workstation it backs up
+whenever the backup disk is in. It then runs `ship clean`, which keeps what is
+in use and frees the rest: Homebrew's downloads, Rust toolchains but the
+default and those a project pins, Cargo's caches, builds unused for 30 days,
+old releases of Codex's packages, and simulator runtimes but the newest stable
+iOS. Last, if macOS has an update, it downloads it, waits 30 seconds for
+Ctrl-C, stops a server's workloads cleanly, installs it, and restarts, the
+workloads coming back at boot; without one, it installs the newest of the other
 updates, such as the Command Line Tools.
-It also names anything installed that the Brewfiles and Cargo lists lack, so
-the Macs stay alike: add it to one, or uninstall it. On the workstation, it backs
-up with `ship backup` whenever the backup disk is in, and otherwise leaves Time
-Machine alone; it and setup only say when the last backup is missing or over a
-week old.
-Backups run by hand there, with `ship backup`, as setup keeps automatic ones
-off: they keep snapshots on the local disk while the backup disk is away. It
-leaves out what can be rebuilt or downloaded again, such as Bitcoin Core's and
-Bitview's data, toolchains, caches, and builds, unlocks the backup disk with
-its password from the login keychain, asked once, backs up, and unmounts it,
-so the card can stay in for the next backup or come out, which locks it.
 
-It asks for a password only when a step needs root, and a run with nothing
-such asks for none. `/etc/sudoers.d/dots` lets it install Apple's updates and,
-on a server, restart the Rex and Tailscale daemons without one; setup installs
-it, and when it lacks a rule, the first such step asks for the password once to
-add it, then runs without, as the next runs do. Installing a daemon still asks. A macOS update always asks for the Mac
-owner's password, so without a terminal `ship update` only downloads it.
+### Passwords
+
+`ship update` asks for a password only when a step needs root. With
+`/etc/sudoers.d/dots`, which setup installs, it installs Apple's updates and,
+on a server, restarts the Rex and Tailscale daemons without one; when that file
+lacks a rule, the first such step asks once to add it, and that step and later
+runs need none. Installing a daemon still asks, and a macOS update always asks
+for the Mac owner's password, so without a terminal `ship update` only
+downloads it.
+
+### Backups
+
+The workstation backs up to Time Machine by hand, as automatic backups keep
+snapshots on the local disk while the backup disk is away. `ship backup` leaves
+out what can be rebuilt or downloaded again, such as Bitcoin Core's and
+Bitview's data, toolchains, caches, and builds; unlocks the backup disk with
+its password from the login keychain, asked once and checked; backs up; and
+unmounts the disk, so the card can stay in for the next backup or come out,
+which locks it. Without the disk it fails. `ship update` runs it whenever the
+disk is in, and otherwise leaves Time Machine alone, saying only when the last
+backup is missing or over a week old.
+
+## Servers
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
-servers by their Tailscale names, each with its mode, prod, next, or local, and
-the tunnels it shares. Cloudflare holds their tokens, and `fleet` keeps them
-at hand in the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line, fetching
-any it lacks with `cf`, so a new workstation needs only `cf auth login`. Each
-server gets only those of its own tunnels. Each server also serves the tunnel
-named after it, if there is one, to reach that server alone, at a hostname
-such as `m4-1.bitview.space`.
+servers by their Tailscale names, each with its mode, prod (crates.io), next
+or another branch, or local (the workstation's `~/Developer/mono`), and the
+tunnels it shares. Since tunnel tokens go out by name, `fleet update` first
+checks that every server is on the tailnet under its `fleet.conf` name and
+calls itself that; `fleet status` also names a Mac on the tailnet that
+`fleet.conf` lacks.
+
+### Tunnels
+
 A tunnel is named after what it serves: a mode's site (`prod`, `next`,
-`local`), `mcp`, or a server. `fleet tunnels SERVER...`, all of them by
-default, keeps Cloudflare to that with `cf`, once `cf auth login` has run: it
-gives every tunnel its `pc/.tunnels` name, and for each server creates its
-tunnel, routes the server's hostname alone through it to the site, makes that
-hostname the only DNS name pointing at it, and saves its token in
-`pc/.tunnels`, each only where that differs. Run it after adding a server to
-`fleet.conf`. Since
-tokens go out by name, `fleet update` first checks that every server is on the
-tailnet under its `fleet.conf` name and calls itself that, and `fleet status`
-also names a Mac on the tailnet that `fleet.conf` lacks. `fleet update SERVER...`, all of
-them by default, brings the servers to the newest version of their mode:
+`local`), `mcp`, or a server, which serves the tunnel named after it too, to
+reach that server alone, at a hostname such as `m4-1.bitview.space`. Cloudflare
+holds the tokens; `fleet` keeps them at hand in the Git-ignored `pc/.tunnels`,
+one `NAME TOKEN` per line, fetching any it lacks with `cf`, so a new
+workstation needs only `cf auth login`. Each server gets only its own tunnels'
+tokens.
+
+`fleet tunnels SERVER...`, all of them by default, keeps Cloudflare to those
+names: it gives every tunnel its `pc/.tunnels` name, and for each server
+creates its tunnel, routes the server's hostname alone through it to the site,
+makes that hostname the only DNS name pointing at it, and saves its token, each
+only where that differs. Run it after adding a server to `fleet.conf`.
+
+### Updates
+
+`fleet update SERVER...`, all of them by default, brings the servers to the
+newest version of their mode:
 
 1. It pins one version per mode for the whole run, the newest crates.io release
    in prod and the branch's current commit otherwise, so servers in the same
@@ -147,28 +167,39 @@ them by default, brings the servers to the newest version of their mode:
    to it, and runs `ship fetch` there at a low priority, which builds them and
    downloads a macOS update, restarting nothing. A failed build stops the run
    before any server restarts.
-3. Then it updates them in turn, and the servers that share a tunnel together,
-   so a tunnel never serves two versions. Each leaves the shared tunnels while
-   it updates, the others still serving them; the updated ones take them back
-   before the last one leaves, which overlaps two versions for a few seconds
-   rather than leaving the tunnel without a server.
+3. Then it updates them in turn, those sharing a tunnel together, so a tunnel
+   never serves two versions: each leaves the shared tunnels while it updates,
+   the others still serving them, and the updated ones take them back before
+   the last one leaves, which overlaps two versions for a few seconds rather
+   than leaving the tunnel without a server.
 4. For each server it gives it its tunnels, runs `ship update` there, which
-   installs what was readied and restarts only what runs another build than
-   the one installed, and waits until it serves again: workloads running,
-   tunnels connected, and Bitview at the tip.
+   installs what was readied and restarts only what runs another build than the
+   one installed, and waits until it serves again: workloads running, tunnels
+   connected, and Bitview at the tip.
 5. Once servers sharing tunnels all run a new version, it purges Cloudflare's
    cache of the hostnames their tunnels route, so none serves what the old
-   version cached; servers already at the run's versions keep their tunnels
-   throughout and their cache. `fleet purge SERVER...` purges by hand, as when a
-   purge failed.
+   version cached. Servers already at the run's versions keep their tunnels
+   throughout, and their cache. `fleet purge SERVER...` purges by hand.
 
 Groups not in prod go first, so a bad version shows there before prod, and one
 server at a time, so prod never loses two at once. It stops if a server does
 not serve again within 45 minutes. Selecting a server selects every server it
 shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
+
+### Status and alerts
+
 `fleet status` prints a line per server and flags a server that differs from
 `fleet.conf`, a tunnel that serves more than one version, and a mode with a
 newer version than its servers have, when an update is due.
+
+Cloudflare emails when a tunnel goes down, comes back, or degrades, and each
+server's own tunnel says which server. `fleet` silences those alerts while it
+restarts a server on purpose, an hour at most, lifting the silence once the
+server serves again, so an email means something went wrong: a crash, a server
+down, or Bitview stuck behind the tip (see the
+[server instructions](server/README.md#cloudflare-tunnels)).
+
+### Checks
 
 GitHub runs `shellcheck` on every script with each push and fails on its
 warnings; run it locally with the same `shellcheck -S warning -x`.
@@ -216,13 +247,13 @@ trex --stop  # stop them all until the next trex
 ```
 
 The servers are those in `pc/fleet.conf`, by their Tailscale names. `trex`
-checks a new one once and skips it unless it accepts your SSH key as
-`mini` and runs a Rex server. Each server keeps the port it was first given, in
-`~/Library/Application Support/trex/ports`, so its host stays valid; run
-`trex` again after adding a server to `fleet.conf`. Each forward runs `tssh` as a LaunchAgent
-that starts at login and reconnects on its own. The Rex app only accepts
-http(s) hosts and Rex has no login on them, so any process on this Mac can use
-the ports to act as the servers' users.
+checks a new one once and skips it unless it accepts your SSH key as `mini` and
+runs a Rex server. Each server keeps the port it was first given, in
+`~/Library/Application Support/trex/ports`, so its host stays valid; run `trex`
+again after adding a server to `fleet.conf`. Each forward runs `tssh` as a
+LaunchAgent that starts at login and reconnects on its own. The Rex app only
+accepts http(s) hosts and Rex has no login on them, so any process on this Mac
+can use the ports to act as the servers' users.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.

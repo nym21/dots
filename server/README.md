@@ -9,7 +9,8 @@ Setup requires Full Disk Access on the mini. If the startup access check fails:
 - **In a local terminal:** System Settings > Privacy & Security > Full Disk
   Access > enable the terminal app, then quit and reopen it.
 
-From the repository root, run `./server/setup.sh` as the server's user, without `sudo`.
+As the server's user, without `sudo`, run `bootstrap` with `server`, as the
+[main README](../README.md#setup) shows, or `./server/setup.sh` from a clone.
 The script uses `sudo` where needed; it does not grant macOS Full Disk Access.
 Before making setup changes, it authenticates with `sudo` and checks read access
 to a protected system file. If access cannot be verified, it stops with the
@@ -30,11 +31,9 @@ Server setup keeps SSH enabled; Screen Sharing is turned on once in System
 Settings (below). File transfers use `tcopy` over SSH. It disables File Sharing
 (SMB), Spotlight indexing on mounted volumes, Content Caching, printer sharing,
 and remote Apple Events. It also prevents idle sleep and enables restart after
-power loss.
-Setup also installs the login-aware `audiomxd` suspension workaround below.
-Fish is configured as the login shell for future terminal and SSH sessions;
-`exec fish -l` is only needed
-to switch the terminal that launched setup immediately.
+power loss. Setup also installs the login-aware `audiomxd` suspension
+workaround below. Fish becomes the login shell for later terminal and SSH
+sessions; `exec fish -l` switches the terminal that ran setup.
 
 ## Finish once in System Settings
 
@@ -152,26 +151,28 @@ Running server setup again reinstalls the workaround.
 
 The workstation decides what each mini runs: `pc/fleet.conf` gives each its
 mode and tunnels, and `fleet update` hands a mini its part, then runs
-`ship update` there (see the [main README](../README.md#maintenance)). A mini
-keeps what it was given, so it boots and serves without the workstation.
+`ship update` there (see the [main README](../README.md#servers)). A mini keeps
+what it was given, so it boots and serves without the workstation.
 
 Every mini runs the same setup, and the mode is the only difference: Bitview and
 the MCP server come from crates.io (**prod**), from a branch of the official
 `bitcoinresearchkit/mono` repository (**next**, or any other branch), or from
 the workstation's `~/Developer/mono`, which `fleet` copies to the mini
-(**local**). `ship install` installs both servers in the mini's mode, restarts
-a workload that runs another build than the one installed, and starts whatever
-is not running, so a run with nothing new leaves a running mini alone; `ship
-fetch` only builds them, restarting nothing, and downloads a macOS update, as
-`fleet update` has every server do at once before restarting any. Each start of
-Bitview or the MCP server records the build it runs in `~/.config/dots/running`,
-whose version and commit, not a rebuild after a Rust update, decide a restart.
-`ship update` runs `ship install`, so prod
-takes a new crates.io release and next the latest commit, unless `fleet update`
-pinned a version, which it does so servers sharing a tunnel run the same one.
-Given a mode, as in `ship install next`, it switches the mini to it, at its
-newest, until `fleet update` sets it back. Its first run asks for `sudo` to install `com.local.workloads`, which
-starts the workloads at boot.
+(**local**).
+
+`ship install` installs both servers in the mini's mode, restarts a workload
+that runs another build than the one installed, and starts whatever is not
+running, so a run with nothing new leaves a running mini alone. Each start of
+Bitview or the MCP server records the build it runs in `~/.config/dots/running`;
+its version and commit decide a restart, so a rebuild after a Rust update needs
+none. `ship update` runs it, taking prod's newest crates.io release and a
+branch's newest commit, unless `fleet update` pinned a version, as it does so
+that servers sharing a tunnel run the same one. Given a mode, as in
+`ship install next`, it switches the mini to it until `fleet update` sets it
+back. `ship fetch` only builds them, restarting nothing, and downloads a macOS
+update, as `fleet update` has every server do at once before restarting any.
+The first run asks for `sudo` to install `com.local.workloads`, which starts the
+workloads at boot.
 
 The workloads run in the Rex session `server`, one block each, under the Rex
 server, which reaches the external volume through its Full Disk Access (see
@@ -193,18 +194,22 @@ ship stop tunnels bitviewd    # stop some; start brings them back
 `start` starts Bitcoin Core and waits for its RPC, then starts Bitview, the MCP
 server, and the tunnels, which wait in their block until Bitview reaches the
 tip. It leaves a workload that already runs alone, wherever it runs, and
-replaces the block a stopped one left with its last output. A workload that
-fails is not restarted, since a crash is to be looked at: its exit is logged in
-`~/Library/Logs/dots/crashes.log`, the end of its output beside it, and `ship
-status` shows the last week's. Bitcoin Core, Bitview, or the MCP server then
-stays down, and with it this mini's tunnels, until `ship start`, a reboot, or an
-update starts it; the tunnels alone start again 10 seconds later, as
-`cloudflared` gives up during a long network outage. `stop` sends each workload TERM and waits until it
-has shut down, which can take Bitcoin Core minutes. Attach to the session from
-the Rex app to watch them, or run `ship status` for one line:
+replaces the block a stopped one left with its last output. `stop` sends each
+workload TERM and waits until it has shut down, which can take Bitcoin Core
+minutes.
+
+A workload that fails is not restarted, since a crash is to be looked at: its
+exit is logged in `~/Library/Logs/dots/crashes.log`, with the end of its output
+beside it, and `ship status` shows the last week's. Bitcoin Core, Bitview, or
+the MCP server then stays down, and with it this mini's tunnels, until
+`ship start`, a reboot, or an update starts it. Only the tunnels start again,
+10 seconds later, as `cloudflared` gives up during a long network outage.
+
+Attach to the session from the Rex app to watch them, or run `ship status` for
+one line:
 
 ```text
-prod v0.12.2, workloads 4/4, tunnels 3/3 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 33621ac
+prod v0.12.2, workloads 4/4, tunnels prod mcp m4-1 3/3 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 3b1a84f
 ```
 
 They come back on their own after a reboot and after a Rex update restarts the
@@ -254,9 +259,9 @@ completion. Run `ship start` afterwards to start Bitview again.
 ## Cloudflare tunnels
 
 Cloudflare holds the tunnel tokens, and the workstation keeps them at hand in
-the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line. `fleet update` writes to each mini's Git-ignored
-`server/.tokens` only the tunnels `pc/fleet.conf` gives it, so a mini holds no
-other mini's tokens, and restarts its tunnels when they changed.
+the Git-ignored `pc/.tunnels`. `fleet update` writes to each mini's Git-ignored
+`server/.tokens` only the tunnels that are the mini's, so a mini holds no other
+mini's tokens, and restarts its tunnels when they changed.
 
 `tunnels.sh` starts this mini's tunnels once Bitcoin Core, Bitview, and the MCP
 server run, both servers answer, and Bitview has reached Bitcoin Core's tip
