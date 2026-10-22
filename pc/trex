@@ -31,7 +31,12 @@ domain="gui/$(id -u)"
 tssh="$(command -v tssh)"
 
 unload() {
+    # launchd signals only tssh, whose shell runs its cleanup once ssh exits,
+    # so stop ssh too. Otherwise launchd kills both later, and the last forward
+    # leaves tssh's daemon running.
+    pid="$(launchctl print "$domain/$1" 2>/dev/null | awk '$1 == "pid" { print $3; exit }')"
     launchctl bootout "$domain/$1" 2>/dev/null || true
+    [ -z "$pid" ] || pkill -TERM -P "$pid" 2>/dev/null || true
     # bootout can return before launchd finishes removing the service, and an
     # immediate bootstrap then fails with an I/O error.
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
