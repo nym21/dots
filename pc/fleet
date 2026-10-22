@@ -384,13 +384,51 @@ purge() {
     cf cache purge --zone "$DOMAIN" --force --body "$(jq -Rnc '{hosts: [inputs]}' <<< "$hosts")" >/dev/null
 }
 
+# Whether SERVER serves: workloads running, tunnels connected, and Bitview at
+# the tip, as wait_serving waits for.
+serving() {
+    on "$1" "$SHIP status --check" 2>/dev/null
+}
+
+# SERVER..., those not serving first, as updating or restarting them costs no
+# service, each part in the order given.
+needing_first() {
+    local server up=''
+    for server; do
+        if serving "$server"; then
+            up="$up $server"
+        else
+            echo "$server"
+        fi
+    done
+    for server in $up; do
+        echo "$server"
+    done
+}
+
+# Stop before taking SERVER down while another of SERVER... does not serve, as
+# their shared tunnels would be left without a server.
+others_serve() {
+    local server="$1" other
+    shift
+    for other; do
+        if [ "$other" != "$server" ] && ! serving "$other"; then
+            echo "$other does not serve, so $server is left as it is, serving their tunnels; run fleet again once $other serves." >&2
+            exit 1
+        fi
+    done
+}
+
 # Update a group of servers sharing tunnels, so each tunnel serves one
 # version at a time, but for a few seconds while the last server hands its
 # shared tunnels to the updated ones, then purge their hostnames' cache. A
 # group already at the run's versions keeps serving them throughout, and
 # keeps its cache.
 update_group() {
-    local changed='' held='' server other last="${*: -1}" mode
+    local changed='' held='' server other last mode
+    # shellcheck disable=SC2046
+    set -- $(needing_first "$@")
+    last="${*: -1}"
     read -r _ mode _ < <(entries "$1")
     for server; do
         if ! at_pins "$server" "$(cat "$work/pins.$mode")"; then
@@ -406,6 +444,9 @@ update_group() {
                 # shellcheck disable=SC2046
                 give_tunnels "$other" $(tunnels_of "$other")
             done
+        fi
+        if serving "$server"; then
+            others_serve "$server" "$@"
         fi
         update_server "$server" "$held"
     done
@@ -466,8 +507,13 @@ restart() {
     local group server
     trap lift EXIT
     while read -r group; do
-        for server in $group; do
+        # shellcheck disable=SC2086
+        for server in $(needing_first $group); do
             echo "== $server"
+            if serving "$server"; then
+                # shellcheck disable=SC2086
+                others_serve "$server" $group
+            fi
             quiet
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
             detach "$server" "$SHIP stop && $SHIP start"

@@ -184,7 +184,11 @@ newest version of their mode:
    throughout, and their cache. `fleet purge SERVER...` purges by hand.
 
 Groups not in prod go first, so a bad version shows there before prod, and one
-server at a time, so prod never loses two at once. It stops if a server does
+server at a time, so prod never loses two at once. Within a group, the order is
+decided when the run starts: servers that do not serve go first, as updating
+them costs no service, and before taking down a server that serves, `fleet`
+checks that the others of its group serve, stopping otherwise, so it never
+leaves a shared tunnel without a server it found serving. It stops if a server does
 not serve again within 45 minutes. Selecting a server selects every server it
 shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
 
