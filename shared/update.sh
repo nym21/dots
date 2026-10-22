@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
+DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 cloudflared_before="$(readlink -f "$(command -v cloudflared)" 2>/dev/null || true)"
 
 brew upgrade
 brew cleanup
-cargo install-update --all --locked
+# Only the listed tools, not every installed crate: server/install.sh chooses
+# the version a server's workloads run. Tools a machine lacks are skipped.
+# shellcheck disable=SC2046
+cargo install-update --locked $(cat "$DOTS_DIR/shared/cargo.txt" "$DOTS_DIR/pc/cargo.txt")
 
 # Mullvad's split tunneling excludes cloudflared by its versioned Cellar path,
 # which an upgrade replaces. Move an existing exclusion to the current binary.
@@ -25,7 +29,7 @@ fi
 # A running cloudflared keeps its old binary, so restart a server's tunnels when
 # the upgrade replaced it, if they run in its Rex session. They come back once
 # the node is ready; on prod, update one server at a time.
-workloads="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/server/workloads.sh"
+workloads="$DOTS_DIR/server/workloads.sh"
 if pgrep -f server/tunnels.sh >/dev/null &&
     [ "$(readlink -f "$(command -v cloudflared)")" != "$cloudflared_before" ] &&
     rex --autostart=false ls --json 2>/dev/null |

@@ -1,4 +1,4 @@
-# Rex app settings, KEY TYPE VALUE: saved by shared/save.sh, written by pc/setup.sh.
+# Rex app settings, KEY TYPE VALUE: saved by pc/save.sh, written by pc/setup.sh.
 Workspace.darkThemeID string static-noir
 Workspace.darkUsesExtendedThemePalette bool true
 Workspace.inactivePaneFadeMode string both

@@ -222,16 +222,22 @@ else
     fi
 fi
 
+WORKLOADS=0
 if [ "$RESTART" -eq 1 ] && sudo launchctl print "$SERVICE" >/dev/null 2>&1; then
     sessions="$(server_status | status_field sessions)"
     case "$sessions" in
         ''|*[!0-9]*) sessions=0 ;;
     esac
+    # A terminal of this server, this script's own, would end halfway.
+    if [ -n "${REX_BLOCK:-}" ]; then
+        echo "The Rex server needs a restart, which would end this terminal; run this over SSH instead." >&2
+        exit 1
+    fi
     # Sessions and the programs running in them end with the server.
     if [ "$sessions" -gt 0 ]; then
         answer=''
         if [ -t 0 ]; then
-            read -r -p "Restarting the Rex server ends its $sessions session(s). Restart now? [y/N] " answer
+            read -r -p "Restarting the Rex server ends its $sessions session(s); the workloads stop cleanly first and start again after. Restart now? [y/N] " answer
         fi
         case "$answer" in
             [yY]*) ;;
@@ -240,6 +246,12 @@ if [ "$RESTART" -eq 1 ] && sudo launchctl print "$SERVICE" >/dev/null 2>&1; then
                 exit 0
                 ;;
         esac
+    fi
+    # The server would end the workloads abruptly, Bitcoin Core mid-write.
+    if "$REX" --autostart=false ls --json 2>/dev/null |
+        jq -e '.sessions[] | select(.label == "server")' >/dev/null; then
+        WORKLOADS=1
+        "$SERVER_DIR/workloads.sh" stop
     fi
     sudo launchctl bootout "$SERVICE"
 fi
@@ -269,3 +281,7 @@ if [ "$(status_field pid <<< "$status")" != "$daemon_pid" ]; then
 fi
 
 echo "Rex server $(status_field version <<< "$status") is running as $SERVICE."
+
+if [ "$WORKLOADS" -eq 1 ]; then
+    "$SERVER_DIR/workloads.sh" boot
+fi

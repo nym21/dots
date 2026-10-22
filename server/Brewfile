@@ -1,3 +1,2 @@
 brew "blueutil"
 brew "mactop"
-cask "claude-code"

@@ -17,6 +17,22 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 
 shared_setup
 
+# --- Agents ---
+# Codex rewrites ~/.codex/config.toml with machine state (trusted projects,
+# app preferences), replacing any symlink. Shared settings are merged into
+# it instead, overwriting the keys they set and keeping the rest.
+echo "Merging Codex settings..."
+mkdir -p ~/.codex
+if [ -L ~/.codex/config.toml ]; then
+    rm ~/.codex/config.toml
+fi
+uv run --quiet "$SHARED_DIR/merge-toml.py" \
+    "$SHARED_DIR/home/.codex/config.toml" ~/.codex/config.toml
+
+echo "Linking Claude Code settings..."
+mkdir -p ~/.claude
+link "$SHARED_DIR/home/.claude/settings.json" ~/.claude/settings.json
+
 mkdir -p ~/.config/zed ~/.local/bin
 link "$ROLE_DIR/tssh" ~/.local/bin/tssh
 link "$ROLE_DIR/tcopy" ~/.local/bin/tcopy
@@ -26,7 +42,7 @@ git config --global core.editor "zed --wait"
 link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
 
 # Rex keeps its settings in its preferences, which it rewrites, so they are
-# written from pc/rex-settings, saved by shared/save.sh, rather than linked.
+# written from pc/rex-settings, saved by pc/save.sh, rather than linked.
 echo "Applying Rex settings..."
 while read -r key type value; do
     case "$key" in

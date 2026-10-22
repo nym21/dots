@@ -1,3 +1,7 @@
+brew "mcp-publisher"
+brew "node"
+brew "uv"
+cask "codex"
 cask "iina"
 cask "oversight"
 cask "raycast"

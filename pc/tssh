@@ -113,23 +113,6 @@ cleanup() {
 exec 9>>"$lock"
 /usr/bin/lockf 9
 
-# Let sessions started by the older, single-session wrapper finish first.
-if [ -d "$runtime_dir/session.lock" ]; then
-    old_pid="$(cat "$runtime_dir/session.lock/pid" 2>/dev/null || true)"
-    case "$old_pid" in
-        *[!0-9]*|'')
-            echo "error: an older tssh session may be starting; close it before retrying" >&2
-            exit 1
-            ;;
-    esac
-    if kill -0 "$old_pid" 2>/dev/null; then
-        echo "error: close the older tssh session before using simultaneous connections" >&2
-        exit 1
-    fi
-    rm -f "$runtime_dir/session.lock/pid"
-    rmdir "$runtime_dir/session.lock"
-fi
-
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT

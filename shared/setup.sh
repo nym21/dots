@@ -91,30 +91,14 @@ shared_setup() {
     mkdir -p ~/.cargo
     link "$SHARED_DIR/home/.cargo/config.toml" ~/.cargo/config.toml
 
-    # --- Codex ---
-    # Codex rewrites ~/.codex/config.toml with machine state (trusted projects,
-    # app preferences), replacing any symlink. Shared settings are merged into
-    # it instead, overwriting the keys they set and keeping the rest.
-    echo "Merging Codex settings..."
-    mkdir -p ~/.codex
-    if [ -L ~/.codex/config.toml ]; then
-        rm ~/.codex/config.toml
-    fi
-    uv run --quiet "$SHARED_DIR/merge-toml.py" \
-        "$SHARED_DIR/home/.codex/config.toml" ~/.codex/config.toml
-
-    # --- Claude Code ---
-    echo "Linking Claude Code settings..."
-    mkdir -p ~/.claude
-    link "$SHARED_DIR/home/.claude/settings.json" ~/.claude/settings.json
-
     # --- Cargo packages ---
     echo "Installing cargo packages..."
-    while IFS= read -r pkg || [ -n "$pkg" ]; do
-        [ -n "$pkg" ] || continue
-        echo "Installing ${pkg}..."
-        cargo install --locked "$pkg"
-    done < "$SHARED_DIR/cargo.txt"
+    cat "$SHARED_DIR/cargo.txt" "$ROLE_DIR/cargo.txt" 2>/dev/null |
+        while IFS= read -r pkg || [ -n "$pkg" ]; do
+            [ -n "$pkg" ] || continue
+            echo "Installing ${pkg}..."
+            cargo install --locked "$pkg" </dev/null
+        done
 
     # --- Fish shell ---
     setup_fish_shell

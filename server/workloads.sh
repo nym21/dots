@@ -5,11 +5,13 @@ set -euo pipefail
 # Start or stop Bitcoin Core, Bitview, the MCP server, and this mini's
 # Cloudflare tunnels. Each runs in its own block of the Rex session "server",
 # under the Rex server, whose Full Disk Access reaches the external volume and
-# survives Rex updates. Nothing restarts them: after a reboot, a restart of the
-# Rex server, or a workload exiting, run start again.
+# survives Rex updates. They start again at boot and after rex.sh restarts the
+# Rex server, but not when one exits on its own: run start then.
 #
 #   workloads.sh start            start what is not running, in order
 #   workloads.sh stop [NAME...]   stop all, or the NAMEs, cleanly and in order
+#   workloads.sh boot             wait for the Rex server and the external
+#                                 volume, then run start in its own block
 #
 # NAMEs are bitcoind, bitviewd, mcp, and tunnels.
 
@@ -18,7 +20,7 @@ SESSION=server
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
-    echo "Usage: $0 start | stop [bitcoind | bitviewd | mcp | tunnels]..." >&2
+    echo "Usage: $0 start | stop [bitcoind | bitviewd | mcp | tunnels]... | boot" >&2
     exit 1
 }
 
@@ -56,25 +58,32 @@ session_exists() {
         '.sessions[] | select(.label == $session)' >/dev/null
 }
 
-# Start workload $1 in its block, replacing the one a previous run left with
-# its last output. Unless $2 is "no-check", fail if it exits at once.
+# Run COMMAND in the block LABEL, replacing the one a previous run left with
+# its last output.
+run_block() {
+    local label="$1" block
+    shift
+    if session_exists; then
+        rex block close -s "$SESSION" "$label" >/dev/null 2>&1 || true
+        rex run -s "$SESSION" --label "$label" --keep-open --focus=false -c "$HOME" \
+            -- "$@" >/dev/null
+    else
+        block="$(rex new "$SESSION" --window "$label" --keep-open -c "$HOME" --json \
+            -- "$@" | jq -r '.initial_windows[0].block_ids[0]')"
+        rex block rename -s "$SESSION" "$block" "$label" >/dev/null
+    fi
+}
+
+# Start workload $1 in its block. Unless $2 is "no-check", fail if it exits at
+# once.
 start_one() {
-    local name="$1" command block
-    command="$SERVER_DIR/$(script "$name")"
+    local name="$1"
     if running "$name"; then
         echo "$name: already running"
         return 0
     fi
     echo "$name: starting"
-    if session_exists; then
-        rex block close -s "$SESSION" "$name" >/dev/null 2>&1 || true
-        rex run -s "$SESSION" --label "$name" --keep-open --focus=false -c "$HOME" \
-            -- "$command" >/dev/null
-    else
-        block="$(rex new "$SESSION" --window "$name" --keep-open -c "$HOME" --json \
-            -- "$command" | jq -r '.initial_windows[0].block_ids[0]')"
-        rex block rename -s "$SESSION" "$block" "$name" >/dev/null
-    fi
+    run_block "$name" "$SERVER_DIR/$(script "$name")"
     if [ "${2:-}" != no-check ]; then
         sleep 3
         if ! running "$name"; then
@@ -142,10 +151,31 @@ stop() {
     done
 }
 
+# Run by the com.local.workloads daemon at boot and by rex.sh after it
+# restarts the Rex server. start runs in a block, under the Rex server, since
+# reaching Bitcoin Core needs its access to the external volume.
+boot() {
+    local waited=0
+    until rex ls >/dev/null 2>&1 && (source "$SERVER_DIR/external.sh") 2>/dev/null; do
+        if [ "$waited" -ge 600 ]; then
+            echo "The Rex server or the external volume is still missing after 10 minutes." >&2
+            exit 1
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    run_block start "$SERVER_DIR/workloads.sh" start
+    echo "Started workloads.sh start in the Rex session $SESSION."
+}
+
 case "${1:-}" in
     start)
         [ "$#" -eq 1 ] || usage
         start
+        ;;
+    boot)
+        [ "$#" -eq 1 ] || usage
+        boot
         ;;
     stop)
         shift

@@ -22,33 +22,34 @@ preserving existing files as `.backup`. Edit those repository files to change
 the linked settings.
 
 Codex settings are the exception: Codex rewrites `~/.codex/config.toml` with
-machine state, replacing any symlink, so setup merges
+machine state, replacing any symlink, so PC setup merges
 `shared/home/.codex/config.toml` into it instead. Shared keys overwrite the
 machine's values and everything else is kept; re-run setup after changing the
 shared file. Removing a key from the shared file does not remove it from
 machines that already have it.
 
 Rex's settings work the same way: Rex keeps them in its preferences, so
-`shared/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
+`pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
 
 ## Layout
 
-- `shared/`: common packages, dotfiles, setup internals, and maintenance tools.
-- `pc/`: workstation applications, Rex and Zed settings, desktop setup, and Tailscale SSH/copy commands.
+- `shared/`: what both roles use: packages, shell and editor dotfiles, setup internals, and maintenance tools.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, and Tailscale SSH/copy commands.
 - `server/`: headless setup, profile, and workload launchers.
 
 Each role's `setup.sh` contains its setup and sources `shared/setup.sh` for
-common setup.
+common setup. Servers stay lean: development happens on the workstation,
+which also makes every Git write.
 
-Each folder has its own `Brewfile`. Shared Cargo packages are listed in
-`shared/cargo.txt`; Helix and its configuration are shared between both roles.
+Each role has its own `Brewfile` and `cargo.txt`, installed after the shared
+ones; Helix and its configuration are shared between both roles.
 
 ## Maintenance
 
 ```sh
-./shared/update.sh        # Update Homebrew and installed Cargo packages.
+./shared/update.sh        # Update Homebrew and the listed Cargo packages.
 ./shared/macos-update.sh  # Confirm before installing macOS updates/restarting.
-./shared/save.sh          # Save Cargo packages to shared/cargo.txt and Rex settings to pc/rex-settings.
+./pc/save.sh              # Save Cargo packages to pc/cargo.txt and Rex settings to pc/rex-settings.
 ```
 
 ## SSH over Tailscale

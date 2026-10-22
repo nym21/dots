@@ -1,0 +1,9 @@
+cargo-edit
+cargo-expand
+cargo-features-manager
+cargo-machete
+cargo-outdated
+cargo-release
+cargo-show-asm
+flamegraph
+samply

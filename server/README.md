@@ -24,8 +24,7 @@ login.
 
 From your other Mac, use `tssh mini@tailscale-host` in each terminal. Concurrent
 connections share one local userspace Tailscale daemon, which stops after the
-last SSH session closes. Authentication is saved for next time. Close any
-sessions started with the older, single-session `tssh` before using this version.
+last SSH session closes. Authentication is saved for next time.
 
 Server setup keeps SSH enabled; Screen Sharing is turned on once in System
 Settings (below). File transfers use `tcopy` over SSH. It disables File Sharing
@@ -165,7 +164,8 @@ the MCP server come from crates.io, from a branch of the official
 Any other branch name works too, and becomes the mode. `install.sh` installs
 both servers from that source, restarts the workloads whose binary changed, and
 starts whatever is not running, so a run with nothing new leaves a running mini
-alone.
+alone. Its first run asks for `sudo` to install `com.local.workloads`, which
+starts the workloads at boot.
 
 The workloads run in the Rex session `server`, one block each, under the Rex
 server, which reaches the external volume through its Full Disk Access (see
@@ -189,9 +189,13 @@ server, and the tunnels, which wait in their block until Bitview reaches the
 tip. It leaves a workload that already runs alone, wherever it runs, and
 replaces the block a stopped one left with its last output. `stop` sends each
 workload TERM and waits until it has shut down, which can take Bitcoin Core
-minutes. Nothing restarts a workload: after a reboot, a restart of the Rex
-server, or a workload exiting, run `start` again. Attach to the session from the
-Rex app to watch them.
+minutes. Attach to the session from the Rex app to watch them.
+
+They come back on their own after a reboot and after `rex.sh` restarts the Rex
+server, through `./server/workloads.sh boot`: it waits for the Rex server and the
+external volume, then runs `start` in the block `start`, which keeps its output.
+It runs `start` there because reaching Bitcoin Core needs the Rex server's access
+to the volume. A workload that exits on its own stays down; run `start` again.
 
 The workloads only run the installed binaries, so a restart keeps the version
 installed last. `cargo install --list` shows each installed version, with the
@@ -282,10 +286,11 @@ Then, on the mini:
 
 It downloads the newest build when it is not installed, checks its Developer ID
 signature, and installs it in `~/Applications/Rex Server.app`,
-linked as `~/.local/bin/rex`. Run it again to update. Restarting the server
-ends its sessions and every program running in them, the workloads too, so when
-sessions are open it asks first; without a terminal to ask in, it leaves the
-running server alone. Run `./server/workloads.sh start` after a restart.
+linked as `~/.local/bin/rex`. Run it again to update, over SSH: restarting the
+server ends its sessions and every program running in them, a terminal of the
+server included, so it refuses to restart from one. When sessions are open it
+asks first; without a terminal to ask in, it leaves the running server alone.
+It stops the workloads cleanly before the restart and starts them again after.
 The server logs to `~/Library/Logs/rex-server.log`.
 
 Grant the Rex server Full Disk Access once, so the programs it runs, the
@@ -320,5 +325,6 @@ An idle `mds` process does not by itself indicate that indexing is enabled.
 
 After a planned reboot, verify from another machine that Tailscale, SSH, `tcopy`,
 and Screen Sharing work while the mini remains at the login screen. Also verify
-that data volumes mount, then start the workloads with
-`./server/workloads.sh start`.
+that data volumes mount and the workloads came back; the `start` block in the
+Rex session `server` shows how, and `~/Library/Logs/workloads-boot.log` why if
+it is missing.
