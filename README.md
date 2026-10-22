@@ -221,11 +221,6 @@ server serves again, so an email means something went wrong: a crash, a server
 down, or Bitview stuck behind the tip (see the
 [server instructions](server/README.md#cloudflare-tunnels)).
 
-### Checks
-
-GitHub runs `shellcheck` on every script with each push and fails on its
-warnings; run it locally with the same `shellcheck -S warning -x`.
-
 ## SSH over Tailscale
 
 PC setup makes `tssh`, `tcopy`, `tscreen`, and `trex` available on your PATH:
