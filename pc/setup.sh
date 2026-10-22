@@ -24,6 +24,10 @@ update_cargo_hawk
 echo "Merging Codex and Claude Code settings..."
 merge_agent_settings
 
+# Time Machine backs up only when asked: automatic backups keep snapshots on
+# the local disk while the backup disk is away.
+sudo tmutil disable
+
 # --- Apps ---
 # Apps that update themselves, or that were installed before Homebrew, which
 # cannot adopt them without App Management access: installed from their casks
@@ -119,7 +123,7 @@ for app in "AdGuard for Safari" "Blackmagic Disk Speed Test" Developer "Numbers 
 done
 problem="$(backup_problem)"
 [ -z "$problem" ] ||
-    remaining+=("$problem: System Settings > General > Time Machine.")
+    remaining+=("$problem: connect the backup disk and run tmutil startbackup.")
 hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
 for server in $(awk '!/^#/ && NF { print $1 }' "$ROLE_DIR/fleet.conf"); do
     if ! grep -qx "$server" <<< "$hosts"; then

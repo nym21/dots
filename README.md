@@ -100,8 +100,9 @@ workloads come back at boot. Without one, it installs the newest of the other
 updates, such as the Command Line Tools.
 It also names anything installed that the Brewfiles and Cargo lists lack, so
 the Macs stay alike: add it to one, or uninstall it. On the workstation, it and
-setup say when Time Machine does not back it up: automatic backups off, or no
-backup completed in the last week.
+setup say when its last Time Machine backup is missing or over a week old.
+Backups run by hand there, as setup keeps automatic ones off: they keep
+snapshots on the local disk while the backup disk is away.
 
 It asks for a password only when a step needs root, and a run with nothing
 such asks for none. `/etc/sudoers.d/dots` lets it install Apple's updates and,

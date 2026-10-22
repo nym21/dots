@@ -71,7 +71,7 @@ if [ -n "$unlisted" ]; then
 fi
 if [ "$ROLE" = pc ]; then
     problem="$(backup_problem)"
-    [ -z "$problem" ] || echo "Not backed up: $problem; see System Settings > General > Time Machine."
+    [ -z "$problem" ] || echo "Back up: $problem; connect the backup disk and run tmutil startbackup."
 fi
 
 case "$ROLE" in
