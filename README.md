@@ -45,6 +45,9 @@ its manifest is signed by Craig Raw's PGP key, pinned by fingerprint, and lists
 the installer's checksum, and once the app is signed by his Developer ID and
 notarized, as [Sparrow asks](https://sparrowwallet.com/download/). It leaves a
 running Sparrow alone, and `pc/sparrow.sh --check` checks the installed one.
+`cargo-hawk` comes from Astral's installer, which setup and `ship update` run
+when a newer release is out: Cargo cannot build it, as each release is built
+against one stable Rust, so a Rust update needs its newest.
 
 Rex's settings work the same way: Rex keeps them in its preferences, so
 `pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.

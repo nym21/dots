@@ -18,6 +18,8 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 
 shared_setup
 
+update_cargo_hawk
+
 # --- Agents ---
 echo "Merging Codex and Claude Code settings..."
 merge_agent_settings

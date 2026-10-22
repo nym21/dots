@@ -99,6 +99,18 @@ merge_agent_settings() {
     mv "$tmp" "$file"
 }
 
+# cargo-hawk, from Astral's installer, as Cargo cannot build it: each release
+# is built against one stable Rust, so a Rust update needs its newest.
+update_cargo_hawk() {
+    local latest
+    latest="$(curl -fsS -m 20 https://api.github.com/repos/astral-sh/hawk/releases/latest | jq -r .tag_name)" ||
+        return 0
+    [ "$(cargo hawk --version 2>/dev/null | awk '{ print $3 }')" != "$latest" ] || return 0
+    echo "Installing cargo-hawk $latest..."
+    curl -fsSL https://github.com/astral-sh/hawk/releases/latest/download/cargo-hawk-installer.sh |
+        sh -s -- --quiet --no-modify-path
+}
+
 shared_setup() {
     mkdir -p "$HOME/Developer"
 
