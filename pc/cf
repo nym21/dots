@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Cloudflare's cf. It is published for Node, which this Mac does without, so
+# Bun installs it and runs it in Node's place.
+exec bun --bun "$HOME/.bun/install/global/node_modules/cf/bin/cf" "$@"

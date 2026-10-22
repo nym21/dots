@@ -34,7 +34,7 @@ Rex's settings work the same way: Rex keeps them in its preferences, so
 ## Layout
 
 - `shared/`: what both roles use: packages, shell and editor dotfiles, setup internals, and maintenance tools.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, and Tailscale SSH/copy commands.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, Tailscale SSH/copy commands, and Cloudflare's `cf`, which Bun runs since the workstation has no Node.
 - `server/`: headless setup, profile, and workload launchers.
 
 Each role's `setup.sh` contains its setup and sources `shared/setup.sh` for
@@ -58,6 +58,8 @@ ship save      # On the workstation: save Cargo tools to pc/cargo.txt and Rex se
 fleet status   # On the workstation: one line per server.
 fleet update   # On the workstation: give each server its part and update it, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
+fleet tunnels  # On the workstation: give each server a tunnel named after it.
+fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 ```
 
 `ship update` pulls this repository and runs the version pulled. It then
@@ -81,7 +83,15 @@ servers by their Tailscale names, each with its mode, prod, next, or local, and
 the tunnels it shares; their tokens live only in the Git-ignored `pc/.tunnels`,
 one `NAME TOKEN` per line, and each server gets only those of its own tunnels.
 Each server also serves the tunnel named after it, if `pc/.tunnels` has one, to
-reach that server alone, at a hostname such as `m4-1.bitview.space`. Since
+reach that server alone, at a hostname such as `m4-1.bitview.space`.
+A tunnel is named after what it serves: a mode's site (`prod`, `next`,
+`local`), `mcp`, or a server. `fleet tunnels SERVER...`, all of them by
+default, keeps Cloudflare to that with `cf`, once `cf auth login` has run: it
+gives every tunnel its `pc/.tunnels` name, and for each server creates its
+tunnel, routes the server's hostname alone through it to the site, makes that
+hostname the only DNS name pointing at it, and saves its token in
+`pc/.tunnels`, each only where that differs. Run it after adding a server to
+`fleet.conf`. Since
 tokens go out by name, `fleet update` first checks that every server is on the
 tailnet under its `fleet.conf` name and calls itself that, and `fleet status`
 also names a Mac on the tailnet that `fleet.conf` lacks. `fleet update SERVER...`, all of
@@ -99,6 +109,11 @@ them by default, brings the servers to the newest version of their mode:
    `~/Developer/mono` to it, runs `ship update` there, which changes only what
    is new, and waits until it serves again: workloads running, tunnels
    connected, and Bitview at the tip.
+4. Once servers sharing tunnels all run a new version, it purges Cloudflare's
+   cache of the hostnames their tunnels route, so none serves what the old
+   version cached; servers already at the run's versions keep their tunnels
+   throughout and their cache. `fleet purge SERVER...` purges by hand, as when a
+   purge failed.
 
 Groups not in prod go first, so a bad version shows there before prod, and one
 server at a time, so prod never loses two at once. It stops if a server does

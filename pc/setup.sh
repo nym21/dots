@@ -38,6 +38,9 @@ link "$ROLE_DIR/tssh" ~/.local/bin/tssh
 link "$ROLE_DIR/tcopy" ~/.local/bin/tcopy
 link "$ROLE_DIR/tscreen" ~/.local/bin/tscreen
 link "$ROLE_DIR/trex" ~/.local/bin/trex
+link "$ROLE_DIR/cf" ~/.local/bin/cf
+echo "Installing Cloudflare's cf..."
+bun add -g --silent cf@latest
 git config --global core.editor "zed --wait"
 link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
 

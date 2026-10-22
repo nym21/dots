@@ -51,6 +51,9 @@ cargo install-update --allow-no-update --locked \
 
 case "$ROLE" in
     pc)
+        # Cloudflare's cf, which Bun installs and runs in place of Node.
+        bun add -g --silent cf@latest
+
         # Mullvad's split tunneling excludes cloudflared by its versioned Cellar
         # path, which an upgrade replaces. Move an existing exclusion to the
         # current binary.

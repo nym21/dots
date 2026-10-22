@@ -12,6 +12,8 @@ set -euo pipefail
 #   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
 #   fleet update [SERVER...]   bring the servers to the newest version of their mode
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
+#   fleet tunnels [SERVER...]  give each server a tunnel named after it, with cf
+#   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #
 # A tunnel never serves two versions. An update pins one version per mode for
 # the whole run, and updates the servers that share a tunnel together: each
@@ -28,9 +30,20 @@ server_user=mini
 tssh="$(command -v tssh)"
 # How long a server may take to serve again, a macOS upgrade included.
 ready_timeout=$((45 * 60))
+# Where a server's own tunnel reaches its site: SERVER.$DOMAIN.
+DOMAIN=bitview.space
+SITE=http://localhost:3110
+export CF_QUIET=1
+
+# cf caches the account in .cloudflare where it runs, so it runs in fleet's
+# cache rather than wherever fleet was.
+cf() {
+    mkdir -p "$HOME/Library/Caches/dots"
+    (cd "$HOME/Library/Caches/dots" && command cf "$@")
+}
 
 usage() {
-    echo "Usage: fleet status | update | restart [SERVER...]" >&2
+    echo "Usage: fleet status | update | restart | tunnels | purge [SERVER...]" >&2
     exit 1
 }
 
@@ -217,14 +230,49 @@ update_server() {
     wait_serving "$server"
 }
 
+# Whether SERVER already runs PINS, bitviewd's and bitview_mcp's, so updating
+# it changes neither. Never in local mode, which has none.
+at_pins() {
+    local server="$1" pin mcp_pin installed
+    read -r pin mcp_pin <<< "$2"
+    [ -n "$pin" ] || return 1
+    installed="$(on "$server" '~/.cargo/bin/cargo install --list' 2>/dev/null)" || return 1
+    awk -v pin="$pin" -v mcp_pin="$mcp_pin" '
+        function at(p) { return $2 == "v" p ":" || index($0, "rev=" p) }
+        $1 == "bitviewd" && at(pin) { found++ }
+        $1 == "bitview_mcp" && at(mcp_pin) { found++ }
+        END { exit found != 2 }' <<< "$installed"
+}
+
+# Purge Cloudflare's cache of the hostnames that the tunnels of SERVER...
+# route, so none serves what an earlier version left there.
+purge() {
+    local server tunnel hosts
+    hosts="$(for tunnel in $(for server; do tunnels_of "$server"; done | tr ' ' '\n' | sort -u); do
+        cf tunnels config get "$(tunnel_id "$tunnel")" | jq -r '.config.ingress[]?.hostname // empty' || exit 1
+    done | sort -u)" || return 1
+    [ -n "$hosts" ] || return 0
+    echo "Purging Cloudflare's cache of" $hosts
+    cf cache purge --zone "$DOMAIN" --force --body "$(jq -Rnc '{hosts: [inputs]}' <<< "$hosts")" >/dev/null
+}
+
 # Update a group of servers sharing tunnels, so each tunnel serves one
 # version at a time, but for a few seconds while the last server hands its
-# shared tunnels to the updated ones.
+# shared tunnels to the updated ones, then purge their hostnames' cache. A
+# group already at the run's versions keeps serving them throughout, and
+# keeps its cache.
 update_group() {
-    local held server last="${*: -1}"
-    held="$(shared "$@")"
+    local changed='' held='' server last="${*: -1}" mode
+    read -r _ mode _ < <(entries "$1")
     for server; do
-        if [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
+        if ! at_pins "$server" "$(cat "$work/pins.$mode")"; then
+            changed=1
+            held="$(shared "$@")"
+            break
+        fi
+    done
+    for server; do
+        if [ -n "$held" ] && [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
             for server; do
                 [ "$server" != "$last" ] || continue
                 # shellcheck disable=SC2046
@@ -236,6 +284,10 @@ update_group() {
     done
     # shellcheck disable=SC2046
     give_tunnels "$last" $(tunnels_of "$last")
+    # A rerun finds the group at its versions and would not purge again.
+    if [ -n "$changed" ] && ! purge "$@"; then
+        echo "Could not purge their cache; run fleet purge $*" >&2
+    fi
 }
 
 update() {
@@ -262,6 +314,7 @@ update() {
     done < <(entries "$@")
 
     check_names "$@" || exit 1
+    cf_logged_in
 
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
@@ -271,10 +324,12 @@ update() {
             exit 1
         fi
     done
-    while read -r group; do
+    # On another descriptor, as ssh reads its input: the update's own needs
+    # the terminal, for a password.
+    while read -r group <&3; do
         # shellcheck disable=SC2086
         update_group $group
-    done < <(groups "$@")
+    done 3< <(groups "$@")
 }
 
 restart() {
@@ -306,6 +361,10 @@ status() {
             printf '%-6s fleet.conf gives it %s with tunnels %s; run fleet update %s\n' \
                 '' "$mode" "${tunnels:-none}" "$server"
         fi
+        case " $tunnels " in
+            *" $server "*) ;;
+            *) printf '%-6s has no tunnel of its own; run fleet tunnels %s\n' '' "$server" ;;
+        esac
     done < <(entries "$@")
     check_names "$@" || true
     for tunnel in $(shared "$@"); do
@@ -314,6 +373,90 @@ status() {
         if [ "$(wc -l <<< "$versions")" -gt 1 ]; then
             echo "$tunnel serves more than one version: $(echo $versions); run fleet update"
         fi
+    done
+}
+
+# cf, with which fleet tunnels changes Cloudflare and fleet update purges its
+# cache, must be logged in.
+cf_logged_in() {
+    if ! cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null; then
+        echo "cf is not logged in; run cf auth login." >&2
+        exit 1
+    fi
+}
+
+# The id of the tunnel whose token pc/.tunnels has as NAME, which the token
+# holds. Empty without one.
+tunnel_id() {
+    awk -v name="$1" '$1 == name { print $2 }' "$TUNNELS" 2>/dev/null |
+        base64 -d 2>/dev/null | jq -r '.t // empty' 2>/dev/null || true
+}
+
+# With Cloudflare's cf, name every tunnel as pc/.tunnels does, and give each
+# server a tunnel named after it that routes SERVER.$DOMAIN alone to its site,
+# the only name in DNS that points at it, with its token in pc/.tunnels, which
+# fleet update then hands out. It changes only what differs, so a rerun
+# changes nothing.
+tunnels() {
+    local list dns name id cf_name server hostname token ingress config target record current
+    cf_logged_in
+    list="$(cf tunnels list --is-deleted false)"
+    dns="$(cf dns records list --zone "$DOMAIN")"
+
+    for name in $(awk '!/^#/ && NF { print $1 }' "$TUNNELS" 2>/dev/null); do
+        id="$(tunnel_id "$name")"
+        cf_name="$(jq -r --arg id "$id" '.[] | select(.id == $id) | .name' <<< "$list")"
+        if [ -z "$cf_name" ]; then
+            echo "$TUNNELS has a token for $name, a tunnel Cloudflare no longer has; remove it." >&2
+            exit 1
+        fi
+        if [ "$cf_name" != "$name" ]; then
+            echo "$name: renaming its tunnel from $cf_name"
+            cf tunnels edit "$id" --name "$name" >/dev/null
+        fi
+    done
+
+    for server in $(entries "$@" | awk '{ print $1 }'); do
+        hostname="$server.$DOMAIN"
+        id="$(tunnel_id "$server")"
+        if [ -z "$id" ]; then
+            id="$(jq -r --arg name "$server" '.[] | select(.name == $name) | .id' <<< "$list" | head -1)"
+            if [ -z "$id" ]; then
+                echo "$server: creating its tunnel"
+                id="$(cf tunnels create --name "$server" --config-source cloudflare | jq -er .id)"
+            fi
+            echo "$server: saving its token in $TUNNELS"
+            token="$(cf tunnels token get "$id" | jq -er .)"
+            (umask 077; echo "$server $token" >> "$TUNNELS")
+        fi
+
+        ingress="$(jq -nc --arg host "$hostname" --arg site "$SITE" \
+            '[{hostname: $host, service: $site}, {service: "http_status:404"}]')"
+        config="$(cf tunnels config get "$id" 2>/dev/null | jq -c '.config // {}')" || config=''
+        [ -n "$config" ] || config='{}'
+        if ! jq -e --argjson ingress "$ingress" \
+            '[.ingress[]? | {hostname, service}] == [$ingress[] | {hostname, service}]' <<< "$config" >/dev/null; then
+            echo "$server: routing $hostname alone to $SITE"
+            cf tunnels config update "$id" \
+                --body "$(jq -c --argjson ingress "$ingress" '{config: (.ingress = $ingress)}' <<< "$config")" >/dev/null
+        fi
+
+        target="$id.cfargotunnel.com"
+        for record in $(jq -r --arg host "$hostname" --arg target "$target" \
+            '.[] | select(.content == $target and .name != $host) | "\(.id)=\(.name)"' <<< "$dns"); do
+            echo "$server: removing ${record#*=}, which points at its tunnel"
+            cf dns records delete "${record%%=*}" --zone "$DOMAIN" --force >/dev/null
+        done
+        current="$(jq -r --arg host "$hostname" '.[] | select(.name == $host) | "\(.type) \(.content)"' <<< "$dns")"
+        case "$current" in
+            "CNAME $target") ;;
+            '')
+                echo "$server: pointing $hostname at its tunnel"
+                cf dns records create --zone "$DOMAIN" --body "$(jq -nc --arg host "$hostname" --arg target "$target" \
+                    '{type: "CNAME", name: $host, content: $target, proxied: true}')" >/dev/null
+                ;;
+            *) echo "$hostname already points elsewhere, $current; leaving it." >&2 ;;
+        esac
     done
 }
 
@@ -326,6 +469,12 @@ done
 case "$command" in
     status) status "$@" ;;
     restart) restart "$@" ;;
+    tunnels) tunnels "$@" ;;
+    purge)
+        cf_logged_in
+        # shellcheck disable=SC2046
+        purge $(entries "$@" | awk '{ print $1 }')
+        ;;
     update)
         [ -r "$TUNNELS" ] || { echo "Missing $TUNNELS, the tunnel tokens: NAME TOKEN per line." >&2; exit 1; }
         update "$@"
