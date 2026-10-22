@@ -1,80 +1,172 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# fleet: the servers, from the workstation. It finds them as trex does, the
-# other Macs on the tailnet, and runs ship on each as mini over tssh.
+# fleet: the servers, from the workstation, which decides what each runs.
+# pc/fleet.conf lists them with their mode and tunnels, and the git-ignored
+# pc/.tunnels holds the tunnel tokens. fleet gives each server its part over
+# tssh, as mini, and runs ship there. A server keeps what it was given, so it
+# boots and serves without the workstation.
 #
-#   fleet status   one line per server
-#   fleet update   ship update on each server in turn, those not in prod
-#                  first, waiting until each serves again before the next,
-#                  so prod never loses two servers at once
+#   fleet status [SERVER...]   one line per server, and how it differs from fleet.conf
+#   fleet update [SERVER...]   give each server its mode and tunnels, then run ship
+#                              update there: those not in prod first, then prod one
+#                              at a time, each serving again before the next
+#   fleet restart [SERVER...]  stop and start each server's workloads, in that order
 
+PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CONF="$PC_DIR/fleet.conf"
+TUNNELS="$PC_DIR/.tunnels"
+SHIP='~/Developer/dots/shared/ship'
 server_user=mini
 tssh="$(command -v tssh)"
 # How long a server may take to serve again, a macOS upgrade included.
 ready_timeout=$((45 * 60))
 
 usage() {
-    echo "Usage: fleet status | update" >&2
+    echo "Usage: fleet status | update | restart [SERVER...]" >&2
     exit 1
 }
 
-servers() {
-    "$tssh" --tailscale status --json |
-        jq -r '.Peer[]? | select(.OS == "macOS") | .DNSName | split(".")[0]' | sort
+# fleet.conf's lines, SERVER MODE TUNNEL..., for the servers given or all.
+entries() {
+    local server
+    if [ "$#" -eq 0 ]; then
+        awk '!/^#/ && NF >= 2' "$CONF"
+        return
+    fi
+    for server; do
+        awk -v server="$server" '!/^#/ && $1 == server' "$CONF"
+    done
 }
 
 on() {
-    local host="$1"
+    local server="$1"
     shift
-    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$host" "$@" </dev/null
+    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$server" "$@" </dev/null
 }
 
 status() {
-    local work host
+    local work server mode tunnels line
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' RETURN
-    for host in $(servers); do
-        on "$host" ship status >"$work/$host" 2>/dev/null || echo "unreachable" >"$work/$host" &
-    done
+    while read -r server _; do
+        { on "$server" "$SHIP status" >"$work/$server" 2>/dev/null || echo unreachable >"$work/$server"; } &
+    done < <(entries "$@")
     wait
-    for host in $(servers); do
-        printf '%-6s %s\n' "$host" "$(cat "$work/$host")"
+    while read -r server mode tunnels; do
+        line="$(cat "$work/$server")"
+        printf '%-6s %s\n' "$server" "$line"
+        [ "$line" != unreachable ] || continue
+        # shellcheck disable=SC2086
+        tunnels="$(echo $tunnels)"
+        if [ "${line%% *}" != "$mode" ] ||
+            [ "$(sed -nE 's/.*, tunnels (.*) [0-9]+\/[0-9]+ ready,.*/\1/p' <<< "$line")" != "${tunnels:-none}" ]; then
+            printf '%-6s fleet.conf gives it %s with tunnels %s; run fleet update %s\n' \
+                '' "$mode" "${tunnels:-none}" "$server"
+        fi
+    done < <(entries "$@")
+}
+
+update_one() {
+    local server="$1" mode tunnels tokens changed=0 waited=0
+    read -r _ mode tunnels < <(entries "$server")
+    # shellcheck disable=SC2086
+    tunnels="$(echo $tunnels)"
+    echo "== $server: $mode, tunnels ${tunnels:-none}"
+    on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
+
+    # Only its own tunnels' tokens, so a server holds no other's.
+    tokens="$(for tunnel in $tunnels; do awk -v name="$tunnel" '$1 == name { print $1, $2 }' "$TUNNELS"; done)"
+    if [ "$(on "$server" 'shasum ~/Developer/dots/server/.tokens 2>/dev/null' | cut -d ' ' -f 1)" != \
+        "$(printf '%s\n' "$tokens" | shasum | cut -d ' ' -f 1)" ]; then
+        printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
+            'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
+        changed=1
+    fi
+
+    on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode > ~/.config/dots/mode'"
+    if [ "$mode" = local ]; then
+        echo "$server: copying ~/Developer/mono..."
+        rsync -a --delete --exclude /target/ -e "$tssh -T" \
+            "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/"
+    fi
+
+    # The connection ends early when the update restarts Tailscale or the Mac;
+    # whether the server serves again is what counts.
+    "$tssh" -t "$server_user@$server" "$SHIP update" || true
+
+    until on "$server" true 2>/dev/null; do
+        sleep 15
+    done
+    if [ "$changed" -eq 1 ]; then
+        echo "$server: restarting the tunnels on their new tokens..."
+        on "$server" "bash -c '$SHIP stop tunnels && $SHIP start'"
+    fi
+
+    wait_serving "$server"
+}
+
+wait_serving() {
+    local server="$1" waited=0
+    echo "$server: waiting until it serves again..."
+    until on "$server" "$SHIP status --check" 2>/dev/null; do
+        if [ "$waited" -ge "$ready_timeout" ]; then
+            echo "$server does not serve again after $((ready_timeout / 60)) minutes; stopping before the next server." >&2
+            exit 1
+        fi
+        sleep 15
+        waited=$((waited + 15))
+    done
+    echo "$server: $(on "$server" "$SHIP status")"
+}
+
+# The servers given, or all, in the order fleet goes through them: those not
+# in prod first, so a bad change shows there before prod, then prod.
+ordered() {
+    local server mode first='' last=''
+    while read -r server mode _; do
+        if [ "$mode" = prod ]; then last="$last $server"; else first="$first $server"; fi
+    done < <(entries "$@")
+    echo $first $last
+}
+
+# Stop and start each server's workloads cleanly, one server at a time.
+restart() {
+    local server
+    for server in $(ordered "$@"); do
+        echo "== $server"
+        on "$server" "bash -c '$SHIP stop && $SHIP start'"
+        wait_serving "$server"
     done
 }
 
 update() {
-    local host mode first='' last='' waited
-    # Servers not in prod go first, so a bad update shows there before prod.
-    for host in $(servers); do
-        mode="$(on "$host" ship status 2>/dev/null | awk '{ print $1 }' || true)"
-        case "$mode" in
-            prod) last="$last $host" ;;
-            '') echo "$host: unreachable; skipped." >&2 ;;
-            *) first="$first $host" ;;
-        esac
-    done
-    for host in $first $last; do
-        echo "== $host"
-        # The connection ends early when the update restarts Tailscale or the
-        # Mac; whether the server serves again is what counts.
-        "$tssh" -t "$server_user@$host" ship update || true
-        echo "$host: waiting until it serves again..."
-        waited=0
-        until on "$host" ship status --check 2>/dev/null; do
-            if [ "$waited" -ge "$ready_timeout" ]; then
-                echo "$host does not serve again after $((ready_timeout / 60)) minutes; stopping before the next server." >&2
+    local server tunnels tunnel
+    while read -r server _ tunnels; do
+        for tunnel in $tunnels; do
+            if ! awk -v name="$tunnel" '$1 == name { found = 1 } END { exit !found }' "$TUNNELS"; then
+                echo "fleet.conf gives $server the tunnel $tunnel, which $TUNNELS lacks." >&2
                 exit 1
             fi
-            sleep 15
-            waited=$((waited + 15))
         done
-        echo "$host: $(on "$host" ship status)"
+    done < <(entries "$@")
+    for server in $(ordered "$@"); do
+        update_one "$server"
     done
 }
 
-case "$#:${1:-}" in
-    1:status) status ;;
-    1:update) update ;;
+[ "$#" -ge 1 ] || usage
+command="$1"
+shift
+for server; do
+    [ -n "$(entries "$server")" ] || { echo "$server is not in $CONF." >&2; exit 1; }
+done
+case "$command" in
+    status) status "$@" ;;
+    restart) restart "$@" ;;
+    update)
+        [ -r "$TUNNELS" ] || { echo "Missing $TUNNELS, the tunnel tokens: NAME TOKEN per line." >&2; exit 1; }
+        update "$@"
+        ;;
     *) usage ;;
 esac

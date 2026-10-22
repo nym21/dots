@@ -2,20 +2,25 @@
 
 set -euo pipefail
 
-# Set this mini's mode and run it: install Bitview and the MCP server from
-# crates.io (prod), a branch of the official repository (next), or the
-# checkout in ~/Developer/mono (local), restart the workloads that changed
-# version, and start whatever is not running. A run with nothing new leaves a
-# running mini alone. The first run asks for sudo, to have them start at boot.
+# Run this mini in MODE, or in the mode it has: install Bitview and the MCP
+# server in it, restart the workloads that changed version, and start
+# whatever is not running. A run with nothing new leaves a running mini alone.
+# The first run asks for sudo, to have them start at boot.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [branch | --local]" >&2
+    echo "Usage: $0 [prod | next | BRANCH | local]" >&2
     exit 1
 fi
 
 source "$SERVER_DIR/crate.sh"
+
+mode="${1:-$(cat "$MODE_FILE" 2>/dev/null || bitview_mode)}"
+if [ -z "$mode" ]; then
+    echo "This mini has no mode yet; give one: prod, next, a branch, or local." >&2
+    exit 1
+fi
 
 # The Rex server comes back at boot on its own, the workloads with this daemon.
 # It is only installed, for the next boot: loading it now would start them
@@ -68,27 +73,29 @@ fi
 # of the same one, as cargo does after a Rust update, needs none. A local build
 # shows no change there, so any new binary counts.
 installed() {
-    if [ "${1:-}" = --local ]; then
-        shasum "$HOME/.cargo/bin/$2" 2>/dev/null || true
+    if [ "$mode" = local ]; then
+        shasum "$HOME/.cargo/bin/$1" 2>/dev/null || true
     else
-        cargo install --list | awk -v crate="$2" '$1 == crate { print; exit }'
+        cargo install --list | awk -v crate="$1" '$1 == crate { print; exit }'
     fi
 }
 
-bitviewd_before="$(installed "${1:-}" bitviewd)"
-mcp_before="$(installed "${1:-}" bitview_mcp)"
+bitviewd_before="$(installed bitviewd)"
+mcp_before="$(installed bitview_mcp)"
 
 rustup update
-install_crate bitviewd "$@"
-install_crate bitview_mcp "$@"
+install_crate bitviewd "$mode"
+install_crate bitview_mcp "$mode"
+mkdir -p "$(dirname "$MODE_FILE")"
+echo "$mode" > "$MODE_FILE"
 
-# The tunnels follow Bitview, whose install sets the mode, and stop before a
-# server restarts so no traffic reaches it meanwhile.
+# The tunnels stop before a server restarts, so no traffic reaches it
+# meanwhile.
 restart=''
-if [ "$(installed "${1:-}" bitviewd)" != "$bitviewd_before" ]; then
+if [ "$(installed bitviewd)" != "$bitviewd_before" ]; then
     restart="$restart tunnels bitviewd"
 fi
-if [ "$(installed "${1:-}" bitview_mcp)" != "$mcp_before" ]; then
+if [ "$(installed bitview_mcp)" != "$mcp_before" ]; then
     restart="$restart tunnels mcp"
 fi
 if [ -n "$restart" ]; then

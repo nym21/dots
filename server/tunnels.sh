@@ -18,47 +18,19 @@ command -v cloudflared >/dev/null || {
     exit 1
 }
 
-if [ ! -r "$TOKEN_FILE" ]; then
-    echo "Missing or unreadable token file: $TOKEN_FILE" >&2
-    exit 1
+# The tunnels fleet gave this mini, one NAME TOKEN per line.
+if [ -r "$TOKEN_FILE" ]; then
+    while IFS=$' \t\r' read -r name token || [ -n "$name" ]; do
+        case "$name" in
+            ''|\#*) continue ;;
+        esac
+        NAMES+=("$name")
+        TOKENS+=("$token")
+    done < "$TOKEN_FILE"
 fi
-
-source "$SERVER_DIR/crate.sh"
-mode="$(bitview_mode)"
-if [ -z "$mode" ]; then
-    echo "bitviewd is not installed with cargo; run ship install first." >&2
-    exit 1
-fi
-
-if ! host="$(tailscale status --json 2>/dev/null | jq -er '.Self.DNSName | split(".")[0]')"; then
-    echo "Cannot read this mini's Tailscale name." >&2
-    exit 1
-fi
-
-# Each line is NAME RUNS-ON... TOKEN. Start the tunnels whose RUNS-ON includes
-# this mini's mode or its Tailscale name.
-line_number=0
-while IFS=$' \t\r' read -r -a fields || [ "${#fields[@]}" -gt 0 ]; do
-    line_number=$((line_number + 1))
-    [ "${#fields[@]}" -gt 0 ] || continue
-    case "${fields[0]}" in
-        \#*) continue ;;
-    esac
-    if [ "${#fields[@]}" -lt 3 ]; then
-        echo "$TOKEN_FILE:$line_number: expected NAME RUNS-ON... TOKEN" >&2
-        exit 1
-    fi
-    for runs_on in "${fields[@]:1:${#fields[@]}-2}"; do
-        if [ "$runs_on" = "$mode" ] || [ "$runs_on" = "$host" ]; then
-            NAMES+=("${fields[0]}")
-            TOKENS+=("${fields[${#fields[@]}-1]}")
-            break
-        fi
-    done
-done < "$TOKEN_FILE"
 
 if [ "${#TOKENS[@]}" -eq 0 ]; then
-    echo "No tunnel runs on $host ($mode)."
+    echo "No tunnel runs on this mini."
     exit 0
 fi
 
@@ -116,7 +88,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 for index in "${!TOKENS[@]}"; do
-    echo "Starting tunnel ${NAMES[$index]} on $host ($mode)..."
+    echo "Starting tunnel ${NAMES[$index]}..."
     cloudflared tunnel run --token-file <(printf '%s' "${TOKENS[$index]}") &
     PIDS+=("$!")
 done

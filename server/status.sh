@@ -20,12 +20,19 @@ esac
 
 source "$SERVER_DIR/crate.sh"
 
+# The tunnels fleet gave this mini; without any, tunnels.sh does not stay up.
+names="$(awk '!/^#/ && NF { printf "%s%s", sep, $1; sep = " " }' "$SERVER_DIR/.tokens" 2>/dev/null || true)"
+
 workloads=0
+expected=3
 down=''
 for name in bitcoind bitviewd bitview_mcp; do
     if pgrep -x "$name" >/dev/null; then workloads=$((workloads + 1)); else down="$down $name"; fi
 done
-if pgrep -f server/tunnels.sh >/dev/null; then workloads=$((workloads + 1)); else down="$down tunnels"; fi
+if [ -n "$names" ]; then
+    expected=4
+    if pgrep -f server/tunnels.sh >/dev/null; then workloads=$((workloads + 1)); else down="$down tunnels"; fi
+fi
 
 tunnels=0
 ready=0
@@ -40,14 +47,16 @@ done
 behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_behind // empty' 2>/dev/null || true)"
 
 if [ "$check" -eq 1 ]; then
-    [ "$workloads" -eq 4 ] && [ "$tunnels" -gt 0 ] && [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]
+    [ "$workloads" -eq "$expected" ] && [ "$ready" -eq "$(wc -w <<< "$names")" ] &&
+        [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]
     exit
 fi
 
 mode="$(bitview_mode)"
 version="$(cargo install --list | awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }')"
-printf '%s %s, workloads %s/4%s, tunnels %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
-    "${mode:-no mode}" "${version:-}" "$workloads" "${down:+ (down:$down)}" "$ready" "$tunnels" \
+printf '%s %s, workloads %s/%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
+    "${mode:-no mode}" "${version:-}" "$workloads" "$expected" "${down:+ (down:$down)}" \
+    "${names:-none}" "$ready" "$tunnels" \
     "${behind:-?}" "$(df -h /Volumes/External 2>/dev/null | awk 'NR == 2 { print $4 }')" \
     "$(sw_vers -productVersion)" \
     "$(rex --autostart=false server status 2>/dev/null | awk '$1 == "version:" { print $2; exit }')" \

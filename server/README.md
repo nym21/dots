@@ -150,24 +150,22 @@ Running server setup again reinstalls the workaround.
 
 ## Workloads
 
-One command sets up a mini in its mode and runs it. Run it as the server's user:
-
-```sh
-ship install            # prod: crates.io
-ship install next       # next: the official repository's next branch
-ship install --local    # local: ~/Developer/mono
-```
+The workstation decides what each mini runs: `pc/fleet.conf` gives each its
+mode and tunnels, and `fleet update` hands a mini its part, then runs
+`ship update` there (see the [main README](../README.md#maintenance)). A mini
+keeps what it was given, so it boots and serves without the workstation.
 
 Every mini runs the same setup, and the mode is the only difference: Bitview and
-the MCP server come from crates.io, from a branch of the official
-`bitcoinresearchkit/mono` repository, or from the checkout in `~/Developer/mono`.
-Any other branch name works too, and becomes the mode. `ship install` installs
-both servers from that source, restarts the workloads whose binary changed, and
-starts whatever is not running, so a run with nothing new leaves a running mini
-alone. Its first run asks for `sudo` to install `com.local.workloads`, which
-starts the workloads at boot. `ship update` reinstalls the mini's current mode,
-so prod takes a new crates.io release and next the latest commit; on prod,
-update one mini at a time.
+the MCP server come from crates.io (**prod**), from a branch of the official
+`bitcoinresearchkit/mono` repository (**next**, or any other branch), or from
+the workstation's `~/Developer/mono`, which `fleet` copies to the mini
+(**local**). `ship install` installs both servers in the mini's mode, restarts
+the workloads that changed version, and starts whatever is not running, so a run
+with nothing new leaves a running mini alone; `ship update` runs it, so prod
+takes a new crates.io release and next the latest commit. Given a mode, as in
+`ship install next`, it switches the mini to it until `fleet update` sets it
+back. Its first run asks for `sudo` to install `com.local.workloads`, which
+starts the workloads at boot.
 
 The workloads run in the Rex session `server`, one block each, under the Rex
 server, which reaches the external volume through its Full Disk Access (see
@@ -209,9 +207,8 @@ The workloads only run the installed binaries, so a restart keeps the version
 installed last. `cargo install --list` shows each installed version, with the
 branch and commit or the checkout's path. Builds use the native-CPU settings in
 `shared/home/.cargo/config.toml`, linked during setup. A local build uses its own
-target directory in `~/Library/Caches/dots`, so it never touches the checkout's
-`target`. The checkout only reads from GitHub; commit and push from your other
-Mac, then pull it before installing.
+target directory in `~/Library/Caches/dots`, outside the copy of
+`~/Developer/mono` that `fleet` keeps in sync with the workstation's.
 
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 `--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
@@ -226,13 +223,13 @@ for example `dbcache=8192` for the initial sync, then restart it with
 ### Benchmark
 
 `server/bench.sh` runs in the foreground, like a terminal command, in a Rex pane
-or over SSH, which reach the external volume. It installs `bitviewd_bench` with
-the same choices as `install.sh`:
+or over SSH, which reach the external volume. It installs `bitviewd_bench` in
+the mode given, prod when none:
 
 ```sh
 ship bench            # crates.io
 ship bench next       # the official repository's next branch
-ship bench --local    # ~/Developer/mono
+ship bench local      # ~/Developer/mono
 ```
 
 It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
@@ -246,30 +243,18 @@ completion. Run `ship start` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
-`server/.tokens` lists every tunnel, and is the same on every mini. Each line is
-a name, where the tunnel runs, and its raw token. A mini runs the tunnels whose
-list includes its mode or its Tailscale name. Blank lines and lines starting
-with `#` are ignored:
+The tunnel tokens live only on the workstation, in the Git-ignored `pc/.tunnels`,
+one `NAME TOKEN` per line. `fleet update` writes to each mini's Git-ignored
+`server/.tokens` only the tunnels `pc/fleet.conf` gives it, so a mini holds no
+other mini's tokens, and restarts its tunnels when they changed.
 
-```text
-# NAME  RUNS-ON...  TOKEN
-global  prod        PASTE_TOKEN_HERE
-mcp     prod        PASTE_TOKEN_HERE
-eu1     m4-1        PASTE_TOKEN_HERE
-eu2     m4-2        PASTE_TOKEN_HERE
-next    next        PASTE_TOKEN_HERE
-local   local       PASTE_TOKEN_HERE
-```
-
-The token file is ignored by Git and resolved relative to `tunnels.sh`.
 `tunnels.sh` starts this mini's tunnels once Bitcoin Core, Bitview, and the MCP
 server run, both servers answer, and Bitview has reached Bitcoin Core's tip
 (`blocks_behind` in `/api/server/sync`; a version without it counts as at the
 tip), so a restarting node gets no public traffic. If a backend or any tunnel
-exits, it stops its remaining tunnels and exits, and `ship start` brings them
-back. `ship install` restarts them when Bitview changed, since the mode may have
-too, and `ship update` when it upgraded `cloudflared`. After changing
-`server/.tokens`, restart them with `ship stop tunnels` and `ship start`.
+exits, it stops its remaining tunnels and exits, and restarts 10 seconds later.
+`ship install` restarts them when Bitview changes version, and `ship update`
+when it upgraded `cloudflared`.
 
 ## Rex
 

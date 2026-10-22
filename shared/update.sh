@@ -73,14 +73,8 @@ case "$ROLE" in
             "$SERVER_DIR/rex.sh" --yes
         fi
 
-        source "$SERVER_DIR/crate.sh"
-        mode="$(bitview_mode)"
-        case "$mode" in
-            '') echo "Bitview is not installed; set this mini's mode with ship install." ;;
-            prod) "$SERVER_DIR/install.sh" ;;
-            local) "$SERVER_DIR/install.sh" --local ;;
-            *) "$SERVER_DIR/install.sh" "$mode" ;;
-        esac
+        # Within the mode this mini has, which fleet sets.
+        "$SERVER_DIR/install.sh" || echo "Bitview is not installed; fleet update gives this mini its mode."
 
         # A running cloudflared keeps its old binary. The tunnels come back
         # once the node is ready.

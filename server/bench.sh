@@ -5,7 +5,7 @@ set -euo pipefail
 SERVER_DIR="$(dirname "$0")"
 
 if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [branch | --local]" >&2
+    echo "Usage: $0 [prod | next | BRANCH | local]" >&2
     exit 1
 fi
 
@@ -19,7 +19,7 @@ source "$SERVER_DIR/crate.sh"
 
 rustup update
 
-install_crate bitviewd_bench "$@"
+install_crate bitviewd_bench "${1:-prod}"
 
 source "$SERVER_DIR/external.sh"
 mkdir -p "$EXTERNAL_VOLUME/bitview"

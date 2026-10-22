@@ -18,10 +18,10 @@ usage() {
             ;;
         server)
             echo "  status [--check]            this mini's mode, workloads, tunnels, and disk" >&2
-            echo "  install [BRANCH | --local]  set this mini's mode: crates.io, a branch, or ~/Developer/mono" >&2
+            echo "  install [MODE]              install this mini's mode, or MODE: prod, next, a branch, or local" >&2
             echo "  start                       start the workloads that are not running" >&2
             echo "  stop [NAME...]              stop the workloads cleanly: bitcoind bitviewd mcp tunnels" >&2
-            echo "  bench [BRANCH | --local]    run the Bitview benchmark" >&2
+            echo "  bench [MODE]                run the Bitview benchmark" >&2
             echo "  locate                      play a sound to find this mini" >&2
             ;;
     esac

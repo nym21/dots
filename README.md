@@ -56,7 +56,8 @@ commands this Mac has.
 ship update    # Update everything and restart what changed; macOS last.
 ship save      # On the workstation: save Cargo tools to pc/cargo.txt and Rex settings to pc/rex-settings.
 fleet status   # On the workstation: one line per server.
-fleet update   # On the workstation: ship update on each server in turn.
+fleet update   # On the workstation: give each server its part and update it, in turn.
+fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 ```
 
 `ship update` pulls this repository and runs the version pulled. It then
@@ -74,10 +75,22 @@ restart the Rex and Tailscale daemons without one; installing a daemon still
 asks. A macOS update always asks for the Mac owner's password, so without a
 terminal `ship update` only downloads it.
 
-`fleet update` updates the servers not in prod first, then each prod server,
-waiting until each serves again, workloads running, tunnels connected, and
-Bitview at the tip, before the next, so prod never loses two at once. It stops
-if a server does not serve again within 45 minutes.
+The workstation decides what each server runs. `pc/fleet.conf` lists the
+servers, each with its mode, prod, next, or local, and its tunnels; their tokens
+live only in the Git-ignored `pc/.tunnels`, one `NAME TOKEN` per line. For each
+server, `fleet update SERVER...` (all of them by default):
+
+1. writes the tokens of its own tunnels, if they changed, and its mode;
+2. in local mode, copies `~/Developer/mono` to it;
+3. runs `ship update` there, which changes only what is new;
+4. restarts its tunnels if their tokens changed;
+5. waits until it serves again, workloads running, tunnels connected, and
+   Bitview at the tip.
+
+It updates the servers not in prod first, then one prod server at a time, so
+prod never loses two at once, and stops if one does not serve again within 45
+minutes. `fleet status` prints a line per server and flags one that differs
+from `fleet.conf`.
 
 ## SSH over Tailscale
 
@@ -117,15 +130,15 @@ printed `http://127.0.0.1:PORT` URL in Rex with Add Remote Host, named after
 its server:
 
 ```sh
-trex         # forward every server on the tailnet
+trex         # forward every server in pc/fleet.conf
 trex --stop  # stop them all until the next trex
 ```
 
-The servers are the other Macs on the tailnet, under their Tailscale names.
-`trex` checks a new one once and skips it unless it accepts your SSH key as
+The servers are those in `pc/fleet.conf`, by their Tailscale names. `trex`
+checks a new one once and skips it unless it accepts your SSH key as
 `mini` and runs a Rex server. Each server keeps the port it was first given, in
 `~/Library/Application Support/trex/ports`, so saved hosts stay valid; run
-`trex` again after adding a server. Each forward runs `tssh` as a LaunchAgent
+`trex` again after adding a server to `fleet.conf`. Each forward runs `tssh` as a LaunchAgent
 that starts at login and reconnects on its own. The Rex app only accepts
 http(s) hosts and Rex has no login on them, so any process on this Mac can use
 the ports to act as the servers' users.

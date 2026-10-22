@@ -7,11 +7,11 @@ usage() {
     exit 2
 }
 
-# Keep the Rex server of every other Mac on the tailnet reachable at
+# Keep the Rex server of every server in fleet.conf reachable at
 # http://127.0.0.1:PORT through tssh, as LaunchAgents that start at login and
-# reconnect on their own. Servers log in as mini with your SSH key; a Mac
-# where that fails or no Rex server runs is skipped. Each server keeps the
-# port it was first given, so the Rex app's saved hosts stay valid.
+# reconnect on their own. Servers log in as mini with your SSH key; one where
+# that fails or no Rex server runs is skipped. Each server keeps the port it
+# was first given, so the Rex app's saved hosts stay valid.
 # The Rex app only takes http(s) hosts, and Rex has no login on them, so any
 # process on this Mac can use the ports to act as the servers' users.
 
@@ -108,8 +108,7 @@ mkdir -p "$agents" "$HOME/Library/Logs" "$(dirname "$ports")"
 touch "$ports"
 
 if [ "$stop" -eq 0 ]; then
-    hosts="$("$tssh" --tailscale status --json |
-        jq -r '.Peer[]? | select(.OS == "macOS") | .DNSName | split(".")[0]' | sort)"
+    hosts="$(awk '!/^#/ && NF { print $1 }' "$(dirname "$(readlink -f "$0")")/fleet.conf")"
 fi
 
 # Stop every forward whose settings changed before starting any, so hosts can
@@ -137,7 +136,7 @@ for host in $hosts; do
     pending="$pending $host:$port"
 done
 
-# Stop the forwards to Macs that left the tailnet, or all of them with --stop.
+# Stop the forwards to servers no longer in fleet.conf, or all of them with --stop.
 for plist in "$agents"/com.local.trex.*.plist; do
     [ -e "$plist" ] || continue
     label="$(basename "$plist" .plist)"
