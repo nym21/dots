@@ -10,7 +10,8 @@ set -euo pipefail
 #   - Cargo's extracted sources and git checkouts, which it recreates, and
 #     crates downloaded over 90 days ago, unless a build is running
 #   - a project's target directory in ~/Developer unbuilt for 30 days
-#   - on the workstation, simulators of iOS versions no longer installed
+#   - on the workstation, every simulator runtime but the newest stable iOS,
+#     so no older iOS, tvOS, or watchOS
 #   - on a server, the local-mode build directory once it runs another mode
 #   - crash logs over 90 days old
 
@@ -61,6 +62,16 @@ case "$ROLE" in
     pc)
         if xcrun --find simctl >/dev/null 2>&1; then
             echo "Cleaning Xcode's simulators..."
+            # A beta's build ends in a lowercase letter.
+            runtimes="$(xcrun simctl runtime list --json |
+                jq -r 'to_entries[].value | [.identifier, .platformIdentifier, .version, .build] | @tsv')"
+            keep="$(awk -F '\t' '$2 == "com.apple.platform.iphonesimulator" && $4 !~ /[a-z]$/ { print $3 "\t" $1 }' \
+                <<< "$runtimes" | sort -V | tail -1 | cut -f 2)"
+            if [ -n "$keep" ]; then
+                for runtime in $(awk -F '\t' -v keep="$keep" '$1 != keep { print $1 }' <<< "$runtimes"); do
+                    xcrun simctl runtime delete "$runtime"
+                done
+            fi
             xcrun simctl delete unavailable
         fi
         ;;
