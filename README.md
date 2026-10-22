@@ -82,6 +82,7 @@ updates them. `ship` alone lists this Mac's commands.
 ```sh
 ship update    # Update everything and restart what changed; macOS last.
 ship clean     # Free what caches and old builds take; ship update runs it too.
+ship status    # On the workstation: what only you can do, while it is missing.
 ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
 fleet status   # On the workstation: one line per server, and what is due.
@@ -89,6 +90,7 @@ fleet update   # On the workstation: build on every server at once, then update 
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 fleet tunnels  # On the workstation: give each server a tunnel named after it.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
+fleet auto     # Run hourly by a LaunchAgent: fleet update once a day, when it can.
 ```
 
 `ship update` pulls this repository and runs the version pulled. It installs
@@ -185,6 +187,22 @@ Groups not in prod go first, so a bad version shows there before prod, and one
 server at a time, so prod never loses two at once. It stops if a server does
 not serve again within 45 minutes. Selecting a server selects every server it
 shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
+
+Whatever moment it stops at, as when this Mac sleeps, every shared tunnel keeps
+a server, as a server takes a tunnel back before another leaves it. A step that
+stops and starts what a server runs is a job of the server's own, started with
+`nohup`, which finishes there however the connection fares, while `fleet`
+follows its output and, after a lost connection, takes it up again. From a
+terminal, `ship update` runs in it instead, to ask for macOS's password.
+
+`fleet auto`, which a LaunchAgent that setup and `ship update` install runs
+hourly, runs `fleet update` without a terminal once a day: when the last run is
+over 20 hours old, this Mac is on power, and a server answers. A sleeping or
+travelling Mac runs it later instead, and missed days are fine. It keeps the
+Mac awake meanwhile, logs to `~/Library/Logs/fleet-auto.log`, and notifies when
+a run fails; `ship status` says when none ran for over 3 days. Since it updates
+prod too, a crates.io release reaches the m4s the next run after you publish
+it.
 
 ### Status and alerts
 

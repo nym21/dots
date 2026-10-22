@@ -15,6 +15,7 @@ set -euo pipefail
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
 #   fleet tunnels [SERVER...]  give each server a tunnel named after it, with cf
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
+#   fleet auto                 fleet update once a day, when it can; run hourly
 #
 # A tunnel never serves two versions, and loses no server but to a restart.
 # An update pins one version per mode for the whole run, then builds it on
@@ -48,7 +49,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet status | update | restart | tunnels | purge [SERVER...]" >&2
+    echo "Usage: fleet status | update | restart | tunnels | purge [SERVER...] | auto" >&2
     exit 1
 }
 
@@ -166,6 +167,46 @@ wait_serving() {
     echo "$server: $(on "$server" "$SHIP status")"
 }
 
+# Run COMMAND on SERVER as a job of its own, which finishes there whatever
+# happens to this Mac or the connection, as when it sleeps: its output goes to
+# ~/Library/Logs/dots/fleet.log and, once it ends, its status beside it, its
+# process meanwhile in fleet.pid. A subshell keeps an exit in COMMAND from
+# skipping the status.
+detach() {
+    printf '%s\n' \
+        'mkdir -p ~/Library/Logs/dots' \
+        'rm -f ~/Library/Logs/dots/fleet.status' \
+        "nohup bash -c '( $2 ); echo \$? > ~/Library/Logs/dots/fleet.status' > ~/Library/Logs/dots/fleet.log 2>&1 &" \
+        'echo $! > ~/Library/Logs/dots/fleet.pid' |
+        "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$1" 'bash -s'
+}
+
+# Show the output of the job detach started on SERVER as it comes, through lost
+# connections, until it ends, and return its status: a failure when it ended
+# without one, as in a restart.
+follow_job() {
+    local server="$1" shown=0 lines status=''
+    while [ -z "$status" ]; do
+        sleep 5
+        lines="$(on "$server" "tail -n +$((shown + 1)) ~/Library/Logs/dots/fleet.log" 2>/dev/null)" || continue
+        status="$(on "$server" "bash -c 'cat ~/Library/Logs/dots/fleet.status 2>/dev/null ||
+            kill -0 \$(cat ~/Library/Logs/dots/fleet.pid) 2>/dev/null || echo gone'" 2>/dev/null)" || status=''
+        if [ "$status" = gone ]; then
+            echo "$server: the job ended without a status." >&2
+            status=1
+        fi
+        # Lines written between the two reads come with the status.
+        if [ -n "$status" ]; then
+            lines="$(on "$server" "tail -n +$((shown + 1)) ~/Library/Logs/dots/fleet.log" 2>/dev/null)" || true
+        fi
+        if [ -n "$lines" ]; then
+            printf '%s\n' "$lines"
+            shown=$((shown + $(printf '%s\n' "$lines" | wc -l)))
+        fi
+    done
+    return "$status"
+}
+
 # Silence Cloudflare's tunnel alerts while fleet restarts a server on purpose,
 # so that an alert email means something went wrong. Cloudflare silences a
 # whole policy, not one tunnel, so a silence lasts only while one server
@@ -216,7 +257,8 @@ give_tunnels() {
     quiet
     printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
         'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
-    on "$server" "bash -c '$SHIP stop tunnels && $SHIP start'"
+    detach "$server" "$SHIP stop tunnels && $SHIP start"
+    follow_job "$server"
     wait_serving "$server"
     unquiet
 }
@@ -296,12 +338,19 @@ update_server() {
     # shellcheck disable=SC2086
     give_tunnels "$server" $give
 
-    # The connection ends early when the update restarts Tailscale or the Mac;
-    # whether the server serves again is what counts.
-    "$tssh" -t "$server_user@$server" "$SHIP update" || true
-    until on "$server" true 2>/dev/null; do
-        sleep 15
-    done
+    # From a terminal, ship update runs in it, to ask for macOS's password, and
+    # its connection ends early when it restarts Tailscale or the Mac. Without
+    # one, as fleet auto runs, it is a job of the server's own, which installs
+    # no macOS. Either way, whether the server serves again is what counts.
+    if [ -t 0 ]; then
+        "$tssh" -t "$server_user@$server" "$SHIP update" || true
+        until on "$server" true 2>/dev/null; do
+            sleep 15
+        done
+    else
+        detach "$server" "$SHIP update"
+        follow_job "$server" || echo "$server: ship update failed; see above." >&2
+    fi
     echo "$server: waiting until it serves again..."
     wait_serving "$server"
     unquiet
@@ -421,7 +470,8 @@ restart() {
             echo "== $server"
             quiet
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
-            on "$server" "bash -c '$SHIP stop && $SHIP start'"
+            detach "$server" "$SHIP stop && $SHIP start"
+            follow_job "$server"
             wait_serving "$server"
             unquiet
         done
@@ -580,6 +630,29 @@ tunnels() {
     done
 }
 
+# Run fleet update once a day, from the LaunchAgent that runs this hourly: when
+# the last run is over 20 hours old, this Mac is on power, and a server answers,
+# so a sleeping or travelling Mac runs it later instead. It keeps the Mac awake
+# meanwhile and notifies when it fails. Missed days are fine.
+auto() {
+    local stamp="$HOME/Library/Application Support/dots/fleet-auto" log="$HOME/Library/Logs/fleet-auto.log" now
+    now="$(date +%s)"
+    [ $((now - $(cat "$stamp" 2>/dev/null || echo 0))) -ge $((20 * 3600)) ] || return 0
+    pmset -g batt | grep -q "'AC Power'" || return 0
+    on "$(entries | awk '{ print $1; exit }')" true 2>/dev/null || return 0
+    mkdir -p "$(dirname "$stamp")"
+    echo "$now" > "$stamp"
+    # Its log keeps the last 5 to 10 MB.
+    if [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+        tail -c 5242880 "$log" > "$log.new" && mv "$log.new" "$log"
+    fi
+    echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
+    if ! caffeinate -i "$0" update </dev/null; then
+        osascript -e 'display notification "See ~/Library/Logs/fleet-auto.log." with title "fleet update failed"' || true
+        return 1
+    fi
+}
+
 [ "$#" -ge 1 ] || usage
 command="$1"
 shift
@@ -590,6 +663,10 @@ case "$command" in
     status) status "$@" ;;
     restart) restart "$@" ;;
     tunnels) tunnels "$@" ;;
+    auto)
+        [ "$#" -eq 0 ] || usage
+        auto
+        ;;
     purge)
         cf_logged_in
         # shellcheck disable=SC2046

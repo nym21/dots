@@ -15,6 +15,7 @@ usage() {
     echo "  clean                       free what caches and old builds take; update runs it" >&2
     case "$ROLE" in
         pc)
+            echo "  status                      what only you can do, while it is missing" >&2
             echo "  save                        save Cargo tools and Rex settings into dots" >&2
             echo "  backup                      back up with Time Machine, then unmount its disk" >&2
             ;;
@@ -44,6 +45,7 @@ command="${1:-}"
 case "$ROLE:$command" in
     *:update) exec "$DOTS_DIR/shared/update.sh" "$@" ;;
     *:clean) exec "$DOTS_DIR/shared/clean.sh" "$@" ;;
+    pc:status) exec "$DOTS_DIR/pc/status.sh" "$@" ;;
     pc:save) exec "$DOTS_DIR/pc/save.sh" "$@" ;;
     pc:backup) exec "$DOTS_DIR/pc/backup.sh" "$@" ;;
     server:fetch)

@@ -146,6 +146,88 @@ backup_problem() {
     fi
 }
 
+# What only you can do on the workstation, one line each, while it is missing:
+# setup ends with it, and ship status shows it.
+missing_steps() {
+    local app problem hosts server last
+    [ "$(defaults read .GlobalPreferences LDMGlobalEnabled 2>/dev/null)" = 1 ] ||
+        echo "Turn on Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode, then restart."
+    # Each output read whole, as grep -q leaving early, or ssh -T failing even
+    # when it logs in, would fail a pipeline.
+    grep -q '^Mullvad account:' <<< "$(mullvad account get 2>/dev/null)" ||
+        echo "Log in to Mullvad VPN: mullvad account login."
+    grep -q 'successfully authenticated' <<< "$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1)" ||
+        echo "Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys."
+    jq -e .authenticated <<< "$(cf auth whoami 2>/dev/null)" >/dev/null 2>&1 ||
+        echo "Log in to Cloudflare: cf auth login."
+    [ "$(tssh --tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
+        echo "Log in to the tailnet: tssh mini@SERVER once, and open the link it prints."
+    ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
+        echo "Install the Rex app."
+    # From the App Store, which Homebrew cannot check without Spotlight's index.
+    for app in "AdGuard for Safari" "Blackmagic Disk Speed Test" Developer "Numbers Creator Studio" \
+        "Pages Creator Studio" Xcode; do
+        [ -d "/Applications/$app.app" ] || echo "Install $app from the App Store."
+    done
+    problem="$(backup_problem)"
+    [ -z "$problem" ] || echo "$problem: put the backup disk in and run ship backup."
+    hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
+    for server in $(awk '!/^#/ && NF { print $1 }' "$SHARED_DIR/../pc/fleet.conf"); do
+        if ! grep -qx "$server" <<< "$hosts"; then
+            echo "Run trex, which gives the Rex app the servers' Rex."
+            break
+        fi
+    done
+    last="$(cat "$FLEET_AUTO_STAMP" 2>/dev/null || date +%s)"
+    if [ $(($(date +%s) - last)) -gt $((3 * 86400)) ]; then
+        echo "fleet update has not run by itself for over 3 days: leave this Mac on power, with the servers in reach; ~/Library/Logs/fleet-auto.log says why."
+    fi
+}
+
+# When fleet auto last ran fleet update.
+FLEET_AUTO_STAMP="$HOME/Library/Application Support/dots/fleet-auto"
+
+# fleet auto, as a LaunchAgent that runs it hourly; it runs fleet update once a
+# day, when it can.
+install_fleet_auto() {
+    local label=com.local.fleet-auto plist="$HOME/Library/LaunchAgents/com.local.fleet-auto.plist" tmp
+    tmp="$(mktemp)"
+    cat > "$tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$label</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$HOME/.local/bin/fleet</string>
+        <string>auto</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>$HOME/Library/Logs/fleet-auto.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/Library/Logs/fleet-auto.log</string>
+</dict>
+</plist>
+PLIST
+    if cmp -s "$tmp" "$plist"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    mkdir -p "$(dirname "$plist")"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    mv "$tmp" "$plist"
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+}
+
 shared_setup() {
     mkdir -p "$HOME/Developer"
 

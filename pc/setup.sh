@@ -19,6 +19,7 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 shared_setup
 
 update_cargo_hawk
+install_fleet_auto
 
 # --- Agents ---
 echo "Merging Codex and Claude Code settings..."
@@ -101,40 +102,10 @@ else
     sudo fdesetup enable -user "$(id -un)" -prompt
 fi
 
-# What only you can do, listed while it is still missing.
-remaining=()
-[ "$(defaults read .GlobalPreferences LDMGlobalEnabled 2>/dev/null)" = 1 ] ||
-    remaining+=("Turn on Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode, then restart.")
-mullvad account get 2>/dev/null | grep -q '^Mullvad account:' ||
-    remaining+=("Log in to Mullvad VPN: mullvad account login.")
-ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1 |
-    grep -q 'successfully authenticated' ||
-    remaining+=("Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys.")
-cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null 2>&1 ||
-    remaining+=("Log in to Cloudflare: cf auth login.")
-[ "$(tssh --tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
-    remaining+=("Log in to the tailnet: tssh mini@SERVER once, and open the link it prints.")
-ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
-    remaining+=("Install the Rex app.")
-# From the App Store, which Homebrew cannot check without Spotlight's index.
-for app in "AdGuard for Safari" "Blackmagic Disk Speed Test" Developer "Numbers Creator Studio" \
-    "Pages Creator Studio" Xcode; do
-    [ -d "/Applications/$app.app" ] || remaining+=("Install $app from the App Store.")
-done
-problem="$(backup_problem)"
-[ -z "$problem" ] ||
-    remaining+=("$problem: connect the backup disk and run ship backup.")
-hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
-for server in $(awk '!/^#/ && NF { print $1 }' "$ROLE_DIR/fleet.conf"); do
-    if ! grep -qx "$server" <<< "$hosts"; then
-        remaining+=("Run trex, which gives the Rex app the servers' Rex.")
-        break
-    fi
-done
-
+missing="$(missing_steps)"
 echo
 echo "PC setup complete."
-if [ "${#remaining[@]}" -gt 0 ]; then
+if [ -n "$missing" ]; then
     echo "Remaining:"
-    printf '  - %s\n' "${remaining[@]}"
+    sed 's/^/  - /' <<< "$missing"
 fi
