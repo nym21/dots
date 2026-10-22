@@ -16,11 +16,16 @@ if [ -z "${DOTS_PULLED:-}" ]; then
     DOTS_PULLED=1 exec "$DOTS_DIR/shared/update.sh" "$@"
 fi
 
-# The commands, and what may run as root without a password, which asks for
-# one only the first time. After that a run asks only for a macOS update.
 source "$DOTS_DIR/shared/setup.sh"
 link_commands
-install_sudoers
+
+# Only a step that needs root asks for the password. Once it was typed, and
+# while sudo still remembers it, allow those steps without one next time.
+allow_next_time() {
+    if sudo -n true 2>/dev/null; then
+        install_sudoers
+    fi
+}
 
 binary() {
     readlink -f "$(command -v "$1")" 2>/dev/null || true
@@ -84,8 +89,10 @@ case "$ROLE" in
         fi
         ;;
 esac
+allow_next_time
 
 "$DOTS_DIR/shared/macos-update.sh"
+allow_next_time
 
 # Last, since a restart drops the connections over it, this update's own when
 # it runs over SSH.

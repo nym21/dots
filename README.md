@@ -69,11 +69,12 @@ Ctrl-C, stops a server's workloads cleanly, installs it, and restarts; the
 workloads come back at boot. Without one, it installs the newest of the other
 updates, such as the Command Line Tools.
 
-It asks for a password only when it must. Its first run installs
-`/etc/sudoers.d/dots`, which lets it install Apple's updates and, on a server,
-restart the Rex and Tailscale daemons without one; installing a daemon still
-asks. A macOS update always asks for the Mac owner's password, so without a
-terminal `ship update` only downloads it.
+It asks for a password only when a step needs root, and a run with nothing
+such asks for none. Once it was typed, `ship update` installs
+`/etc/sudoers.d/dots`, which lets the next runs install Apple's updates and,
+on a server, restart the Rex and Tailscale daemons without one; setup installs
+it too. Installing a daemon still asks. A macOS update always asks for the Mac
+owner's password, so without a terminal `ship update` only downloads it.
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
 servers, each with its mode, prod, next, or local, and its tunnels; their tokens
