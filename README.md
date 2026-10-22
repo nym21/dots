@@ -157,7 +157,8 @@ server at a time, so prod never loses two at once. It stops if a server does
 not serve again within 45 minutes. Selecting a server selects every server it
 shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
 `fleet status` prints a line per server and flags a server that differs from
-`fleet.conf` or a tunnel that serves more than one version.
+`fleet.conf`, a tunnel that serves more than one version, and a mode with a
+newer version than its servers have, when an update is due.
 
 GitHub runs `shellcheck` on every script with each push and fails on its
 warnings; run it locally with the same `shellcheck -S warning -x`.

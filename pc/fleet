@@ -166,6 +166,42 @@ wait_serving() {
     echo "$server: $(on "$server" "$SHIP status")"
 }
 
+# Silence Cloudflare's tunnel alerts while fleet restarts a server on purpose,
+# so that an alert email means something went wrong. Cloudflare silences a
+# whole policy, not one tunnel, so a silence lasts only while one server
+# restarts, an hour at most, lifted once it serves again. Nested calls share
+# the outer silence. Failing to silence costs only the emails.
+quiet_depth=0
+silences=''
+quiet() {
+    local start end policy
+    quiet_depth=$((quiet_depth + 1))
+    [ "$quiet_depth" -eq 1 ] || return 0
+    start="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    end="$(date -u -v+1H +%Y-%m-%dT%H:%M:%SZ)"
+    for policy in $(cf alerting policies list 2>/dev/null |
+        jq -r '.[] | select(.alert_type == "tunnel_health_event") | .id' 2>/dev/null); do
+        cf alerting silences create --body "$(jq -nc --arg policy "$policy" --arg start "$start" --arg end "$end" \
+            '[{policy_id: $policy, start_time: $start, end_time: $end}]')" >/dev/null 2>&1 || true
+    done
+    silences="$(cf alerting silences list 2>/dev/null |
+        jq -r --arg start "$start" --arg end "$end" '.[] | select(.start_time == $start and .end_time == $end) | .id' \
+            2>/dev/null || true)"
+}
+unquiet() {
+    quiet_depth=$((quiet_depth - 1))
+    [ "$quiet_depth" -eq 0 ] || return 0
+    lift
+}
+# Lift the silence now, as when fleet stops before a server serves again.
+lift() {
+    local silence
+    for silence in $silences; do
+        cf alerting silences delete "$silence" --force >/dev/null 2>&1 || true
+    done
+    silences=''
+}
+
 # Give SERVER the tokens of TUNNEL..., only those, and when that changes
 # them, restart its tunnels on them and wait until it serves again.
 give_tunnels() {
@@ -177,10 +213,12 @@ give_tunnels() {
         return 0
     fi
     echo "$server: serving tunnels ${*:-none}"
+    quiet
     printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
         'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
     on "$server" "bash -c '$SHIP stop tunnels && $SHIP start'"
     wait_serving "$server"
+    unquiet
 }
 
 # The versions to install in MODE, bitviewd's and bitview_mcp's, resolved
@@ -254,6 +292,7 @@ update_server() {
     done
     pins="$(cat "$work/pins.$mode")"
     echo "== $server: $mode${pins:+ ${pins%% *}}"
+    quiet
     # shellcheck disable=SC2086
     give_tunnels "$server" $give
 
@@ -265,6 +304,7 @@ update_server() {
     done
     echo "$server: waiting until it serves again..."
     wait_serving "$server"
+    unquiet
 }
 
 # Whether SERVER already runs PINS, bitviewd's and bitview_mcp's, as the
@@ -356,7 +396,7 @@ update() {
     check_names "$@" || exit 1
 
     work="$(mktemp -d)"
-    trap 'rm -rf "$work"' EXIT
+    trap 'rm -rf "$work"; lift' EXIT
     for mode in $(entries | awk '{ print $2 }' | sort -u); do
         if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
             echo "Could not find the newest version of $mode." >&2
@@ -375,18 +415,21 @@ update() {
 
 restart() {
     local group server
+    trap lift EXIT
     while read -r group; do
         for server in $group; do
             echo "== $server"
+            quiet
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
             on "$server" "bash -c '$SHIP stop && $SHIP start'"
             wait_serving "$server"
+            unquiet
         done
     done < <(groups "$@")
 }
 
 status() {
-    local work server mode tunnels line tunnel versions
+    local work server mode tunnels line tunnel versions newest behind version
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' RETURN
     while read -r server _; do
@@ -414,6 +457,24 @@ status() {
             while read -r server; do awk '{ print $2 }' "$work/$server"; done | tr -d ',' | sort -u)"
         if [ "$(wc -l <<< "$versions")" -gt 1 ]; then
             echo "$tunnel serves more than one version: $(echo $versions); run fleet update"
+        fi
+    done
+    # A newer version of a mode than its servers have: a crates.io release in
+    # prod, a commit of the branch otherwise.
+    for mode in $(entries "$@" | awk '$2 != "local" { print $2 }' | sort -u); do
+        newest="$(resolve "$mode" 2>/dev/null | cut -d ' ' -f 1)" || continue
+        [ -n "$newest" ] || continue
+        behind=''
+        while read -r server; do
+            version="$(awk '{ print $2 }' "$work/$server" | tr -d ',')"
+            [ "$version" != unreachable ] || continue
+            case "$mode" in
+                prod) [ "$version" = "v$newest" ] ;;
+                *) [ "${version#*#}" = "${newest:0:8}" ] ;;
+            esac || behind="$behind $server"
+        done < <(entries "$@" | awk -v mode="$mode" '$2 == mode { print $1 }')
+        if [ -n "$behind" ]; then
+            echo "$mode has ${newest:0:8}, newer than$behind have; run fleet update"
         fi
     done
 }

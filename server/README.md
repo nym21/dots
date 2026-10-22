@@ -275,8 +275,11 @@ other servers may be stuck at the same block.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
 tunnel of the account. Since each server also serves its own tunnel, its
-email says which server: a planned restart sends one when it goes down and one
-when it is back, and a crash one that stays unanswered.
+email says which server. `fleet` silences these alerts while it restarts a
+server on purpose, an hour at most, and lifts the silence once the server
+serves again, so an email means something went wrong, such as a crash.
+Cloudflare silences a whole alert policy, so an alert about another server
+during those minutes is silenced too.
 
 ## Rex
 
