@@ -100,8 +100,10 @@ Ctrl-C, stops a server's workloads cleanly, installs it, and restarts; the
 workloads come back at boot. Without one, it installs the newest of the other
 updates, such as the Command Line Tools.
 It also names anything installed that the Brewfiles and Cargo lists lack, so
-the Macs stay alike: add it to one, or uninstall it. On the workstation, it and
-setup say when its last Time Machine backup is missing or over a week old.
+the Macs stay alike: add it to one, or uninstall it. On the workstation, it backs
+up with `ship backup` whenever the backup disk is in, and otherwise leaves Time
+Machine alone; it and setup only say when the last backup is missing or over a
+week old.
 Backups run by hand there, with `ship backup`, as setup keeps automatic ones
 off: they keep snapshots on the local disk while the backup disk is away. It
 leaves out what can be rebuilt or downloaded again, such as Bitcoin Core's and

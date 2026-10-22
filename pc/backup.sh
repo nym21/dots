@@ -16,6 +16,17 @@ fi
 ROLE=pc
 source "$(dirname "$(readlink -f "$0")")/../shared/setup.sh"
 
+name="$(backup_name)"
+if [ -z "$name" ]; then
+    echo "Time Machine has no backup disk; choose one in System Settings > General > Time Machine." >&2
+    exit 1
+fi
+volume="$(backup_volume "$name")"
+if [ -z "$volume" ]; then
+    echo "The backup disk $name is not in; put it in and run ship backup again." >&2
+    exit 1
+fi
+
 # Rebuilt or downloaded again: Bitcoin Core's chain and Bitview's, from it;
 # Rust's, Cargo's, and Bun's; caches; Xcode's simulators and builds; the
 # Claude app's VM; and every project's build.
@@ -54,19 +65,6 @@ follow() {
     done
 }
 
-# The backup volume, by the name Time Machine last knew it under.
-name="$(defaults read /Library/Preferences/com.apple.TimeMachine Destinations 2>/dev/null |
-    sed -nE 's/^ *LastKnownVolumeName = "?([^";]+)"?;$/\1/p' | head -1)"
-if [ -z "$name" ]; then
-    echo "Time Machine has no backup disk; choose one in System Settings > General > Time Machine." >&2
-    exit 1
-fi
-volume="$(diskutil apfs list -plist | plutil -convert json -o - - |
-    jq -r --arg name "$name" '.Containers[].Volumes[] | select(.Name == $name) | .DeviceIdentifier' | head -1)"
-if [ -z "$volume" ]; then
-    echo "Connect the backup disk $name, then run ship backup again." >&2
-    exit 1
-fi
 # Its password, asked once, checked, and kept in the login keychain, so later
 # backups unlock it without anyone there: macOS does not ask for a backup
 # disk's. An unencrypted disk has none.

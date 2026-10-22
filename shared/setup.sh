@@ -111,6 +111,18 @@ update_cargo_hawk() {
         sh -s -- --quiet --no-modify-path
 }
 
+# The name of Time Machine's backup disk, as it last knew it. Empty without one.
+backup_name() {
+    defaults read /Library/Preferences/com.apple.TimeMachine Destinations 2>/dev/null |
+        sed -nE 's/^ *LastKnownVolumeName = "?([^";]+)"?;$/\1/p' | head -1
+}
+
+# The volume of the backup disk named NAME, locked or not, when it is in.
+backup_volume() {
+    diskutil apfs list -plist | plutil -convert json -o - - |
+        jq -r --arg name "$1" '.Containers[].Volumes[] | select(.Name == $name) | .DeviceIdentifier' | head -1
+}
+
 # When this Mac's last Time Machine backup completed, as Time Machine's
 # settings list it, so a locked or missing backup disk does not matter. Empty
 # without one.

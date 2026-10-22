@@ -69,9 +69,16 @@ unlisted="$(comm -23 \
 if [ -n "$unlisted" ]; then
     echo "Installed but not in dots: $unlisted"
 fi
+# The workstation backs up whenever its backup disk is in; without it, Time
+# Machine is left alone, and only an overdue backup is mentioned.
 if [ "$ROLE" = pc ]; then
-    problem="$(backup_problem)"
-    [ -z "$problem" ] || echo "Back up: $problem; connect the backup disk and run ship backup."
+    name="$(backup_name)"
+    if [ -n "$name" ] && [ -n "$(backup_volume "$name")" ]; then
+        "$DOTS_DIR/pc/backup.sh" || echo "The backup did not complete; see above." >&2
+    else
+        problem="$(backup_problem)"
+        [ -z "$problem" ] || echo "Back up: $problem; put the backup disk in and run ship backup."
+    fi
 fi
 
 case "$ROLE" in
