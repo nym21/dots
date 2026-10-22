@@ -83,7 +83,7 @@ commands this Mac has.
 ship update    # Update everything and restart what changed; macOS last.
 ship clean     # Free what caches and old builds take; ship update runs it too.
 ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
-ship backup    # On the workstation: back up with Time Machine, then lock its disk.
+ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
 fleet status   # On the workstation: one line per server.
 fleet update   # On the workstation: give each server its part and update it, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
@@ -106,8 +106,8 @@ Backups run by hand there, with `ship backup`, as setup keeps automatic ones
 off: they keep snapshots on the local disk while the backup disk is away. It
 leaves out what can be rebuilt or downloaded again, such as Bitcoin Core's and
 Bitview's data, toolchains, caches, and builds, unlocks the backup disk with
-its password from the login keychain, asked once, backs up, and locks it
-again, so the card can stay in for the next backup or come out.
+its password from the login keychain, asked once, backs up, and unmounts it,
+so the card can stay in for the next backup or come out, which locks it.
 
 It asks for a password only when a step needs root, and a run with nothing
 such asks for none. `/etc/sudoers.d/dots` lets it install Apple's updates and,

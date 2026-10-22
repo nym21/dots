@@ -116,10 +116,16 @@ else
     echo "The backup did not complete; Time Machine's log says why." >&2
 fi
 
-# Locked, not ejected: an ejected card is gone until put in again, while a
-# locked one stays for the next backup, and can come out as safely.
+# Unmounted and locked, not ejected: an ejected card is gone until put in
+# again, while this one stays for the next backup, and can come out as safely.
+# After a backup, macOS may keep the volume's key until the card comes out.
 if [ -n "$user" ]; then
-    diskutil apfs lockVolume "$volume" >/dev/null && echo "Locked $name."
+    diskutil apfs lockVolume "$volume" >/dev/null 2>&1 || diskutil unmount "$volume" >/dev/null
 else
-    diskutil unmount "$volume" >/dev/null && echo "Unmounted $name."
+    diskutil unmount "$volume" >/dev/null
+fi
+if [ "$(diskutil info "$volume" | awk -F ': *' '/^ *Locked:/ { print $2 }')" = Yes ]; then
+    echo "Unmounted and locked $name."
+else
+    echo "Unmounted $name; it can stay in, or come out, which locks it."
 fi
