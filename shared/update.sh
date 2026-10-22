@@ -53,6 +53,24 @@ rustup update
 cargo install-update --allow-no-update --locked \
     $(cat "$DOTS_DIR/shared/cargo.txt" "$DOTS_DIR/$ROLE/cargo.txt" 2>/dev/null)
 
+# What this Mac has that dots does not list, so the Macs stay alike: add it to
+# a Brewfile or Cargo list, or uninstall it. Bitview's crates are a server's
+# workloads, which ship install chooses.
+unlisted="$(comm -23 \
+    <({
+        brew leaves --installed-on-request
+        brew list --cask
+        cargo install --list | awk '/^[[:alnum:]_-]+ v[^ ]+/ && $1 !~ /^bitview/ { print $1 }'
+    } | sort -u) \
+    <({
+        sed -nE 's/^(brew|cask) "([^"]*)".*/\2/p' "$DOTS_DIR/shared/Brewfile" "$DOTS_DIR/$ROLE/Brewfile" |
+            sed 's#.*/##'
+        cat "$DOTS_DIR/shared/cargo.txt" "$DOTS_DIR/$ROLE/cargo.txt" 2>/dev/null
+    } | sort -u) | paste -s -d ' ' -)"
+if [ -n "$unlisted" ]; then
+    echo "Installed but not in dots: $unlisted"
+fi
+
 case "$ROLE" in
     pc)
         merge_agent_settings

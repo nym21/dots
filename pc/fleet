@@ -28,6 +28,8 @@ set -euo pipefail
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
 TUNNELS="$PC_DIR/.tunnels"
+# The servers' ship, its ~ expanded there, by their shell.
+# shellcheck disable=SC2088
 SHIP='~/Developer/dots/shared/ship'
 server_user=mini
 tssh="$(command -v tssh)"
@@ -299,7 +301,7 @@ purge() {
 # group already at the run's versions keeps serving them throughout, and
 # keeps its cache.
 update_group() {
-    local changed='' held='' server last="${*: -1}" mode
+    local changed='' held='' server other last="${*: -1}" mode
     read -r _ mode _ < <(entries "$1")
     for server; do
         if ! at_pins "$server" "$(cat "$work/pins.$mode")"; then
@@ -310,12 +312,11 @@ update_group() {
     done
     for server; do
         if [ -n "$held" ] && [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
-            for server; do
-                [ "$server" != "$last" ] || continue
+            for other; do
+                [ "$other" != "$last" ] || continue
                 # shellcheck disable=SC2046
-                give_tunnels "$server" $(tunnels_of "$server")
+                give_tunnels "$other" $(tunnels_of "$other")
             done
-            server="$last"
         fi
         update_server "$server" "$held"
     done

@@ -6,6 +6,7 @@ if [ "$#" -ne 0 ]; then
     exit 1
 fi
 
+# shellcheck disable=SC2034 # read by shared/setup.sh
 ROLE=server
 source "$(dirname "$0")/../shared/setup.sh"
 
@@ -65,10 +66,6 @@ for service in "${NETWORK_SERVICES[@]}"; do
         echo "Skipping DNS: network service '$service' was not found." >&2
     fi
 done
-
-# Disable Spotlight indexing.
-sudo mdutil -a -i off
-mdutil -a -s
 
 # Keep the machine reachable while allowing the display to sleep.
 sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1

@@ -1,5 +1,6 @@
 brew "bun"
 brew "mcp-publisher"
+brew "shellcheck"
 brew "uv"
 cask "claude-code@latest"
 cask "codex"

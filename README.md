@@ -39,6 +39,12 @@ off.
 
 Rex's settings work the same way: Rex keeps them in its preferences, so
 `pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
+So do the macOS settings `pc/save.sh` lists, those of the Dock, Finder,
+keyboard, trackpad, and screenshots that this Mac sets, in
+`pc/macos-settings`; add a `DOMAIN KEY` line there to keep another. Both roles
+turn the firewall on and Spotlight's index off. App Store apps are not in the
+Brewfile, as Homebrew cannot see them without that index; PC setup lists any
+missing.
 
 ## Layout
 
@@ -63,7 +69,7 @@ commands this Mac has.
 
 ```sh
 ship update    # Update everything and restart what changed; macOS last.
-ship save      # On the workstation: save Cargo tools to pc/cargo.txt and Rex settings to pc/rex-settings.
+ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 fleet status   # On the workstation: one line per server.
 fleet update   # On the workstation: give each server its part and update it, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
@@ -79,6 +85,8 @@ macOS has an update or upgrade, it downloads the newest, waits 30 seconds for
 Ctrl-C, stops a server's workloads cleanly, installs it, and restarts; the
 workloads come back at boot. Without one, it installs the newest of the other
 updates, such as the Command Line Tools.
+It also names anything installed that the Brewfiles and Cargo lists lack, so
+the Macs stay alike: add it to one, or uninstall it.
 
 It asks for a password only when a step needs root, and a run with nothing
 such asks for none. `/etc/sudoers.d/dots` lets it install Apple's updates and,
@@ -137,6 +145,9 @@ not serve again within 45 minutes. Selecting a server selects every server it
 shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
 `fleet status` prints a line per server and flags a server that differs from
 `fleet.conf` or a tunnel that serves more than one version.
+
+GitHub runs `shellcheck` on every script with each push and fails on its
+warnings; run it locally with the same `shellcheck -S warning -x`.
 
 ## SSH over Tailscale
 

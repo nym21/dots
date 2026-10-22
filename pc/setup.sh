@@ -6,6 +6,7 @@ if [ "$#" -ne 0 ]; then
     exit 1
 fi
 
+# shellcheck disable=SC2034 # read by shared/setup.sh
 ROLE=pc
 source "$(dirname "$0")/../shared/setup.sh"
 
@@ -58,6 +59,17 @@ while read -r key type value; do
     defaults write com.superlogical.rex "$key" "-$type" "$value"
 done < "$ROLE_DIR/rex-settings"
 
+# The macOS settings pc/save.sh saved: Dock, Finder, keyboard, trackpad, and
+# screenshots. The trackpad's apply at the next login.
+echo "Applying macOS settings..."
+while read -r domain key type value; do
+    case "$domain" in
+        ''|\#*) continue ;;
+    esac
+    defaults write "$domain" "$key" "-$type" "${value/#\~/$HOME}"
+done < "$ROLE_DIR/macos-settings"
+killall Dock Finder SystemUIServer 2>/dev/null || true
+
 # FileVault requires the login password and returns a personal recovery key.
 if fdesetup isactive >/dev/null 2>&1; then
     echo "FileVault is already enabled."
@@ -82,6 +94,11 @@ cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null 2>&1 ||
     remaining+=("Log in to the tailnet: tssh mini@SERVER once, and open the link it prints.")
 ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
     remaining+=("Install the Rex app.")
+# From the App Store, which Homebrew cannot check without Spotlight's index.
+for app in "AdGuard for Safari" "Blackmagic Disk Speed Test" Developer "Numbers Creator Studio" \
+    "Pages Creator Studio" Xcode; do
+    [ -d "/Applications/$app.app" ] || remaining+=("Install $app from the App Store.")
+done
 hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
 for server in $(awk '!/^#/ && NF { print $1 }' "$ROLE_DIR/fleet.conf"); do
     if ! grep -qx "$server" <<< "$hosts"; then

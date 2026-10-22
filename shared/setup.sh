@@ -158,8 +158,10 @@ shared_setup() {
     link "$SHARED_DIR/home/.config/starship.toml" ~/.config/starship.toml
     link "$SHARED_DIR/home/.config/helix/config.toml" ~/.config/helix/config.toml
 
-    # Shared firewall setting.
+    # The firewall on, and Spotlight's index off: Raycast finds apps without
+    # it, and a server has no use for one.
     sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+    sudo mdutil -a -i off >/dev/null
 
     "$SHARED_DIR/sudoers.sh"
 }

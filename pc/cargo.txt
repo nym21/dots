@@ -7,3 +7,4 @@ cargo-release
 cargo-show-asm
 flamegraph
 samply
+tokei
