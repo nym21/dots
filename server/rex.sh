@@ -255,6 +255,8 @@ if [ "$ACTION" != none ] && launchctl print "$SERVICE" >/dev/null 2>&1; then
                 ;;
         esac
     fi
+    # Before the workloads stop, so none is down while a password is asked.
+    "$SERVER_DIR/../shared/sudoers.sh"
     # The server would end the workloads abruptly, Bitcoin Core mid-write.
     if "$REX" --autostart=false ls --json 2>/dev/null |
         jq -e '.sessions[] | select(.label == "server")' >/dev/null; then

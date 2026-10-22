@@ -81,10 +81,10 @@ workloads come back at boot. Without one, it installs the newest of the other
 updates, such as the Command Line Tools.
 
 It asks for a password only when a step needs root, and a run with nothing
-such asks for none. Once it was typed, `ship update` installs
-`/etc/sudoers.d/dots`, which lets the next runs install Apple's updates and,
+such asks for none. `/etc/sudoers.d/dots` lets it install Apple's updates and,
 on a server, restart the Rex and Tailscale daemons without one; setup installs
-it too. Installing a daemon still asks. A macOS update always asks for the Mac
+it, and when it lacks a rule, the first such step asks for the password once to
+add it, then runs without, as the next runs do. Installing a daemon still asks. A macOS update always asks for the Mac
 owner's password, so without a terminal `ship update` only downloads it.
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the

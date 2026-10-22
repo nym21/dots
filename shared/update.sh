@@ -31,14 +31,6 @@ if [ "${1:-}" = --fetch ]; then
     exit 0
 fi
 
-# Only a step that needs root asks for the password. Once it was typed, and
-# while sudo still remembers it, allow those steps without one next time.
-allow_next_time() {
-    if sudo -n true 2>/dev/null; then
-        install_sudoers
-    fi
-}
-
 binary() {
     readlink -f "$(command -v "$1")" 2>/dev/null || true
 }
@@ -105,14 +97,13 @@ case "$ROLE" in
         fi
         ;;
 esac
-allow_next_time
 
 "$DOTS_DIR/shared/macos-update.sh"
-allow_next_time
 
 # Last, since a restart drops the connections over it, this update's own when
 # it runs over SSH.
 if [ "$ROLE" = server ] && [ "$(binary tailscaled)" != "$tailscaled_before" ]; then
+    "$DOTS_DIR/shared/sudoers.sh"
     sudo launchctl kickstart -k system/com.local.tailscaled
 fi
 echo "Up to date."

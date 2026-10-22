@@ -66,6 +66,8 @@ if [ "$download" -eq 1 ]; then
     fi
     exit 0
 fi
+# Asks for the password only if a rule is missing, then needs none.
+"$DOTS_DIR/shared/sudoers.sh"
 if [ -z "$macos" ]; then
     # Without a macOS update, install the newest of each other product.
     while IFS= read -r product; do
