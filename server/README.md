@@ -158,54 +158,79 @@ Running server setup again reinstalls the workaround.
 
 ## Workloads
 
-Run each workload in its own terminal or tmux pane:
+`./server/services.sh` runs Bitcoin Core, Bitview, the MCP server, and the
+Cloudflare tunnels as LaunchDaemons under the server's user, so they start at
+boot while the mini stays at the login screen, and restart whenever they exit.
+Run it as that user, without `sudo`; it uses `sudo` where needed. Running it
+again restarts only the daemons whose definition changed. It skips a workload
+that already runs outside launchd, in tmux for example; stop that copy first.
 
-| Script | Purpose |
-| --- | --- |
-| `server/bitcoin.sh` | Run Bitcoin Core with data in `/Volumes/External/bitcoin`. |
-| `server/bitview.sh` | Update Rust, install Bitview, and run the indexer/server. |
-| `server/bench.sh` | Update Rust, install `bitviewd_bench`, and run the bootstrap benchmark. |
-| `server/mcp.sh` | Install and run the Bitview MCP server. |
-| `server/tunnels.sh` | Run and monitor all configured Cloudflare tunnels together. |
+| Daemon | Runs | Log in `~/Library/Logs` |
+| --- | --- | --- |
+| `com.local.bitcoind` | `server/bitcoin.sh` | `bitcoind.log` |
+| `com.local.bitviewd` | `server/bitview.sh --run` | `bitviewd.log` |
+| `com.local.bitview-mcp` | `server/mcp.sh --run` | `bitview-mcp.log` |
+| `com.local.tunnels` | `server/tunnels.sh` | `tunnels.log` |
 
-The Bitcoin launcher requires the external volume to be mounted and creates
-its data directory if needed. Extra Bitcoin Core arguments are forwarded; for
-the initial sync with the larger cache:
+The daemons need no start order: a launcher exits until what it needs is up,
+and launchd retries it 10 seconds later. Bitcoin Core and Bitview wait for the
+external volume at `/Volumes/External`, so nothing is written to the boot disk
+before it mounts, and the tunnels wait for the three backends.
+`com.local.trim-logs` checks the logs hourly and moves one above 100 MB to
+`NAME.log.1`, replacing the previous one.
 
 ```sh
-./server/bitcoin.sh -dbcache=8192
+sudo launchctl kickstart -k system/com.local.bitviewd   # restart
+sudo launchctl bootout system/com.local.bitviewd        # stop until services.sh runs again
+tail -f ~/Library/Logs/bitviewd.log
 ```
 
-The launchers preserve the caller's working directory. Bitview and the benchmark
-set `RUSTFLAGS="-C target-cpu=native"` explicitly for installation. MCP uses the
-shared native-CPU settings in `shared/home/.cargo/config.toml`, linked during setup.
-These are foreground launchers; use LaunchDaemons for automatic startup at boot.
+### Versions
 
-Bitview and the benchmark install from crates.io by default. Each accepts one
-optional argument: a branch of the official `bitcoinresearchkit/mono` repository.
-They do not require a local checkout or forward runtime arguments:
+`bitview.sh` and `mcp.sh` choose the version their daemon runs. Each installs
+from crates.io, or from a branch of the official `bitcoinresearchkit/mono`
+repository, then restarts its daemon on it. The daemons only run the installed
+binaries, so a reboot keeps the version installed last:
 
 ```sh
 ./server/bitview.sh        # crates.io
-./server/bitview.sh main   # official repository's main branch
-./server/bench.sh          # crates.io
-./server/bench.sh main     # official repository's main branch
+./server/bitview.sh next   # the official repository's next branch
+./server/mcp.sh            # crates.io
+./server/mcp.sh next
 ```
 
+`cargo install --list` shows each installed version, with the branch and commit
+for a branch build. Bitview sets `RUSTFLAGS="-C target-cpu=native"` explicitly
+for installation. MCP uses the shared native-CPU settings in
+`shared/home/.cargo/config.toml`, linked during setup.
+
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
-`--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
-settings do not require a config file. An existing config file still supplies
-other settings.
+`--bitviewdir /Volumes/External/bitview/data`, and `--cdn true` directly, so
+those settings do not require a config file. An existing config file still
+supplies other settings.
 
-Both launchers create `/Volumes/External/bitview` if it does not exist.
+Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its daemon passes
+no arguments, so put lasting options in `/Volumes/External/bitcoin/bitcoin.conf`,
+for example `dbcache=8192` for the initial sync, then restart the daemon.
 
-The benchmark uses `/Volumes/External/bitcoin` and
-`/Volumes/External/bitview`. Existing data is reused; change the
+### Benchmark
+
+`server/bench.sh` runs in the foreground, like a terminal command. It installs
+`bitviewd_bench` from crates.io or from the branch given, like `bitview.sh`:
+
+```sh
+./server/bench.sh          # crates.io
+./server/bench.sh next     # the official repository's next branch
+```
+
+It reuses and writes Bitview's data in `/Volumes/External/bitview/data`, so stop
+the Bitview daemon first; the script exits while `bitviewd` runs. Change the
 script's `--bitviewdir` to an empty directory for a full rebuild. Bitcoin Core
 must be running and synced. The benchmark exits after bootstrap without starting
 the HTTP server. Results are stored under
-`/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`, following
+`/Volumes/External/bitview/data/benches/bitviewd/run-<timestamp>/`, following
 `--bitviewdir`. It prints that path before bootstrap starts and after completion.
+Run `./server/services.sh` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
@@ -227,17 +252,12 @@ The launcher runs every token, regardless of its comment or position in the list
 Move tokens from the old `shared.token`, `node.token`, and `mcp.token` files into
 this list if upgrading an existing setup.
 
-The token file is ignored by Git and resolved relative to `tunnels.sh`, so
-the launcher works from any directory. Start Bitcoin Core, Bitview, and the MCP
-server first, then run:
-
-```sh
-./server/tunnels.sh
-```
-
-All tunnels log to the same terminal. Ctrl-C stops the tunnels started by
-this launcher. If Bitcoin Core, Bitview, the MCP server, or any tunnel exits, the
-launcher stops its remaining tunnels and exits; rerun it once the problem is resolved.
+The token file is ignored by Git and resolved relative to `tunnels.sh`. The
+`com.local.tunnels` daemon starts every tunnel once Bitcoin Core, Bitview, and
+the MCP server run. If one of them or any tunnel exits, the launcher stops its
+remaining tunnels and exits, and launchd starts it again. After changing
+`server/.tokens`, restart it with
+`sudo launchctl kickstart -k system/com.local.tunnels`.
 
 ## Rex
 
