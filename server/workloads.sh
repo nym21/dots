@@ -120,15 +120,16 @@ session_exists() {
         '.sessions[] | select(.label == $session)' >/dev/null
 }
 
-# Run COMMAND in the block LABEL, replacing the one a previous run left with
-# its last output.
+# Run COMMAND in the block LABEL, in a window named LABEL too, which the Rex
+# app lists, replacing the one a previous run left with its last output.
 run_block() {
-    local label="$1" block
+    local label="$1" block window
     shift
     if session_exists; then
         rex block close -s "$SESSION" "$label" >/dev/null 2>&1 || true
-        rex run -s "$SESSION" --label "$label" --keep-open --focus=false -c "$HOME" \
-            -- "$@" >/dev/null
+        window="$(rex run -s "$SESSION" --label "$label" --keep-open --focus=false -c "$HOME" --json \
+            -- "$@" | jq -r .window_id)"
+        rex window rename -s "$SESSION" "$window" "$label" >/dev/null
     else
         block="$(rex new "$SESSION" --window "$label" --keep-open -c "$HOME" --json \
             -- "$@" | jq -r '.initial_windows[0].block_ids[0]')"
