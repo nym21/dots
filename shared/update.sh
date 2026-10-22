@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+cloudflared_before="$(readlink -f "$(command -v cloudflared)" 2>/dev/null || true)"
+
 brew upgrade
 brew cleanup
 cargo install-update --all --locked
@@ -18,6 +20,14 @@ if command -v mullvad >/dev/null 2>&1 && command -v cloudflared >/dev/null 2>&1;
             mullvad split-tunnel app add "$cloudflared_bin"
         fi
     fi
+fi
+
+# A running cloudflared keeps its old binary, so restart a server's tunnels when
+# the upgrade replaced it. They come back once the node is ready; on prod,
+# update one server at a time.
+if [ -f /Library/LaunchDaemons/com.local.tunnels.plist ] &&
+    [ "$(readlink -f "$(command -v cloudflared)")" != "$cloudflared_before" ]; then
+    sudo launchctl kill TERM system/com.local.tunnels
 fi
 
 # Restart last: a server update may be running over this Tailscale connection.
