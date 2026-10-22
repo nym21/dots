@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Run the installed bitview_mcp, as the com.local.bitview-mcp daemon does.
+# Run the installed bitview_mcp, as the mcp block of workloads.sh does.
 # ./server/install.sh chooses the version.
 
 if [ "$#" -ne 0 ]; then

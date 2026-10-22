@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Run the installed bitviewd, as the com.local.bitviewd daemon does.
+# Run the installed bitviewd, as the bitviewd block of workloads.sh does.
 # ./server/install.sh chooses the version.
 
 if [ "$#" -ne 0 ]; then

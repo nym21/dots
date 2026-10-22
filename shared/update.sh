@@ -23,11 +23,15 @@ if command -v mullvad >/dev/null 2>&1 && command -v cloudflared >/dev/null 2>&1;
 fi
 
 # A running cloudflared keeps its old binary, so restart a server's tunnels when
-# the upgrade replaced it. They come back once the node is ready; on prod,
-# update one server at a time.
-if [ -f /Library/LaunchDaemons/com.local.tunnels.plist ] &&
-    [ "$(readlink -f "$(command -v cloudflared)")" != "$cloudflared_before" ]; then
-    sudo launchctl kill TERM system/com.local.tunnels
+# the upgrade replaced it, if they run in its Rex session. They come back once
+# the node is ready; on prod, update one server at a time.
+workloads="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/server/workloads.sh"
+if pgrep -f server/tunnels.sh >/dev/null &&
+    [ "$(readlink -f "$(command -v cloudflared)")" != "$cloudflared_before" ] &&
+    rex --autostart=false ls --json 2>/dev/null |
+        jq -e '.sessions[] | select(.label == "server")' >/dev/null; then
+    "$workloads" stop tunnels
+    "$workloads" start
 fi
 
 # Restart last: a server update may be running over this Tailscale connection.

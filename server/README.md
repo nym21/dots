@@ -18,8 +18,9 @@ Connect and verify Ethernet before setup disables Wi-Fi and Bluetooth.
 
 For initial Tailscale setup, run `./server/tailscale.sh` separately and authenticate.
 It installs the system daemon so remote access does not require a desktop login.
-Keep the server at the login screen and run persistent workloads as LaunchDaemons
-under their intended user. Do not enable automatic desktop login.
+Keep the server at the login screen; the workloads run in the Rex server, which
+starts at boot (see [Workloads](#workloads)). Do not enable automatic desktop
+login.
 
 From your other Mac, use `tssh mini@tailscale-host` in each terminal. Concurrent
 connections share one local userspace Tailscale daemon, which stops after the
@@ -153,8 +154,7 @@ Running server setup again reinstalls the workaround.
 
 ## Workloads
 
-One command sets up a mini in its mode and keeps it there. Run it as the
-server's user, without `sudo`; it uses `sudo` where needed:
+One command sets up a mini in its mode and runs it. Run it as the server's user:
 
 ```sh
 ./server/install.sh            # prod: crates.io
@@ -166,36 +166,37 @@ Every mini runs the same setup, and the mode is the only difference: Bitview and
 the MCP server come from crates.io, from a branch of the official
 `bitcoinresearchkit/mono` repository, or from the checkout in `~/Developer/mono`.
 Any other branch name works too, and becomes the mode. `install.sh` installs
-both servers from that source, then runs Bitcoin Core, Bitview, the MCP server,
-and the Cloudflare tunnels as LaunchDaemons under the server's user, so they
-start at boot while the mini stays at the login screen, and restart whenever
-they exit. Running it again restarts only what changed, a daemon's definition
-or binary, so a run with nothing new leaves a prod mini alone. It skips a
-workload that already runs outside launchd, in a Rex pane for example; stop that
-copy first.
+both servers from that source, restarts the workloads whose binary changed, and
+starts whatever is not running, so a run with nothing new leaves a running mini
+alone.
 
-| Daemon | Runs | Log in `~/Library/Logs` |
-| --- | --- | --- |
-| `com.local.bitcoind` | `server/bitcoin.sh` | `bitcoind.log` |
-| `com.local.bitviewd` | `server/bitview.sh` | `bitviewd.log` |
-| `com.local.bitview-mcp` | `server/mcp.sh` | `bitview-mcp.log` |
-| `com.local.tunnels` | `server/tunnels.sh` | `tunnels.log` |
-
-The daemons need no start order: a launcher exits until what it needs is up,
-and launchd retries it 10 seconds later. Bitcoin Core and Bitview wait for the
-external volume at `/Volumes/External`, so nothing is written to the boot disk
-before it mounts, and the tunnels wait for both servers. When stopped, Bitcoin
-Core and Bitview get 10 minutes to shut down cleanly before launchd kills them.
-`com.local.trim-logs` checks the logs hourly and moves one above 100 MB to
-`NAME.log.1`, replacing the previous one.
+The workloads run in the Rex session `server`, one block each, under the Rex
+server, which reaches the external volume through its Full Disk Access (see
+[Rex](#rex)). `server/workloads.sh` starts and stops them:
 
 ```sh
-sudo launchctl kill TERM system/com.local.bitviewd   # restart cleanly
-sudo launchctl bootout system/com.local.bitviewd     # stop until install.sh runs again
-tail -f ~/Library/Logs/bitviewd.log
+./server/workloads.sh start                    # start what is not running, in order
+./server/workloads.sh stop                     # stop all cleanly, tunnels first
+./server/workloads.sh stop tunnels bitviewd    # stop some; start brings them back
 ```
 
-The daemons only run the installed binaries, so a reboot keeps the version
+| Block | Runs |
+| --- | --- |
+| `bitcoind` | `server/bitcoin.sh` |
+| `bitviewd` | `server/bitview.sh` |
+| `mcp` | `server/mcp.sh` |
+| `tunnels` | `server/tunnels.sh` |
+
+`start` starts Bitcoin Core and waits for its RPC, then starts Bitview, the MCP
+server, and the tunnels, which wait in their block until Bitview reaches the
+tip. It leaves a workload that already runs alone, wherever it runs, and
+replaces the block a stopped one left with its last output. `stop` sends each
+workload TERM and waits until it has shut down, which can take Bitcoin Core
+minutes. Nothing restarts a workload: after a reboot, a restart of the Rex
+server, or a workload exiting, run `start` again. Attach to the session from the
+Rex app to watch them.
+
+The workloads only run the installed binaries, so a restart keeps the version
 installed last. `cargo install --list` shows each installed version, with the
 branch and commit or the checkout's path. Builds use the native-CPU settings in
 `shared/home/.cargo/config.toml`, linked during setup. A local build uses its own
@@ -208,14 +209,16 @@ Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 settings do not require a config file. An existing config file still supplies
 other settings.
 
-Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its daemon passes
+Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its launcher passes
 no arguments, so put lasting options in `/Volumes/External/bitcoin/bitcoin.conf`,
-for example `dbcache=8192` for the initial sync, then restart the daemon.
+for example `dbcache=8192` for the initial sync, then restart it with
+`./server/workloads.sh stop bitcoind` and `start`.
 
 ### Benchmark
 
-`server/bench.sh` runs in the foreground, like a terminal command. It installs
-`bitviewd_bench` with the same choices as `install.sh`:
+`server/bench.sh` runs in the foreground, like a terminal command, in a Rex pane
+or over SSH, which reach the external volume. It installs `bitviewd_bench` with
+the same choices as `install.sh`:
 
 ```sh
 ./server/bench.sh            # crates.io
@@ -223,14 +226,14 @@ for example `dbcache=8192` for the initial sync, then restart the daemon.
 ./server/bench.sh --local    # ~/Developer/mono
 ```
 
-It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop the
-Bitview daemon first; the script exits while `bitviewd` runs. Change the
-script's `--bitviewdir` to an empty directory for a full rebuild. Bitcoin Core
-must be running and synced. The benchmark exits after bootstrap without starting
-the HTTP server. Results are stored under
-`/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`, following
-`--bitviewdir`. It prints that path before bootstrap starts and after completion.
-Run `./server/install.sh` afterwards to start Bitview again.
+It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
+Bitview first with `./server/workloads.sh stop tunnels bitviewd`; the script
+exits while `bitviewd` runs. Change the script's `--bitviewdir` to an empty
+directory for a full rebuild. Bitcoin Core must be running and synced. The
+benchmark exits after bootstrap without starting the HTTP server. Results are
+stored under `/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`,
+following `--bitviewdir`. It prints that path before bootstrap starts and after
+completion. Run `./server/workloads.sh start` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
@@ -249,16 +252,16 @@ next    next        PASTE_TOKEN_HERE
 local   local       PASTE_TOKEN_HERE
 ```
 
-The token file is ignored by Git and resolved relative to `tunnels.sh`. The
-`com.local.tunnels` daemon starts this mini's tunnels once Bitcoin Core,
-Bitview, and the MCP server run, both servers answer, and Bitview has reached
-Bitcoin Core's tip (`blocks_behind` in `/api/server/sync`; a version without it
-counts as at the tip), so a restarting node gets no public traffic. If a backend
-or any tunnel exits, the launcher stops its remaining tunnels and exits, and
-launchd starts it again.
-`install.sh` restarts it when Bitview changed, since the mode may have too.
-After changing `server/.tokens`, restart it with
-`sudo launchctl kill TERM system/com.local.tunnels`.
+The token file is ignored by Git and resolved relative to `tunnels.sh`.
+`tunnels.sh` starts this mini's tunnels once Bitcoin Core, Bitview, and the MCP
+server run, both servers answer, and Bitview has reached Bitcoin Core's tip
+(`blocks_behind` in `/api/server/sync`; a version without it counts as at the
+tip), so a restarting node gets no public traffic. If a backend or any tunnel
+exits, it stops its remaining tunnels and exits, and `workloads.sh start` brings
+them back. `install.sh` restarts them when Bitview changed, since the mode may
+have too, and `shared/update.sh` when it upgraded `cloudflared`. After changing
+`server/.tokens`, restart them with `./server/workloads.sh stop tunnels` and
+`start`.
 
 ## Rex
 
@@ -283,9 +286,17 @@ Then, on the mini:
 It downloads the newest build when it is not installed, checks its Developer ID
 signature, and installs it in `~/Applications/Rex Server.app`,
 linked as `~/.local/bin/rex`. Run it again to update. Restarting the server
-ends its sessions and every program running in them, so when sessions are open
-it asks first; without a terminal to ask in, it leaves the running server alone.
+ends its sessions and every program running in them, the workloads too, so when
+sessions are open it asks first; without a terminal to ask in, it leaves the
+running server alone. Run `./server/workloads.sh start` after a restart.
 The server logs to `~/Library/Logs/rex-server.log`.
+
+Grant the Rex server Full Disk Access once, so the programs it runs, the
+workloads among them, can reach the external volume. On the mini's desktop,
+through Screen Sharing: **System Settings > Privacy & Security > Full Disk
+Access**, **+**, Cmd-Shift-G, `~/Applications/Rex Server.app`. Without it they
+fail with "Operation not permitted". macOS ties the grant to Rex's signature, so
+updates keep it, and it applies without restarting the server.
 
 ## Locate a mini
 
@@ -312,4 +323,5 @@ An idle `mds` process does not by itself indicate that indexing is enabled.
 
 After a planned reboot, verify from another machine that Tailscale, SSH, `tcopy`,
 and Screen Sharing work while the mini remains at the login screen. Also verify
-that data volumes mount and workloads resume without a desktop login.
+that data volumes mount, then start the workloads with
+`./server/workloads.sh start`.

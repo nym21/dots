@@ -70,9 +70,8 @@ while IFS=$' \t\r' read -r -a fields || [ "${#fields[@]}" -gt 0 ]; do
 done < "$TOKEN_FILE"
 
 if [ "${#TOKENS[@]}" -eq 0 ]; then
-    # Stay up, so launchd does not restart this every 10 seconds.
     echo "No tunnel runs on $host ($mode)."
-    exec sleep 2147483647
+    exit 0
 fi
 
 if ! backends_running; then
