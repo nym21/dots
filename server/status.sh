@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ship status: one line for this mini, its mode and version, workloads,
+# tunnels, sync, and disk. With --check, print nothing and exit 0 only when it
+# serves: every workload runs, every tunnel is connected, and Bitview is at
+# Bitcoin Core's tip. fleet update waits for that.
+
+SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+case "$#:${1:-}" in
+    0:) check=0 ;;
+    1:--check) check=1 ;;
+    *)
+        echo "Usage: $0 [--check]" >&2
+        exit 1
+        ;;
+esac
+
+source "$SERVER_DIR/crate.sh"
+
+workloads=0
+down=''
+for name in bitcoind bitviewd bitview_mcp; do
+    if pgrep -x "$name" >/dev/null; then workloads=$((workloads + 1)); else down="$down $name"; fi
+done
+if pgrep -f server/tunnels.sh >/dev/null; then workloads=$((workloads + 1)); else down="$down tunnels"; fi
+
+tunnels=0
+ready=0
+for pid in $(pgrep -x cloudflared || true); do
+    tunnels=$((tunnels + 1))
+    port="$(lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n.*://p' | head -1)"
+    if [ -n "$port" ] && curl -s -m 3 "http://127.0.0.1:$port/ready" | jq -e '.readyConnections > 0' >/dev/null 2>&1; then
+        ready=$((ready + 1))
+    fi
+done
+
+behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_behind // empty' 2>/dev/null || true)"
+
+if [ "$check" -eq 1 ]; then
+    [ "$workloads" -eq 4 ] && [ "$tunnels" -gt 0 ] && [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]
+    exit
+fi
+
+mode="$(bitview_mode)"
+version="$(cargo install --list | awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }')"
+printf '%s %s, workloads %s/4%s, tunnels %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
+    "${mode:-no mode}" "${version:-}" "$workloads" "${down:+ (down:$down)}" "$ready" "$tunnels" \
+    "${behind:-?}" "$(df -h /Volumes/External 2>/dev/null | awk 'NR == 2 { print $4 }')" \
+    "$(sw_vers -productVersion)" \
+    "$(rex --autostart=false server status 2>/dev/null | awk '$1 == "version:" { print $2; exit }')" \
+    "$(git -C "$SERVER_DIR/.." log -1 --format=%h)"

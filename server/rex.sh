@@ -17,7 +17,7 @@ LABEL="com.local.rex"
 PLIST_DEST="/Library/LaunchDaemons/$LABEL.plist"
 SERVICE="system/$LABEL"
 
-# --yes restarts the server without asking, as dots update does.
+# --yes restarts the server without asking, as ship update does.
 YES=0
 case "$#:${1:-}" in
     0:) ;;
@@ -214,22 +214,23 @@ PLIST
 
 plutil -lint "$PLIST_TMP" >/dev/null
 
-# Restart only when the daemon is missing, its settings changed, or it runs
-# another build than the one installed.
-RESTART=0
-if ! sudo launchctl print "$SERVICE" >/dev/null 2>&1; then
-    RESTART=1
+# Install the daemon when it is missing or its settings changed, which asks
+# for a password; restart it when it runs another build than the one
+# installed, which /etc/sudoers.d/dots allows without one.
+ACTION=none
+if ! launchctl print "$SERVICE" >/dev/null 2>&1; then
+    ACTION=install
 elif ! cmp -s "$PLIST_TMP" "$PLIST_DEST"; then
-    RESTART=1
+    ACTION=install
 else
     running="$(server_status | status_field version)"
     if [ "$running" != "$("$REX" version | awk 'NR == 1 { print $2 }')" ]; then
-        RESTART=1
+        ACTION=restart
     fi
 fi
 
 WORKLOADS=0
-if [ "$RESTART" -eq 1 ] && sudo launchctl print "$SERVICE" >/dev/null 2>&1; then
+if [ "$ACTION" != none ] && launchctl print "$SERVICE" >/dev/null 2>&1; then
     sessions="$(server_status | status_field sessions)"
     case "$sessions" in
         ''|*[!0-9]*) sessions=0 ;;
@@ -260,10 +261,14 @@ if [ "$RESTART" -eq 1 ] && sudo launchctl print "$SERVICE" >/dev/null 2>&1; then
         WORKLOADS=1
         "$SERVER_DIR/workloads.sh" stop
     fi
-    sudo launchctl bootout "$SERVICE"
+    if [ "$ACTION" = restart ]; then
+        sudo launchctl kickstart -k "$SERVICE"
+    else
+        sudo launchctl bootout "$SERVICE"
+    fi
 fi
 
-if [ "$RESTART" -eq 1 ]; then
+if [ "$ACTION" = install ]; then
     sudo install -o root -g wheel -m 644 "$PLIST_TMP" "$PLIST_DEST"
     sudo launchctl enable "$SERVICE"
     sudo launchctl bootstrap system "$PLIST_DEST"
@@ -280,7 +285,7 @@ if [ -z "$status" ]; then
     exit 1
 fi
 
-daemon_pid="$(sudo launchctl print "$SERVICE" 2>/dev/null | awk '$1 == "pid" { print $3; exit }')"
+daemon_pid="$(launchctl print "$SERVICE" 2>/dev/null | awk '$1 == "pid" { print $3; exit }')"
 if [ "$(status_field pid <<< "$status")" != "$daemon_pid" ]; then
     echo "Another Rex server holds the socket (pid $(status_field pid <<< "$status"))." >&2
     echo "Stop it with: rex server stop, then run this script again." >&2

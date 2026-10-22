@@ -60,13 +60,55 @@ setup_fish_shell() {
     fi
 }
 
-shared_setup() {
-    mkdir -p "$HOME/Developer" ~/.config/dots ~/.local/bin
-
-    # --- dots ---
-    # The dots command reads the role to offer this Mac's commands.
+# The ship command on every Mac, and fleet on the workstation, reading the
+# role to offer this Mac's commands. ship update runs this too, so renamed or
+# new commands reach every Mac.
+link_commands() {
+    mkdir -p ~/.config/dots ~/.local/bin
     echo "$ROLE" > ~/.config/dots/role
-    link "$SHARED_DIR/dots" ~/.local/bin/dots
+    link "$SHARED_DIR/ship" ~/.local/bin/ship
+    if [ "$ROLE" = pc ]; then
+        link "$ROLE_DIR/fleet" ~/.local/bin/fleet
+    fi
+    # The command's earlier name.
+    rm -f ~/.local/bin/dots
+}
+
+# What ship update runs as root without a password: Apple's updates, and on a
+# server the restarts of the daemons it updates. Anything else that needs
+# root, such as installing a daemon, asks. Done only when missing, so it asks
+# for a password once.
+install_sudoers() {
+    local rules tmp
+    rules=(/usr/sbin/softwareupdate)
+    if [ "$ROLE" = server ]; then
+        rules+=("/bin/launchctl kickstart -k system/com.local.rex"
+            "/bin/launchctl kickstart -k system/com.local.tailscaled")
+    fi
+    local missing=0 rule
+    for rule in "${rules[@]}"; do
+        # shellcheck disable=SC2086
+        sudo -n -l $rule >/dev/null 2>&1 || missing=1
+    done
+    [ "$missing" -eq 1 ] || return 0
+
+    echo "Allowing ship update to restart its daemons and install Apple's updates without a password..."
+    tmp="$(mktemp)"
+    {
+        echo "# Installed by dots: what ship update runs as root without a password."
+        printf '%s ALL=(root) NOPASSWD: ' "$(id -un)"
+        (IFS=','; printf '%s\n' "${rules[*]}" | sed 's/,/, /g')
+    } > "$tmp"
+    sudo visudo -cf "$tmp" >/dev/null
+    sudo install -o root -g wheel -m 440 "$tmp" /etc/sudoers.d/dots
+    rm -f "$tmp"
+}
+
+shared_setup() {
+    mkdir -p "$HOME/Developer"
+
+    # --- Commands ---
+    link_commands
 
     # --- Homebrew ---
     if ! command -v brew &> /dev/null; then
@@ -123,4 +165,6 @@ shared_setup() {
 
     # Shared firewall setting.
     sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+
+    install_sudoers
 }

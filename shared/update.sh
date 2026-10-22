@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# dots update: bring this Mac up to date and restart only what changed. It
+# ship update: bring this Mac up to date and restart only what changed. It
 # pulls dots and runs the version pulled, then updates Homebrew, Rust, and the
 # listed Cargo tools; on a server also Rex and the workloads, within the
 # mini's mode; macOS last, which restarts the Mac when it installs.
@@ -9,8 +9,6 @@ set -euo pipefail
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 SERVER_DIR="$DOTS_DIR/server"
 ROLE="$(cat "$HOME/.config/dots/role")"
-# Homebrew asks before each upgrade by default, which would stop the update.
-export HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1
 
 if [ -z "${DOTS_PULLED:-}" ]; then
     echo "Updating dots..."
@@ -18,12 +16,11 @@ if [ -z "${DOTS_PULLED:-}" ]; then
     DOTS_PULLED=1 exec "$DOTS_DIR/shared/update.sh" "$@"
 fi
 
-# Ask for sudo once and keep it, since the restarts and macOS come after
-# builds that outlast its timeout.
-sudo -v
-while sleep 60; do sudo -n -v 2>/dev/null || exit; done &
-keepalive=$!
-trap 'kill "$keepalive" 2>/dev/null' EXIT
+# The commands, and what may run as root without a password, which asks for
+# one only the first time. After that a run asks only for a macOS update.
+source "$DOTS_DIR/shared/setup.sh"
+link_commands
+install_sudoers
 
 binary() {
     readlink -f "$(command -v "$1")" 2>/dev/null || true
@@ -41,7 +38,7 @@ brew cleanup
 
 echo "Updating Rust and the Cargo tools..."
 rustup update
-# Only the listed tools, installing any missing: dots install chooses the
+# Only the listed tools, installing any missing: ship install chooses the
 # version a server's workloads run.
 # shellcheck disable=SC2046
 cargo install-update --allow-no-update --locked \
@@ -79,7 +76,7 @@ case "$ROLE" in
         source "$SERVER_DIR/crate.sh"
         mode="$(bitview_mode)"
         case "$mode" in
-            '') echo "Bitview is not installed; set this mini's mode with dots install." ;;
+            '') echo "Bitview is not installed; set this mini's mode with ship install." ;;
             prod) "$SERVER_DIR/install.sh" ;;
             local) "$SERVER_DIR/install.sh" --local ;;
             *) "$SERVER_DIR/install.sh" "$mode" ;;

@@ -26,7 +26,7 @@ fi
 source "$SERVER_DIR/crate.sh"
 mode="$(bitview_mode)"
 if [ -z "$mode" ]; then
-    echo "bitviewd is not installed with cargo; run dots install first." >&2
+    echo "bitviewd is not installed with cargo; run ship install first." >&2
     exit 1
 fi
 

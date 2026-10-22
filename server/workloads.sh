@@ -5,8 +5,9 @@ set -euo pipefail
 # Start or stop Bitcoin Core, Bitview, the MCP server, and this mini's
 # Cloudflare tunnels. Each runs in its own block of the Rex session "server",
 # under the Rex server, whose Full Disk Access reaches the external volume and
-# survives Rex updates. They start again at boot and after rex.sh restarts the
-# Rex server, but not when one exits on its own: run start then.
+# survives Rex updates. A workload that fails restarts 10 seconds later; one
+# that exits cleanly, or is stopped, stays down. They start again at boot and
+# after rex.sh restarts the Rex server.
 #
 #   workloads.sh start            start what is not running, in order
 #   workloads.sh stop [NAME...]   stop all, or the NAMEs, cleanly and in order
@@ -53,6 +54,38 @@ running() {
     [ -n "$(pids "$1")" ]
 }
 
+# The loop that runs workload $1 in its block, which may be waiting to
+# restart it.
+supervisor() {
+    pgrep -f "server/workloads.sh supervise $1\$" || true
+}
+
+# Run workload $1, restarting it 10 seconds after it fails. TERM, which stop
+# sends, passes on to the workload and ends the loop once it has exited.
+supervise() {
+    local name="$1" command pid='' status stopping=0
+    command="$SERVER_DIR/$(script "$name")"
+    trap 'stopping=1; kill -TERM "$pid" 2>/dev/null || true' TERM INT HUP
+    while :; do
+        "$command" &
+        pid=$!
+        status=0
+        wait "$pid" || status=$?
+        # A trapped signal returns wait early; wait for the exit itself.
+        while kill -0 "$pid" 2>/dev/null; do
+            status=0
+            wait "$pid" || status=$?
+        done
+        if [ "$stopping" -eq 1 ] || [ "$status" -eq 0 ]; then
+            exit "$status"
+        fi
+        echo "$name exited with status $status; restarting in 10 seconds."
+        sleep 10 &
+        wait $! || true
+        [ "$stopping" -eq 0 ] || exit 0
+    done
+}
+
 session_exists() {
     rex ls --json | jq -e --arg session "$SESSION" \
         '.sessions[] | select(.label == $session)' >/dev/null
@@ -78,12 +111,12 @@ run_block() {
 # once.
 start_one() {
     local name="$1"
-    if running "$name"; then
+    if running "$name" || [ -n "$(supervisor "$name")" ]; then
         echo "$name: already running"
         return 0
     fi
     echo "$name: starting"
-    run_block "$name" "$SERVER_DIR/$(script "$name")"
+    run_block "$name" "$SERVER_DIR/workloads.sh" supervise "$name"
     if [ "${2:-}" != no-check ]; then
         sleep 3
         if ! running "$name"; then
@@ -118,12 +151,18 @@ start() {
 # Stop workload $1 with TERM and wait for it to shut down cleanly, which can
 # take Bitcoin Core minutes.
 stop_one() {
-    local name="$1" waited=0
-    running "$name" || return 0
+    local name="$1" waited=0 loop
+    loop="$(supervisor "$name")"
+    running "$name" || [ -n "$loop" ] || return 0
     echo "$name: stopping"
-    # shellcheck disable=SC2046
-    kill -TERM $(pids "$name") 2>/dev/null || true
-    while running "$name"; do
+    # The loop passes TERM on once; a workload started without one gets it here.
+    # shellcheck disable=SC2046,SC2086
+    if [ -n "$loop" ]; then
+        kill -TERM $loop 2>/dev/null || true
+    else
+        kill -TERM $(pids "$name") 2>/dev/null || true
+    fi
+    while running "$name" || [ -n "$(supervisor "$name")" ]; do
         sleep 1
         waited=$((waited + 1))
         if [ "$waited" -ge 1800 ]; then
@@ -176,6 +215,11 @@ case "${1:-}" in
     boot)
         [ "$#" -eq 1 ] || usage
         boot
+        ;;
+    supervise)
+        [ "$#" -eq 2 ] || usage
+        script "$2" >/dev/null
+        supervise "$2"
         ;;
     stop)
         shift

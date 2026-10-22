@@ -11,7 +11,7 @@ fi
 
 # The benchmark reuses and writes Bitview's data.
 if pgrep -x bitviewd >/dev/null; then
-    echo "Stop bitviewd first: dots stop tunnels bitviewd" >&2
+    echo "Stop bitviewd first: ship stop tunnels bitviewd" >&2
     exit 1
 fi
 

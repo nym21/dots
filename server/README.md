@@ -153,19 +153,19 @@ Running server setup again reinstalls the workaround.
 One command sets up a mini in its mode and runs it. Run it as the server's user:
 
 ```sh
-dots install            # prod: crates.io
-dots install next       # next: the official repository's next branch
-dots install --local    # local: ~/Developer/mono
+ship install            # prod: crates.io
+ship install next       # next: the official repository's next branch
+ship install --local    # local: ~/Developer/mono
 ```
 
 Every mini runs the same setup, and the mode is the only difference: Bitview and
 the MCP server come from crates.io, from a branch of the official
 `bitcoinresearchkit/mono` repository, or from the checkout in `~/Developer/mono`.
-Any other branch name works too, and becomes the mode. `dots install` installs
+Any other branch name works too, and becomes the mode. `ship install` installs
 both servers from that source, restarts the workloads whose binary changed, and
 starts whatever is not running, so a run with nothing new leaves a running mini
 alone. Its first run asks for `sudo` to install `com.local.workloads`, which
-starts the workloads at boot. `dots update` reinstalls the mini's current mode,
+starts the workloads at boot. `ship update` reinstalls the mini's current mode,
 so prod takes a new crates.io release and next the latest commit; on prod,
 update one mini at a time.
 
@@ -174,9 +174,9 @@ server, which reaches the external volume through its Full Disk Access (see
 [Rex](#rex)):
 
 ```sh
-dots start                    # start what is not running, in order
-dots stop                     # stop all cleanly, tunnels first
-dots stop tunnels bitviewd    # stop some; start brings them back
+ship start                    # start what is not running, in order
+ship stop                     # stop all cleanly, tunnels first
+ship stop tunnels bitviewd    # stop some; start brings them back
 ```
 
 | Block | Runs |
@@ -189,15 +189,21 @@ dots stop tunnels bitviewd    # stop some; start brings them back
 `start` starts Bitcoin Core and waits for its RPC, then starts Bitview, the MCP
 server, and the tunnels, which wait in their block until Bitview reaches the
 tip. It leaves a workload that already runs alone, wherever it runs, and
-replaces the block a stopped one left with its last output. `stop` sends each
-workload TERM and waits until it has shut down, which can take Bitcoin Core
-minutes. Attach to the session from the Rex app to watch them.
+replaces the block a stopped one left with its last output. A workload that
+fails restarts in its block 10 seconds later; one that exits cleanly, or that
+`stop` stopped, stays down. `stop` sends each workload TERM and waits until it
+has shut down, which can take Bitcoin Core minutes. Attach to the session from
+the Rex app to watch them, or run `ship status` for one line:
+
+```text
+prod v0.12.2, workloads 4/4, tunnels 3/3 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 33621ac
+```
 
 They come back on their own after a reboot and after a Rex update restarts the
-Rex server, through `dots boot`: it waits for the Rex server and the
+Rex server, through `ship boot`: it waits for the Rex server and the
 external volume, then runs `start` in the block `start`, which keeps its output.
 It runs `start` there because reaching Bitcoin Core needs the Rex server's access
-to the volume. A workload that exits on its own stays down; run `start` again.
+to the volume.
 
 The workloads only run the installed binaries, so a restart keeps the version
 installed last. `cargo install --list` shows each installed version, with the
@@ -215,7 +221,7 @@ other settings.
 Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its launcher passes
 no arguments, so put lasting options in `/Volumes/External/bitcoin/bitcoin.conf`,
 for example `dbcache=8192` for the initial sync, then restart it with
-`dots stop bitcoind` and `dots start`.
+`ship stop bitcoind` and `ship start`.
 
 ### Benchmark
 
@@ -224,19 +230,19 @@ or over SSH, which reach the external volume. It installs `bitviewd_bench` with
 the same choices as `install.sh`:
 
 ```sh
-dots bench            # crates.io
-dots bench next       # the official repository's next branch
-dots bench --local    # ~/Developer/mono
+ship bench            # crates.io
+ship bench next       # the official repository's next branch
+ship bench --local    # ~/Developer/mono
 ```
 
 It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
-Bitview first with `dots stop tunnels bitviewd`; the script
+Bitview first with `ship stop tunnels bitviewd`; the script
 exits while `bitviewd` runs. Change the script's `--bitviewdir` to an empty
 directory for a full rebuild. Bitcoin Core must be running and synced. The
 benchmark exits after bootstrap without starting the HTTP server. Results are
 stored under `/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`,
 following `--bitviewdir`. It prints that path before bootstrap starts and after
-completion. Run `dots start` afterwards to start Bitview again.
+completion. Run `ship start` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
@@ -260,10 +266,10 @@ The token file is ignored by Git and resolved relative to `tunnels.sh`.
 server run, both servers answer, and Bitview has reached Bitcoin Core's tip
 (`blocks_behind` in `/api/server/sync`; a version without it counts as at the
 tip), so a restarting node gets no public traffic. If a backend or any tunnel
-exits, it stops its remaining tunnels and exits, and `dots start` brings them
-back. `dots install` restarts them when Bitview changed, since the mode may have
-too, and `dots update` when it upgraded `cloudflared`. After changing
-`server/.tokens`, restart them with `dots stop tunnels` and `dots start`.
+exits, it stops its remaining tunnels and exits, and `ship start` brings them
+back. `ship install` restarts them when Bitview changed, since the mode may have
+too, and `ship update` when it upgraded `cloudflared`. After changing
+`server/.tokens`, restart them with `ship stop tunnels` and `ship start`.
 
 ## Rex
 
@@ -279,16 +285,16 @@ plutil -extract SUFeedURL raw "/Applications/Rex Beta.app/Contents/Info.plist" |
     tssh mini@tailscale-host 'cat > ~/Developer/dots/server/.rex-feed'
 ```
 
-Then `dots update` on the mini installs it, and every later run updates it: it
+Then `ship update` on the mini installs it, and every later run updates it: it
 downloads the newest build, checks its Developer ID signature, and installs it
 in `~/Applications/Rex Server.app`, linked as `~/.local/bin/rex`. A new build
 needs a restart of the server, which ends its sessions and every program in
 them, so it stops the workloads cleanly first and starts them again after. A
-terminal of the server would end too, so run `dots update` over SSH, as
-`tssh -t mini@tailscale-host dots update`; from a Rex terminal of the mini it
-installs the build and leaves the restart for a run over SSH. `server/rex.sh`
-alone asks before ending open sessions. The server logs to
-`~/Library/Logs/rex-server.log`.
+terminal of the server would end too, so update servers with `fleet update` from
+the workstation, which runs `ship update` over SSH; from a Rex terminal of the
+mini, `ship update` installs the build and leaves the restart for a run over
+SSH. The restart needs no password. `server/rex.sh` alone asks before ending
+open sessions. The server logs to `~/Library/Logs/rex-server.log`.
 
 Grant the Rex server Full Disk Access once, so the programs it runs, the
 workloads among them, can reach the external volume. On the mini's desktop,
@@ -299,10 +305,10 @@ updates keep it, and it applies without restarting the server.
 
 ## Locate a mini
 
-Run `dots locate` on the mini to loop a short sound, or start it remotely:
+Run `ship locate` on the mini to loop a short sound, or start it remotely:
 
 ```sh
-tssh -t mini@m6-1 dots locate
+tssh -t mini@m6-1 ship locate
 ```
 
 The script downloads nothing. It unmutes the current output and sets its volume

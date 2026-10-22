@@ -46,16 +46,20 @@ ones; Helix and its configuration are shared between both roles.
 
 ## Maintenance
 
-Setup links the `dots` command into `~/.local/bin` and records the Mac's role
-in `~/.config/dots/role`. It runs the scripts in this repository, so pulling it
-updates the command too. `dots` alone lists the commands this Mac has.
+Every Mac has `ship`, for itself; the workstation also has `fleet`, for the
+servers. Setup links them into `~/.local/bin` and records the Mac's role in
+`~/.config/dots/role`, and `ship update` keeps them there. They run the scripts
+in this repository, so pulling it updates them too. `ship` alone lists the
+commands this Mac has.
 
 ```sh
-dots update   # Update everything and restart what changed; macOS last.
-dots save     # On the workstation: save Cargo tools to pc/cargo.txt and Rex settings to pc/rex-settings.
+ship update    # Update everything and restart what changed; macOS last.
+ship save      # On the workstation: save Cargo tools to pc/cargo.txt and Rex settings to pc/rex-settings.
+fleet status   # On the workstation: one line per server.
+fleet update   # On the workstation: ship update on each server in turn.
 ```
 
-`dots update` pulls this repository and runs the version pulled. It then
+`ship update` pulls this repository and runs the version pulled. It then
 installs what the Brewfiles and Cargo lists gained, upgrades Homebrew, Rust,
 and the listed Cargo tools, and on a server updates Rex and the workloads within
 the mini's mode (see the [server instructions](server/README.md)). Last, if
@@ -63,6 +67,17 @@ macOS has an update or upgrade, it downloads the newest, waits 30 seconds for
 Ctrl-C, stops a server's workloads cleanly, installs it, and restarts; the
 workloads come back at boot. Without one, it installs the newest of the other
 updates, such as the Command Line Tools.
+
+It asks for a password only when it must. Its first run installs
+`/etc/sudoers.d/dots`, which lets it install Apple's updates and, on a server,
+restart the Rex and Tailscale daemons without one; installing a daemon still
+asks. A macOS update always asks for the Mac owner's password, so without a
+terminal `ship update` only downloads it.
+
+`fleet update` updates the servers not in prod first, then each prod server,
+waiting until each serves again, workloads running, tunnels connected, and
+Bitview at the tip, before the next, so prod never loses two at once. It stops
+if a server does not serve again within 45 minutes.
 
 ## SSH over Tailscale
 

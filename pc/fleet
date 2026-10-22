@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# fleet: the servers, from the workstation. It finds them as trex does, the
+# other Macs on the tailnet, and runs ship on each as mini over tssh.
+#
+#   fleet status   one line per server
+#   fleet update   ship update on each server in turn, those not in prod
+#                  first, waiting until each serves again before the next,
+#                  so prod never loses two servers at once
+
+server_user=mini
+tssh="$(command -v tssh)"
+# How long a server may take to serve again, a macOS upgrade included.
+ready_timeout=$((45 * 60))
+
+usage() {
+    echo "Usage: fleet status | update" >&2
+    exit 1
+}
+
+servers() {
+    "$tssh" --tailscale status --json |
+        jq -r '.Peer[]? | select(.OS == "macOS") | .DNSName | split(".")[0]' | sort
+}
+
+on() {
+    local host="$1"
+    shift
+    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$host" "$@" </dev/null
+}
+
+status() {
+    local work host
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' RETURN
+    for host in $(servers); do
+        on "$host" ship status >"$work/$host" 2>/dev/null || echo "unreachable" >"$work/$host" &
+    done
+    wait
+    for host in $(servers); do
+        printf '%-6s %s\n' "$host" "$(cat "$work/$host")"
+    done
+}
+
+update() {
+    local host mode first='' last='' waited
+    # Servers not in prod go first, so a bad update shows there before prod.
+    for host in $(servers); do
+        mode="$(on "$host" ship status 2>/dev/null | awk '{ print $1 }' || true)"
+        case "$mode" in
+            prod) last="$last $host" ;;
+            '') echo "$host: unreachable; skipped." >&2 ;;
+            *) first="$first $host" ;;
+        esac
+    done
+    for host in $first $last; do
+        echo "== $host"
+        # The connection ends early when the update restarts Tailscale or the
+        # Mac; whether the server serves again is what counts.
+        "$tssh" -t "$server_user@$host" ship update || true
+        echo "$host: waiting until it serves again..."
+        waited=0
+        until on "$host" ship status --check 2>/dev/null; do
+            if [ "$waited" -ge "$ready_timeout" ]; then
+                echo "$host does not serve again after $((ready_timeout / 60)) minutes; stopping before the next server." >&2
+                exit 1
+            fi
+            sleep 15
+            waited=$((waited + 15))
+        done
+        echo "$host: $(on "$host" ship status)"
+    done
+}
+
+case "$#:${1:-}" in
+    1:status) status ;;
+    1:update) update ;;
+    *) usage ;;
+esac

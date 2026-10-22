@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Install the newest macOS update or upgrade, if any, and restart: the last
-# step of dots update. It downloads while everything keeps running, then gives
+# step of ship update. It downloads while everything keeps running, then gives
 # 30 seconds to cancel before stopping a server's workloads cleanly, which
 # come back at boot. With macOS current, it installs the other updates, such
 # as Safari or the Command Line Tools, the newest of each.
@@ -57,6 +57,11 @@ fi
 IFS='|' read -r _ version label <<< "$macos"
 echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
 sudo softwareupdate --download "$label"
+# Installing macOS asks for the Mac owner's password, even as root.
+if [ ! -t 0 ]; then
+    echo "macOS $version is downloaded; run ship update in a terminal to install it."
+    exit 0
+fi
 echo "Installing macOS $version and restarting in 30 seconds; Ctrl-C to skip."
 sleep 30
 
