@@ -38,8 +38,11 @@ chatgpt:ChatGPT
 claude:Claude
 discord:Discord
 signal:Signal
-sparrow:Sparrow
+gpg-suite:GPG Keychain
 APPS
+
+# Sparrow Wallet, installed only once verified as its author's.
+"$ROLE_DIR/sparrow.sh"
 
 # Tailscale's packets, tssh's among them, need an MTU of 1380 in Mullvad's
 # tunnel: on its own, Mullvad lowers it below what they fit in. No IPv6.

@@ -74,6 +74,8 @@ fi
 case "$ROLE" in
     pc)
         merge_agent_settings
+        # Sparrow Wallet, updated only once verified as its author's.
+        "$DOTS_DIR/pc/sparrow.sh" || echo "Sparrow was not updated; see above." >&2
         # Cloudflare's cf, which Bun installs and runs in place of Node.
         bun add -g --silent cf@latest
 

@@ -35,9 +35,16 @@ already have it.
 
 PC setup also installs, from their casks, the apps that update themselves or
 predate Homebrew here, such as Mullvad VPN, ChatGPT, Claude, Discord, Signal,
-and Sparrow, only when missing: Homebrew cannot adopt an existing copy without
-App Management access. It pins Mullvad's tunnel MTU to 1380, which Tailscale's
-packets need, with IPv6 off.
+and GPG Suite, only when missing: Homebrew cannot adopt an existing copy
+without App Management access. It pins Mullvad's tunnel MTU to 1380, which
+Tailscale's packets need, with IPv6 off.
+
+Sparrow Wallet has its own installer, `pc/sparrow.sh`, which setup and `ship
+update` run, as a wallet must be its author's: it installs a release only once
+its manifest is signed by Craig Raw's PGP key, pinned by fingerprint, and lists
+the installer's checksum, and once the app is signed by his Developer ID and
+notarized, as [Sparrow asks](https://sparrowwallet.com/download/). It leaves a
+running Sparrow alone, and `pc/sparrow.sh --check` checks the installed one.
 
 Rex's settings work the same way: Rex keeps them in its preferences, so
 `pc/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
