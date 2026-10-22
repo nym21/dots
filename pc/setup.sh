@@ -17,15 +17,23 @@ defaults write com.raycast.macos errorReporting_optOut -bool true
 
 shared_setup
 
-mkdir -p ~/.config/zed ~/.local/bin "$HOME/Library/Application Support/com.mitchellh.ghostty"
+mkdir -p ~/.config/zed ~/.local/bin
 link "$ROLE_DIR/tssh" ~/.local/bin/tssh
 link "$ROLE_DIR/tcopy" ~/.local/bin/tcopy
 link "$ROLE_DIR/tscreen" ~/.local/bin/tscreen
 link "$ROLE_DIR/trex" ~/.local/bin/trex
 git config --global core.editor "zed --wait"
 link "$ROLE_DIR/home/.config/zed/settings.json" ~/.config/zed/settings.json
-link "$ROLE_DIR/home/.config/ghostty/config.ghostty" \
-    "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+
+# Rex keeps its settings in its preferences, which it rewrites, so they are
+# written from pc/rex-settings, saved by shared/save.sh, rather than linked.
+echo "Applying Rex settings..."
+while read -r key type value; do
+    case "$key" in
+        ''|\#*) continue ;;
+    esac
+    defaults write com.superlogical.rex "$key" "-$type" "$value"
+done < "$ROLE_DIR/rex-settings"
 
 # FileVault requires the login password and returns a personal recovery key.
 if fdesetup isactive >/dev/null 2>&1; then

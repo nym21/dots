@@ -27,9 +27,6 @@ connections share one local userspace Tailscale daemon, which stops after the
 last SSH session closes. Authentication is saved for next time. Close any
 sessions started with the older, single-session `tssh` before using this version.
 
-`tssh` uses `xterm-256color` when connecting from Ghostty, so the mini needs no
-extra terminal definition. Reconnect with the updated local `tssh` to apply it.
-
 Server setup keeps SSH enabled; Screen Sharing is turned on once in System
 Settings (below). File transfers use `tcopy` over SSH. It disables File Sharing
 (SMB), Spotlight indexing on mounted volumes, Content Caching, printer sharing,

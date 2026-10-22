@@ -28,10 +28,13 @@ machine's values and everything else is kept; re-run setup after changing the
 shared file. Removing a key from the shared file does not remove it from
 machines that already have it.
 
+Rex's settings work the same way: Rex keeps them in its preferences, so
+`shared/save.sh` saves them to `pc/rex-settings` and PC setup writes them back.
+
 ## Layout
 
 - `shared/`: common packages, dotfiles, setup internals, and maintenance tools.
-- `pc/`: workstation applications, Ghostty and Zed settings, desktop setup, and Tailscale SSH/copy commands.
+- `pc/`: workstation applications, Rex and Zed settings, desktop setup, and Tailscale SSH/copy commands.
 - `server/`: headless setup, profile, and workload launchers.
 
 Each role's `setup.sh` contains its setup and sources `shared/setup.sh` for
@@ -45,7 +48,7 @@ Each folder has its own `Brewfile`. Shared Cargo packages are listed in
 ```sh
 ./shared/update.sh        # Update Homebrew and installed Cargo packages.
 ./shared/macos-update.sh  # Confirm before installing macOS updates/restarting.
-./shared/save.sh          # Save installed Cargo packages to shared/cargo.txt.
+./shared/save.sh          # Save Cargo packages to shared/cargo.txt and Rex settings to pc/rex-settings.
 ```
 
 ## SSH over Tailscale
@@ -101,8 +104,3 @@ the ports to act as the servers' users.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.
-
-When connecting from Ghostty, `tssh` uses the standard `xterm-256color` terminal
-definition so fresh servers work without installing Ghostty's terminfo. This
-preserves ordinary terminal functionality but omits Ghostty-specific features
-such as styled underlines.

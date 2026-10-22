@@ -1,0 +1,16 @@
+# Rex app settings, KEY TYPE VALUE: saved by shared/save.sh, written by pc/setup.sh.
+Workspace.darkThemeID string static-noir
+Workspace.darkUsesExtendedThemePalette bool true
+Workspace.inactivePaneFadeMode string both
+Workspace.interfaceStyle string blendTheme
+Workspace.lightThemeID string merino-light
+Workspace.sidebarPosition string left
+Workspace.sidebarShowsActivity bool false
+Workspace.tabIconTintMode string off
+Workspace.tabStyle string vertical
+Workspace.terminalCellHeightPercent float 10
+Workspace.terminalFontName string Lilex
+Workspace.terminalFontPointSize float 14
+Workspace.terminalFontSmoothing bool true
+Workspace.usesPaneGlass bool true
+Workspace.usesStandardInactiveWindowPaneStyles bool true
