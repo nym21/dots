@@ -90,15 +90,21 @@ own_log() {
     esac
 }
 
-# Clear workload $1's window, checked every ten minutes, once it holds over
-# half a megabyte: the Rex app loads a window's whole scrollback, and Rex keeps
-# no limit of its own yet. A capture fails past a megabyte, which counts as
-# over. The workload keeps running.
+# Keep workload $1's window small, checked every ten minutes: once it holds
+# over half a megabyte, clear it and print its last 1000 lines back, colors and
+# all, this loop's output being the window's. The Rex app loads a window's
+# whole scrollback, and Rex keeps no limit of its own yet. A capture fails past
+# a megabyte, and then all of it goes. The workload keeps running. The clear
+# runs in a subshell: called from this loop itself, it ends the loop.
 trim_window() {
-    local size
+    local window
     while sleep 600; do
-        if ! size="$(rex capture -s "$SESSION" -b "$1" 2>/dev/null | wc -c)" || [ "$size" -gt 524288 ]; then
-            rex block call -s "$SESSION" -b "$1" clear </dev/null >/dev/null 2>&1 || true
+        if window="$(rex capture -s "$SESSION" -b "$1" --format=vt 2>/dev/null)"; then
+            [ "${#window}" -gt 524288 ] || continue
+            (rex block call -s "$SESSION" -b "$1" clear) </dev/null >/dev/null 2>&1 || continue
+            tail -n 1000 <<< "$window" || true
+        else
+            (rex block call -s "$SESSION" -b "$1" clear) </dev/null >/dev/null 2>&1 || true
         fi
     done
 }
