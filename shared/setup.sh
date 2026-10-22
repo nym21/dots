@@ -111,6 +111,26 @@ update_cargo_hawk() {
         sh -s -- --quiet --no-modify-path
 }
 
+# What keeps Time Machine from backing this Mac up, if anything: automatic
+# backups off, or no backup completed in the last week. It reads only Time
+# Machine's settings, so a locked or missing backup disk does not matter.
+backup_problem() {
+    local plist=/Library/Preferences/com.apple.TimeMachine last
+    if [ "$(defaults read "$plist" AutoBackup 2>/dev/null)" != 1 ]; then
+        echo "Time Machine's automatic backups are off"
+        return 0
+    fi
+    last="$(defaults read "$plist" Destinations 2>/dev/null | awk '
+        /SnapshotDates/ { inside = 1; next }
+        inside && /\)/ { inside = 0 }
+        inside { gsub(/[",]/, ""); sub(/^ +/, ""); if ($0 != "") print }' | sort | tail -1)"
+    if [ -z "$last" ]; then
+        echo "Time Machine has completed no backup"
+    elif [ "$(date -j -f '%Y-%m-%d %H:%M:%S %z' "$last" +%s 2>/dev/null || echo 0)" -lt "$(date -v-7d +%s)" ]; then
+        echo "Time Machine's last backup is from ${last%% *}, over a week ago"
+    fi
+}
+
 shared_setup() {
     mkdir -p "$HOME/Developer"
 

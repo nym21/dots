@@ -117,6 +117,9 @@ for app in "AdGuard for Safari" "Blackmagic Disk Speed Test" Developer "Numbers 
     "Pages Creator Studio" Xcode; do
     [ -d "/Applications/$app.app" ] || remaining+=("Install $app from the App Store.")
 done
+problem="$(backup_problem)"
+[ -z "$problem" ] ||
+    remaining+=("$problem: System Settings > General > Time Machine.")
 hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
 for server in $(awk '!/^#/ && NF { print $1 }' "$ROLE_DIR/fleet.conf"); do
     if ! grep -qx "$server" <<< "$hosts"; then

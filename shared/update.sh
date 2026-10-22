@@ -69,6 +69,10 @@ unlisted="$(comm -23 \
 if [ -n "$unlisted" ]; then
     echo "Installed but not in dots: $unlisted"
 fi
+if [ "$ROLE" = pc ]; then
+    problem="$(backup_problem)"
+    [ -z "$problem" ] || echo "Not backed up: $problem; see System Settings > General > Time Machine."
+fi
 
 case "$ROLE" in
     pc)
