@@ -46,6 +46,9 @@ done
 
 behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_behind // empty' 2>/dev/null || true)"
 
+# The last week's failing exits, and the last one.
+crashes="$(awk -v since="$(date -v-7d +%Y-%m-%dT%H:%M:%S)" '$1 >= since' "$CRASH_LOG" 2>/dev/null || true)"
+
 if [ "$check" -eq 1 ]; then
     [ "$workloads" -eq "$expected" ] && [ "$ready" -eq "$(wc -w <<< "$names")" ] &&
         [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]
@@ -55,8 +58,12 @@ fi
 mode="$(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true)"
 mode="${mode:-$(bitview_mode)}"
 version="$(cargo install --list | awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }')"
-printf '%s %s, workloads %s/%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
-    "${mode:-no mode}" "${version:-}" "$workloads" "$expected" "${down:+ (down:$down)}" \
+crashed=''
+if [ -n "$crashes" ]; then
+    crashed="$(awk 'END { sub(/T/, " ", $1); print NR " this week, last " $2 " at " substr($1, 6, 11) ", status " $NF }' <<< "$crashes")"
+fi
+printf '%s %s, workloads %s/%s%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
+    "${mode:-no mode}" "${version:-}" "$workloads" "$expected" "${down:+ (down:$down)}" "${crashed:+, crashes $crashed}" \
     "${names:-none}" "$ready" "$tunnels" \
     "${behind:-?}" "$(df -h /Volumes/External 2>/dev/null | awk 'NR == 2 { print $4 }')" \
     "$(sw_vers -productVersion)" \

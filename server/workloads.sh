@@ -5,9 +5,12 @@ set -euo pipefail
 # Start or stop Bitcoin Core, Bitview, the MCP server, and this mini's
 # Cloudflare tunnels. Each runs in its own block of the Rex session "server",
 # under the Rex server, whose Full Disk Access reaches the external volume and
-# survives Rex updates. A workload that fails restarts 10 seconds later; one
-# that exits cleanly, or is stopped, stays down. They start again at boot and
-# after rex.sh restarts the Rex server.
+# survives Rex updates. A workload that fails is logged, with the end of its
+# output, and stays down to be looked at. Meanwhile the tunnels are down, so
+# the other servers serve and Cloudflare's alert about this mini's own tunnel
+# says so. Only the tunnels start again, 10 seconds later, as cloudflared
+# gives up during a long network outage. The workloads start again at boot,
+# after rex.sh restarts the Rex server, and on ship start.
 #
 #   workloads.sh start            start what is not running, in order
 #   workloads.sh stop [NAME...]   stop all, or the NAMEs, cleanly and in order
@@ -62,9 +65,19 @@ supervisor() {
     pgrep -f "server/workloads.sh supervise $1\$" || true
 }
 
-# Run workload $1, restarting it 10 seconds after it fails. TERM, which stop
-# sends, passes on to the workload and ends the loop once it has exited. Each
-# start of Bitview or the MCP server records the build it runs, in RUNNING_DIR.
+# Log that workload $1 exited with status $2, and keep the end of its output.
+crashed() {
+    local stamp
+    stamp="$(date +%Y-%m-%dT%H:%M:%S)"
+    mkdir -p "$(dirname "$CRASH_LOG")"
+    echo "$stamp $1 exited with status $2" >> "$CRASH_LOG"
+    rex capture -s "$SESSION" -b "$1" 2>/dev/null | tail -n 200 > "${CRASH_LOG%.log}-$1-$stamp.log" || true
+}
+
+# Run workload $1 until it exits, logging a failing exit; only the tunnels
+# start again, 10 seconds later. TERM, which stop sends, passes on to the
+# workload and ends the loop once it has exited. Each start of Bitview or the
+# MCP server records the build it runs, in RUNNING_DIR.
 supervise() {
     local name="$1" command crate='' pid='' status stopping=0
     command="$SERVER_DIR/$(script "$name")"
@@ -88,6 +101,11 @@ supervise() {
             wait "$pid" || status=$?
         done
         if [ "$stopping" -eq 1 ] || [ "$status" -eq 0 ]; then
+            exit "$status"
+        fi
+        crashed "$name" "$status"
+        if [ "$name" != tunnels ]; then
+            echo "$name exited with status $status, logged in $CRASH_LOG; it stays down until ship start."
             exit "$status"
         fi
         echo "$name exited with status $status; restarting in 10 seconds."

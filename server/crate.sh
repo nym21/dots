@@ -14,6 +14,11 @@ MODE_FILE="$HOME/.config/dots/mode"
 # whose build installed differs, and fleet reads them for what each server runs.
 RUNNING_DIR="$HOME/.config/dots/running"
 
+# Each workload's failing exits, one line each, and beside it the end of its
+# output then, which its block loses when start replaces it. ship status shows
+# the last week's.
+CRASH_LOG="$HOME/Library/Logs/dots/crashes.log"
+
 # The build of CRATE installed, as cargo lists it: its version and, from git,
 # its commit. A local build lists no change, so its binary's digest instead.
 installed() {

@@ -34,11 +34,6 @@ if [ "${#TOKENS[@]}" -eq 0 ]; then
     exit 0
 fi
 
-if ! backends_running; then
-    echo "Start bitcoind, bitviewd, and bitview_mcp before starting the tunnels." >&2
-    exit 1
-fi
-
 # The tunnels send public traffic here as soon as they connect, so wait until
 # both servers answer, on the ports the tunnels route to, and Bitview has
 # reached Bitcoin Core's tip.
@@ -63,23 +58,26 @@ ready() {
         curl -sf -m 5 -o /dev/null http://127.0.0.1:3111/ &&
         at_tip
 }
-if ! ready; then
-    echo "Waiting for Bitview to reach the tip and both servers to answer..."
-    until ready; do
-        if ! backends_running; then
-            echo "bitcoind, bitviewd, or bitview_mcp is down; not starting the tunnels." >&2
-            exit 1
-        fi
-        sleep 10
-    done
-fi
+wait_ready() {
+    if ! ready; then
+        echo "Waiting for Bitview to reach the tip and both servers to answer..."
+        until ready; do
+            sleep 10
+        done
+    fi
+}
 
-cleanup() {
-    trap - EXIT HUP INT TERM
+stop_tunnels() {
     if [ "${#PIDS[@]}" -gt 0 ]; then
         kill "${PIDS[@]}" 2>/dev/null || true
         wait "${PIDS[@]}" 2>/dev/null || true
     fi
+    PIDS=()
+}
+
+cleanup() {
+    trap - EXIT HUP INT TERM
+    stop_tunnels
 }
 
 trap cleanup EXIT
@@ -87,25 +85,29 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for index in "${!TOKENS[@]}"; do
-    echo "Starting tunnel ${NAMES[$index]}..."
-    cloudflared tunnel run --token-file <(printf '%s' "${TOKENS[$index]}") &
-    PIDS+=("$!")
-done
-
+# Serve while the other workloads run. While one is down, the tunnels are
+# down too, so the other servers serve, and they come back once it serves
+# again. A tunnel that exits ends them all, for the supervisor to log and start
+# again.
 while true; do
-    if ! backends_running; then
-        echo "bitcoind, bitviewd, or bitview_mcp is down; stopping this session's tunnels." >&2
-        exit 1
-    fi
-    for index in "${!PIDS[@]}"; do
-        pid="${PIDS[$index]}"
-        if ! kill -0 "$pid" 2>/dev/null; then
-            echo "Tunnel ${NAMES[$index]} exited; stopping this session's tunnels." >&2
-            unset 'PIDS[index]'
-            wait "$pid"
-            exit 1
-        fi
+    wait_ready
+    for index in "${!TOKENS[@]}"; do
+        echo "Starting tunnel ${NAMES[$index]}..."
+        cloudflared tunnel run --token-file <(printf '%s' "${TOKENS[$index]}") &
+        PIDS+=("$!")
     done
-    sleep 1
+    while backends_running; do
+        for index in "${!PIDS[@]}"; do
+            pid="${PIDS[$index]}"
+            if ! kill -0 "$pid" 2>/dev/null; then
+                echo "Tunnel ${NAMES[$index]} exited; stopping this session's tunnels." >&2
+                unset 'PIDS[index]'
+                wait "$pid"
+                exit 1
+            fi
+        done
+        sleep 1
+    done
+    echo "bitcoind, bitviewd, or bitview_mcp is down; the tunnels wait for it." >&2
+    stop_tunnels
 done

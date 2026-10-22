@@ -194,8 +194,12 @@ ship stop tunnels bitviewd    # stop some; start brings them back
 server, and the tunnels, which wait in their block until Bitview reaches the
 tip. It leaves a workload that already runs alone, wherever it runs, and
 replaces the block a stopped one left with its last output. A workload that
-fails restarts in its block 10 seconds later; one that exits cleanly, or that
-`stop` stopped, stays down. `stop` sends each workload TERM and waits until it
+fails is not restarted, since a crash is to be looked at: its exit is logged in
+`~/Library/Logs/dots/crashes.log`, the end of its output beside it, and `ship
+status` shows the last week's. Bitcoin Core, Bitview, or the MCP server then
+stays down, and with it this mini's tunnels, until `ship start`, a reboot, or an
+update starts it; the tunnels alone start again 10 seconds later, as
+`cloudflared` gives up during a long network outage. `stop` sends each workload TERM and waits until it
 has shut down, which can take Bitcoin Core minutes. Attach to the session from
 the Rex app to watch them, or run `ship status` for one line:
 
@@ -257,10 +261,16 @@ other mini's tokens, and restarts its tunnels when they changed.
 `tunnels.sh` starts this mini's tunnels once Bitcoin Core, Bitview, and the MCP
 server run, both servers answer, and Bitview has reached Bitcoin Core's tip
 (`blocks_behind` in `/api/server/sync`; a version without it counts as at the
-tip), so a restarting node gets no public traffic. If a backend or any tunnel
-exits, it stops its remaining tunnels and exits, and restarts 10 seconds later.
-`ship install` restarts them when Bitview changes version, and `ship update`
-when it upgraded `cloudflared`.
+tip), so a restarting node gets no public traffic. While a backend is down, it
+takes the tunnels down and waits until the node serves again. If a tunnel
+exits, it stops the others and exits, and starts again 10 seconds later,
+logged as a crash. `ship install` restarts them when Bitview changes version,
+and `ship update` when it upgraded `cloudflared`.
+
+Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
+tunnel of the account. Since each server also serves its own tunnel, its
+email says which server: a planned restart sends one when it goes down and one
+when it is back, and a crash one that stays unanswered.
 
 ## Rex
 
