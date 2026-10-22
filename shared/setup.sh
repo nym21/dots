@@ -59,7 +59,12 @@ setup_fish_shell() {
 }
 
 shared_setup() {
-    mkdir -p "$HOME/Developer"
+    mkdir -p "$HOME/Developer" ~/.config/dots ~/.local/bin
+
+    # --- dots ---
+    # The dots command reads the role to offer this Mac's commands.
+    echo "$ROLE" > ~/.config/dots/role
+    link "$SHARED_DIR/dots" ~/.local/bin/dots
 
     # --- Homebrew ---
     if ! command -v brew &> /dev/null; then

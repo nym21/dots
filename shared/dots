@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The one command for this repository, linked as ~/.local/bin/dots by setup.
+# It runs the scripts in the repository, so pulling it updates the command too.
+
+DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+ROLE="$(cat "$HOME/.config/dots/role" 2>/dev/null || true)"
+
+usage() {
+    echo "Usage: dots COMMAND" >&2
+    echo >&2
+    echo "  update                      update everything, restart what changed, then macOS" >&2
+    case "$ROLE" in
+        pc)
+            echo "  save                        save Cargo tools and Rex settings into dots" >&2
+            ;;
+        server)
+            echo "  install [BRANCH | --local]  set this mini's mode: crates.io, a branch, or ~/Developer/mono" >&2
+            echo "  start                       start the workloads that are not running" >&2
+            echo "  stop [NAME...]              stop the workloads cleanly: bitcoind bitviewd mcp tunnels" >&2
+            echo "  bench [BRANCH | --local]    run the Bitview benchmark" >&2
+            echo "  locate                      play a sound to find this mini" >&2
+            ;;
+    esac
+    exit 1
+}
+
+case "$ROLE" in
+    pc|server) ;;
+    *)
+        echo "dots does not know this Mac's role; run ./pc/setup.sh or ./server/setup.sh." >&2
+        exit 1
+        ;;
+esac
+
+command="${1:-}"
+[ "$#" -eq 0 ] || shift
+case "$ROLE:$command" in
+    *:update) exec "$DOTS_DIR/shared/update.sh" "$@" ;;
+    pc:save) exec "$DOTS_DIR/pc/save.sh" "$@" ;;
+    server:install) exec "$DOTS_DIR/server/install.sh" "$@" ;;
+    server:start | server:stop | server:boot) exec "$DOTS_DIR/server/workloads.sh" "$command" "$@" ;;
+    server:bench) exec "$DOTS_DIR/server/bench.sh" "$@" ;;
+    server:locate) exec "$DOTS_DIR/server/locate.sh" "$@" ;;
+    *) usage ;;
+esac

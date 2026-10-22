@@ -17,10 +17,16 @@ LABEL="com.local.rex"
 PLIST_DEST="/Library/LaunchDaemons/$LABEL.plist"
 SERVICE="system/$LABEL"
 
-if [ "$#" -ne 0 ]; then
-    echo "Usage: $0" >&2
-    exit 1
-fi
+# --yes restarts the server without asking, as dots update does.
+YES=0
+case "$#:${1:-}" in
+    0:) ;;
+    1:--yes) YES=1 ;;
+    *)
+        echo "Usage: $0 [--yes]" >&2
+        exit 1
+        ;;
+esac
 
 if [ "$(id -u)" -eq 0 ]; then
     echo "Run this as the target login user, not with sudo." >&2
@@ -228,13 +234,14 @@ if [ "$RESTART" -eq 1 ] && sudo launchctl print "$SERVICE" >/dev/null 2>&1; then
     case "$sessions" in
         ''|*[!0-9]*) sessions=0 ;;
     esac
-    # A terminal of this server, this script's own, would end halfway.
+    # A terminal of this server, this script's own, would end halfway. The
+    # new build is installed and runs from the next restart.
     if [ -n "${REX_BLOCK:-}" ]; then
-        echo "The Rex server needs a restart, which would end this terminal; run this over SSH instead." >&2
-        exit 1
+        echo "Rex is updated, but restarting the server would end this terminal; run this over SSH to restart it."
+        exit 0
     fi
     # Sessions and the programs running in them end with the server.
-    if [ "$sessions" -gt 0 ]; then
+    if [ "$sessions" -gt 0 ] && [ "$YES" -eq 0 ]; then
         answer=''
         if [ -t 0 ]; then
             read -r -p "Restarting the Rex server ends its $sessions session(s); the workloads stop cleanly first and start again after. Restart now? [y/N] " answer

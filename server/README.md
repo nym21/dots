@@ -153,28 +153,30 @@ Running server setup again reinstalls the workaround.
 One command sets up a mini in its mode and runs it. Run it as the server's user:
 
 ```sh
-./server/install.sh            # prod: crates.io
-./server/install.sh next       # next: the official repository's next branch
-./server/install.sh --local    # local: ~/Developer/mono
+dots install            # prod: crates.io
+dots install next       # next: the official repository's next branch
+dots install --local    # local: ~/Developer/mono
 ```
 
 Every mini runs the same setup, and the mode is the only difference: Bitview and
 the MCP server come from crates.io, from a branch of the official
 `bitcoinresearchkit/mono` repository, or from the checkout in `~/Developer/mono`.
-Any other branch name works too, and becomes the mode. `install.sh` installs
+Any other branch name works too, and becomes the mode. `dots install` installs
 both servers from that source, restarts the workloads whose binary changed, and
 starts whatever is not running, so a run with nothing new leaves a running mini
 alone. Its first run asks for `sudo` to install `com.local.workloads`, which
-starts the workloads at boot.
+starts the workloads at boot. `dots update` reinstalls the mini's current mode,
+so prod takes a new crates.io release and next the latest commit; on prod,
+update one mini at a time.
 
 The workloads run in the Rex session `server`, one block each, under the Rex
 server, which reaches the external volume through its Full Disk Access (see
-[Rex](#rex)). `server/workloads.sh` starts and stops them:
+[Rex](#rex)):
 
 ```sh
-./server/workloads.sh start                    # start what is not running, in order
-./server/workloads.sh stop                     # stop all cleanly, tunnels first
-./server/workloads.sh stop tunnels bitviewd    # stop some; start brings them back
+dots start                    # start what is not running, in order
+dots stop                     # stop all cleanly, tunnels first
+dots stop tunnels bitviewd    # stop some; start brings them back
 ```
 
 | Block | Runs |
@@ -191,8 +193,8 @@ replaces the block a stopped one left with its last output. `stop` sends each
 workload TERM and waits until it has shut down, which can take Bitcoin Core
 minutes. Attach to the session from the Rex app to watch them.
 
-They come back on their own after a reboot and after `rex.sh` restarts the Rex
-server, through `./server/workloads.sh boot`: it waits for the Rex server and the
+They come back on their own after a reboot and after a Rex update restarts the
+Rex server, through `dots boot`: it waits for the Rex server and the
 external volume, then runs `start` in the block `start`, which keeps its output.
 It runs `start` there because reaching Bitcoin Core needs the Rex server's access
 to the volume. A workload that exits on its own stays down; run `start` again.
@@ -213,7 +215,7 @@ other settings.
 Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its launcher passes
 no arguments, so put lasting options in `/Volumes/External/bitcoin/bitcoin.conf`,
 for example `dbcache=8192` for the initial sync, then restart it with
-`./server/workloads.sh stop bitcoind` and `start`.
+`dots stop bitcoind` and `dots start`.
 
 ### Benchmark
 
@@ -222,19 +224,19 @@ or over SSH, which reach the external volume. It installs `bitviewd_bench` with
 the same choices as `install.sh`:
 
 ```sh
-./server/bench.sh            # crates.io
-./server/bench.sh next       # the official repository's next branch
-./server/bench.sh --local    # ~/Developer/mono
+dots bench            # crates.io
+dots bench next       # the official repository's next branch
+dots bench --local    # ~/Developer/mono
 ```
 
 It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
-Bitview first with `./server/workloads.sh stop tunnels bitviewd`; the script
+Bitview first with `dots stop tunnels bitviewd`; the script
 exits while `bitviewd` runs. Change the script's `--bitviewdir` to an empty
 directory for a full rebuild. Bitcoin Core must be running and synced. The
 benchmark exits after bootstrap without starting the HTTP server. Results are
 stored under `/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`,
 following `--bitviewdir`. It prints that path before bootstrap starts and after
-completion. Run `./server/workloads.sh start` afterwards to start Bitview again.
+completion. Run `dots start` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
@@ -258,11 +260,10 @@ The token file is ignored by Git and resolved relative to `tunnels.sh`.
 server run, both servers answer, and Bitview has reached Bitcoin Core's tip
 (`blocks_behind` in `/api/server/sync`; a version without it counts as at the
 tip), so a restarting node gets no public traffic. If a backend or any tunnel
-exits, it stops its remaining tunnels and exits, and `workloads.sh start` brings
-them back. `install.sh` restarts them when Bitview changed, since the mode may
-have too, and `shared/update.sh` when it upgraded `cloudflared`. After changing
-`server/.tokens`, restart them with `./server/workloads.sh stop tunnels` and
-`start`.
+exits, it stops its remaining tunnels and exits, and `dots start` brings them
+back. `dots install` restarts them when Bitview changed, since the mode may have
+too, and `dots update` when it upgraded `cloudflared`. After changing
+`server/.tokens`, restart them with `dots stop tunnels` and `dots start`.
 
 ## Rex
 
@@ -278,20 +279,16 @@ plutil -extract SUFeedURL raw "/Applications/Rex Beta.app/Contents/Info.plist" |
     tssh mini@tailscale-host 'cat > ~/Developer/dots/server/.rex-feed'
 ```
 
-Then, on the mini:
-
-```sh
-./server/rex.sh
-```
-
-It downloads the newest build when it is not installed, checks its Developer ID
-signature, and installs it in `~/Applications/Rex Server.app`,
-linked as `~/.local/bin/rex`. Run it again to update, over SSH: restarting the
-server ends its sessions and every program running in them, a terminal of the
-server included, so it refuses to restart from one. When sessions are open it
-asks first; without a terminal to ask in, it leaves the running server alone.
-It stops the workloads cleanly before the restart and starts them again after.
-The server logs to `~/Library/Logs/rex-server.log`.
+Then `dots update` on the mini installs it, and every later run updates it: it
+downloads the newest build, checks its Developer ID signature, and installs it
+in `~/Applications/Rex Server.app`, linked as `~/.local/bin/rex`. A new build
+needs a restart of the server, which ends its sessions and every program in
+them, so it stops the workloads cleanly first and starts them again after. A
+terminal of the server would end too, so run `dots update` over SSH, as
+`tssh -t mini@tailscale-host dots update`; from a Rex terminal of the mini it
+installs the build and leaves the restart for a run over SSH. `server/rex.sh`
+alone asks before ending open sessions. The server logs to
+`~/Library/Logs/rex-server.log`.
 
 Grant the Rex server Full Disk Access once, so the programs it runs, the
 workloads among them, can reach the external volume. On the mini's desktop,
@@ -302,15 +299,16 @@ updates keep it, and it applies without restarting the server.
 
 ## Locate a mini
 
-Run `./server/locate.sh` on the mini to loop a short sound, or start it remotely:
+Run `dots locate` on the mini to loop a short sound, or start it remotely:
 
 ```sh
-ssh -t mini@192.168.1.130 '~/Developer/dots/server/locate.sh'
+tssh -t mini@m6-1 dots locate
 ```
 
 The script downloads nothing. It unmutes the current output and sets its volume
-to 100%. If `SwitchAudioSource` is already installed, it prefers the built-in
-speaker; otherwise, select it in **System Settings > Sound > Output** if needed.
+to 100%. With `SwitchAudioSource`, which server setup installs, it prefers the
+built-in speaker; without it, select that in **System Settings > Sound > Output**
+if needed.
 Ctrl-C stops playback and restores the previous output, volume, and mute state.
 At the login screen, the script uses `sudo` to hold `audiomxd` running before
 touching audio settings and releases the hold after restoring them; the guard

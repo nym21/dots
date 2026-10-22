@@ -23,22 +23,10 @@ if [ ! -r "$TOKEN_FILE" ]; then
     exit 1
 fi
 
-# This mini's mode follows how bitviewd was installed: prod from crates.io,
-# the branch name from a branch of the official repository, local from a
-# checkout.
-mode="$(cargo install --list | awk '
-    $1 == "bitviewd" {
-        if (NF == 2) print "prod"
-        else if ($3 ~ /^\(\//) print "local"
-        else if ($3 ~ /[?&]branch=/) {
-            sub(/.*[?&]branch=/, "", $3)
-            sub(/[#&)].*/, "", $3)
-            print $3
-        }
-        exit
-    }')"
+source "$SERVER_DIR/crate.sh"
+mode="$(bitview_mode)"
 if [ -z "$mode" ]; then
-    echo "bitviewd is not installed with cargo; run ./server/install.sh first." >&2
+    echo "bitviewd is not installed with cargo; run dots install first." >&2
     exit 1
 fi
 

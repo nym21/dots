@@ -3,10 +3,10 @@
 set -euo pipefail
 
 # Run the installed bitview_mcp, as the mcp block of workloads.sh does.
-# ./server/install.sh chooses the version.
+# dots install chooses the version.
 
 if [ "$#" -ne 0 ]; then
-    echo "Usage: $0 (./server/install.sh chooses the version)" >&2
+    echo "Usage: $0 (dots install chooses the version)" >&2
     exit 1
 fi
 

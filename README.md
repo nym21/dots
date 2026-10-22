@@ -46,11 +46,23 @@ ones; Helix and its configuration are shared between both roles.
 
 ## Maintenance
 
+Setup links the `dots` command into `~/.local/bin` and records the Mac's role
+in `~/.config/dots/role`. It runs the scripts in this repository, so pulling it
+updates the command too. `dots` alone lists the commands this Mac has.
+
 ```sh
-./shared/update.sh        # Update Homebrew and the listed Cargo packages.
-./shared/macos-update.sh  # Confirm before installing macOS updates/restarting.
-./pc/save.sh              # Save Cargo packages to pc/cargo.txt and Rex settings to pc/rex-settings.
+dots update   # Update everything and restart what changed; macOS last.
+dots save     # On the workstation: save Cargo tools to pc/cargo.txt and Rex settings to pc/rex-settings.
 ```
+
+`dots update` pulls this repository and runs the version pulled. It then
+installs what the Brewfiles and Cargo lists gained, upgrades Homebrew, Rust,
+and the listed Cargo tools, and on a server updates Rex and the workloads within
+the mini's mode (see the [server instructions](server/README.md)). Last, if
+macOS has an update or upgrade, it downloads the newest, waits 30 seconds for
+Ctrl-C, stops a server's workloads cleanly, installs it, and restarts; the
+workloads come back at boot. Without one, it installs the newest of the other
+updates, such as the Command Line Tools.
 
 ## SSH over Tailscale
 
