@@ -160,8 +160,13 @@ the MCP server come from crates.io (**prod**), from a branch of the official
 `bitcoinresearchkit/mono` repository (**next**, or any other branch), or from
 the workstation's `~/Developer/mono`, which `fleet` copies to the mini
 (**local**). `ship install` installs both servers in the mini's mode, restarts
-the workloads that changed version, and starts whatever is not running, so a run
-with nothing new leaves a running mini alone; `ship update` runs it, so prod
+a workload that runs another build than the one installed, and starts whatever
+is not running, so a run with nothing new leaves a running mini alone; `ship
+fetch` only builds them, restarting nothing, and downloads a macOS update, as
+`fleet update` has every server do at once before restarting any. Each start of
+Bitview or the MCP server records the build it runs in `~/.config/dots/running`,
+whose version and commit, not a rebuild after a Rust update, decide a restart.
+`ship update` runs `ship install`, so prod
 takes a new crates.io release and next the latest commit, unless `fleet update`
 pinned a version, which it does so servers sharing a tunnel run the same one.
 Given a mode, as in `ship install next`, it switches the mini to it, at its

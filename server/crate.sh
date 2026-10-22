@@ -9,6 +9,22 @@
 # release in prod, a commit on a branch.
 MODE_FILE="$HOME/.config/dots/mode"
 
+# The build each of Bitview's workloads runs, as installed() named it when its
+# supervisor started it, one file per crate. ship update restarts a workload
+# whose build installed differs, and fleet reads them for what each server runs.
+RUNNING_DIR="$HOME/.config/dots/running"
+
+# The build of CRATE installed, as cargo lists it: its version and, from git,
+# its commit. A local build lists no change, so its binary's digest instead.
+installed() {
+    local line
+    line="$(cargo install --list | awk -v crate="$1" '$1 == crate { print; exit }')"
+    case "$line" in
+        *" (/"*) shasum "$HOME/.cargo/bin/$1" ;;
+        *) echo "$line" ;;
+    esac
+}
+
 # The mode bitviewd was installed in, by its source. Empty when cargo did not
 # install bitviewd.
 bitview_mode() {

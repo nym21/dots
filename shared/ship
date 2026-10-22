@@ -17,6 +17,7 @@ usage() {
             echo "  save                        save Cargo tools and Rex settings into dots" >&2
             ;;
         server)
+            echo "  fetch                       build the workloads and download macOS, restarting nothing" >&2
             echo "  status [--check]            this mini's mode, workloads, tunnels, and disk" >&2
             echo "  install [MODE]              install this mini's mode, or MODE: prod, next, a branch, or local" >&2
             echo "  start                       start the workloads that are not running" >&2
@@ -41,6 +42,10 @@ command="${1:-}"
 case "$ROLE:$command" in
     *:update) exec "$DOTS_DIR/shared/update.sh" "$@" ;;
     pc:save) exec "$DOTS_DIR/pc/save.sh" "$@" ;;
+    server:fetch)
+        [ "$#" -eq 0 ] || usage
+        exec "$DOTS_DIR/shared/update.sh" --fetch
+        ;;
     server:status) exec "$DOTS_DIR/server/status.sh" "$@" ;;
     server:install) exec "$DOTS_DIR/server/install.sh" "$@" ;;
     server:start | server:stop | server:boot) exec "$DOTS_DIR/server/workloads.sh" "$command" "$@" ;;

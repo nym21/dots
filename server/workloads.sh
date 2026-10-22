@@ -20,6 +20,8 @@ SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION=server
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+source "$SERVER_DIR/crate.sh"
+
 usage() {
     echo "Usage: $0 start | stop [bitcoind | bitviewd | mcp | tunnels]... | boot" >&2
     exit 1
@@ -61,12 +63,21 @@ supervisor() {
 }
 
 # Run workload $1, restarting it 10 seconds after it fails. TERM, which stop
-# sends, passes on to the workload and ends the loop once it has exited.
+# sends, passes on to the workload and ends the loop once it has exited. Each
+# start of Bitview or the MCP server records the build it runs, in RUNNING_DIR.
 supervise() {
-    local name="$1" command pid='' status stopping=0
+    local name="$1" command crate='' pid='' status stopping=0
     command="$SERVER_DIR/$(script "$name")"
+    case "$name" in
+        bitviewd) crate=bitviewd ;;
+        mcp) crate=bitview_mcp ;;
+    esac
     trap 'stopping=1; kill -TERM "$pid" 2>/dev/null || true' TERM INT HUP
     while :; do
+        if [ -n "$crate" ]; then
+            mkdir -p "$RUNNING_DIR"
+            installed "$crate" > "$RUNNING_DIR/$crate" || true
+        fi
         "$command" &
         pid=$!
         status=0

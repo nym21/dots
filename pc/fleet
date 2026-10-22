@@ -15,12 +15,14 @@ set -euo pipefail
 #   fleet tunnels [SERVER...]  give each server a tunnel named after it, with cf
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #
-# A tunnel never serves two versions. An update pins one version per mode for
-# the whole run, and updates the servers that share a tunnel together: each
-# leaves the shared tunnels while it updates, the others still serving them,
-# and the updated ones take them back before the last one leaves. Servers not
-# in prod go first, so a bad version shows there before prod, and each must
-# serve again before the next.
+# A tunnel never serves two versions, and loses no server but to a restart.
+# An update pins one version per mode for the whole run, then builds it on
+# every server at once while all serve, and only then restarts them, in turn.
+# The servers that share a tunnel restart together: each leaves the shared
+# tunnels while it restarts, the others still serving them, and the restarted
+# ones take them back before the last one leaves. Servers not in prod go
+# first, so a bad version shows there before prod, and each must serve again
+# before the next.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
@@ -197,8 +199,47 @@ resolve() {
     esac
 }
 
-# Update SERVER in its mode to the run's pinned versions, without the
-# tunnels HELD while others still serve them.
+# Ready SERVER... at once, while each still serves: give each its mode and
+# the run's versions, in local mode its copy of ~/Developer/mono, and run ship
+# fetch there, which builds them and downloads a macOS update, restarting
+# nothing. A server that fails stops the run before any restarts.
+fetch() {
+    local server mode pins note pids=() i failed=0
+    echo "== Building on $* at once, while they serve..."
+    for server; do
+        read -r _ mode _ < <(entries "$server")
+        pins="$(cat "$work/pins.$mode")"
+        {
+            on "$server" 'git -C ~/Developer/dots pull -q --ff-only' &&
+                on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode'" &&
+                if [ "$mode" = local ]; then
+                    rsync -a --delete --exclude /target/ -e "$tssh -T" \
+                        "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
+                fi &&
+                on "$server" "nice -n 10 $SHIP fetch"
+        } >"$work/fetch.$server" 2>&1 &
+        pids+=("$!")
+    done
+    i=0
+    for server; do
+        if wait "${pids[$i]}"; then
+            note="$(grep -E '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server" | tail -1 || true)"
+            echo "$server: built${note:+; $note}"
+        else
+            echo "$server: failed to build:" >&2
+            tail -n 20 "$work/fetch.$server" | sed 's/^/  /' >&2
+            failed=1
+        fi
+        i=$((i + 1))
+    done
+    if [ "$failed" -eq 1 ]; then
+        echo "Stopping before any server restarts." >&2
+        exit 1
+    fi
+}
+
+# Update SERVER, which fetch readied, without the tunnels HELD while others
+# still serve them.
 update_server() {
     local server="$1" held="$2" mode tunnel give='' pins
     read -r _ mode _ < <(entries "$server")
@@ -210,15 +251,8 @@ update_server() {
     done
     pins="$(cat "$work/pins.$mode")"
     echo "== $server: $mode${pins:+ ${pins%% *}}"
-    on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
     # shellcheck disable=SC2086
     give_tunnels "$server" $give
-    on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode'"
-    if [ "$mode" = local ]; then
-        echo "$server: copying ~/Developer/mono..."
-        rsync -a --delete --exclude /target/ -e "$tssh -T" \
-            "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/"
-    fi
 
     # The connection ends early when the update restarts Tailscale or the Mac;
     # whether the server serves again is what counts.
@@ -230,18 +264,20 @@ update_server() {
     wait_serving "$server"
 }
 
-# Whether SERVER already runs PINS, bitviewd's and bitview_mcp's, so updating
-# it changes neither. Never in local mode, which has none.
+# Whether SERVER already runs PINS, bitviewd's and bitview_mcp's, as the
+# builds its workloads recorded at their start say, so updating it restarts
+# neither. Never in local mode, which has none.
 at_pins() {
-    local server="$1" pin mcp_pin installed
+    local server="$1" pin mcp_pin running
     read -r pin mcp_pin <<< "$2"
     [ -n "$pin" ] || return 1
-    installed="$(on "$server" '~/.cargo/bin/cargo install --list' 2>/dev/null)" || return 1
+    running="$(on "$server" 'cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp' 2>/dev/null)" ||
+        return 1
     awk -v pin="$pin" -v mcp_pin="$mcp_pin" '
         function at(p) { return $2 == "v" p ":" || index($0, "rev=" p) }
         $1 == "bitviewd" && at(pin) { found++ }
         $1 == "bitview_mcp" && at(mcp_pin) { found++ }
-        END { exit found != 2 }' <<< "$installed"
+        END { exit found != 2 }' <<< "$running"
 }
 
 # Purge Cloudflare's cache of the hostnames that the tunnels of SERVER...
@@ -324,6 +360,8 @@ update() {
             exit 1
         fi
     done
+    # shellcheck disable=SC2046
+    fetch $(groups "$@")
     # On another descriptor, as ssh reads its input: the update's own needs
     # the terminal, for a password.
     while read -r group <&3; do
@@ -337,6 +375,7 @@ restart() {
     while read -r group; do
         for server in $group; do
             echo "== $server"
+            on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
             on "$server" "bash -c '$SHIP stop && $SHIP start'"
             wait_serving "$server"
         done

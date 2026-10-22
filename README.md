@@ -100,16 +100,21 @@ them by default, brings the servers to the newest version of their mode:
 1. It pins one version per mode for the whole run, the newest crates.io release
    in prod and the branch's current commit otherwise, so servers in the same
    mode end on the same version even when the branch moves meanwhile.
-2. It updates the servers that share a tunnel together, so a tunnel never serves
-   two versions. Each leaves the shared tunnels while it updates, the others
-   still serving them; the updated ones take them back before the last one
-   leaves, which overlaps two versions for a few seconds rather than leaving
-   the tunnel without a server.
-3. For each server it writes its mode and tunnels, in local mode copies
-   `~/Developer/mono` to it, runs `ship update` there, which changes only what
-   is new, and waits until it serves again: workloads running, tunnels
-   connected, and Bitview at the tip.
-4. Once servers sharing tunnels all run a new version, it purges Cloudflare's
+2. It readies every server at once, while all keep serving: it writes each
+   one's mode and the run's versions, in local mode copies `~/Developer/mono`
+   to it, and runs `ship fetch` there at a low priority, which builds them and
+   downloads a macOS update, restarting nothing. A failed build stops the run
+   before any server restarts.
+3. Then it updates them in turn, and the servers that share a tunnel together,
+   so a tunnel never serves two versions. Each leaves the shared tunnels while
+   it updates, the others still serving them; the updated ones take them back
+   before the last one leaves, which overlaps two versions for a few seconds
+   rather than leaving the tunnel without a server.
+4. For each server it gives it its tunnels, runs `ship update` there, which
+   installs what was readied and restarts only what runs another build than
+   the one installed, and waits until it serves again: workloads running,
+   tunnels connected, and Bitview at the tip.
+5. Once servers sharing tunnels all run a new version, it purges Cloudflare's
    cache of the hostnames their tunnels route, so none serves what the old
    version cached; servers already at the run's versions keep their tunnels
    throughout and their cache. `fleet purge SERVER...` purges by hand, as when a

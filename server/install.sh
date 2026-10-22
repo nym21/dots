@@ -3,16 +3,23 @@
 set -euo pipefail
 
 # Run this mini in MODE, or in the mode it has: install Bitview and the MCP
-# server in it, restart the workloads that changed version, and start
-# whatever is not running. A run with nothing new leaves a running mini alone.
-# fleet passes the versions to pin, bitviewd's and bitview_mcp's, so servers
-# sharing a tunnel run the same one; without, it takes the newest. The first
-# run asks for sudo, to have them start at boot.
+# server in it, restart a workload whose build installed differs from the one
+# it runs, and start whatever is not running. A run with nothing new leaves a
+# running mini alone. fleet passes the versions to pin, bitviewd's and
+# bitview_mcp's, so servers sharing a tunnel run the same one; without, it
+# takes the newest. The first run asks for sudo, to have them start at boot.
+# With --build, it only installs them, restarting nothing, as ship fetch does
+# while the mini serves.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+build_only=0
+if [ "${1:-}" = --build ]; then
+    build_only=1
+    shift
+fi
 if [ "$#" -gt 3 ]; then
-    echo "Usage: $0 [prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
+    echo "Usage: $0 [--build] [prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
     exit 1
 fi
 
@@ -31,9 +38,16 @@ if [ -z "${mode:-}" ]; then
     exit 1
 fi
 
+rustup update
+install_crate bitviewd "$mode" "$pin"
+install_crate bitview_mcp "$mode" "$mcp_pin"
+mkdir -p "$(dirname "$MODE_FILE")"
+echo "$mode${pin:+ $pin}${pin:+ $mcp_pin}" > "$MODE_FILE"
+[ "$build_only" -eq 0 ] || exit 0
+
 # The Rex server comes back at boot on its own, the workloads with this daemon.
 # It is only installed, for the next boot: loading it now would start them
-# twice at once. Done first, so nothing is stopped while sudo asks.
+# twice at once. Done before any restart, so nothing is stopped while sudo asks.
 BOOT_PLIST=/Library/LaunchDaemons/com.local.workloads.plist
 plist="$(mktemp)"
 trap 'rm -f "$plist"' EXIT
@@ -78,33 +92,20 @@ if ! cmp -s "$plist" "$BOOT_PLIST"; then
     sudo launchctl enable system/com.local.workloads
 fi
 
-# What decides a restart: the version, or the commit of a branch. A rebuild
-# of the same one, as cargo does after a Rust update, needs none. A local build
-# shows no change there, so any new binary counts.
-installed() {
-    if [ "$mode" = local ]; then
-        shasum "$HOME/.cargo/bin/$1" 2>/dev/null || true
-    else
-        cargo install --list | awk -v crate="$1" '$1 == crate { print; exit }'
-    fi
+# Whether CRATE's binary runs, but not the build installed: another version,
+# or commit of a branch, which a rebuild of the same one, as cargo does after a
+# Rust update, keeps; or one unrecorded, started before records were.
+stale() {
+    pgrep -x "$1" >/dev/null && [ "$(installed "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
 }
-
-bitviewd_before="$(installed bitviewd)"
-mcp_before="$(installed bitview_mcp)"
-
-rustup update
-install_crate bitviewd "$mode" "$pin"
-install_crate bitview_mcp "$mode" "$mcp_pin"
-mkdir -p "$(dirname "$MODE_FILE")"
-echo "$mode${pin:+ $pin}${pin:+ $mcp_pin}" > "$MODE_FILE"
 
 # The tunnels stop before a server restarts, so no traffic reaches it
 # meanwhile.
 restart=''
-if [ "$(installed bitviewd)" != "$bitviewd_before" ]; then
+if stale bitviewd; then
     restart="$restart tunnels bitviewd"
 fi
-if [ "$(installed bitview_mcp)" != "$mcp_before" ]; then
+if stale bitview_mcp; then
     restart="$restart tunnels mcp"
 fi
 if [ -n "$restart" ]; then

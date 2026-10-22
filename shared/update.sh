@@ -5,6 +5,10 @@ set -euo pipefail
 # pulls dots and runs the version pulled, then updates Homebrew, Rust, and the
 # listed Cargo tools; on a server also Rex and the workloads, within the
 # mini's mode; macOS last, which restarts the Mac when it installs.
+#
+# ship fetch, on a server, runs it with --fetch: it readies the slow parts
+# while the mini keeps serving, restarting nothing, so the update after only
+# installs and restarts. fleet runs it on every server at once.
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 SERVER_DIR="$DOTS_DIR/server"
@@ -18,6 +22,14 @@ fi
 
 source "$DOTS_DIR/shared/setup.sh"
 link_commands
+
+if [ "${1:-}" = --fetch ]; then
+    # Bitview and the MCP server built in the mini's mode, and a macOS update
+    # downloaded.
+    "$SERVER_DIR/install.sh" --build
+    "$DOTS_DIR/shared/macos-update.sh" --download
+    exit 0
+fi
 
 # Only a step that needs root asks for the password. Once it was typed, and
 # while sudo still remembers it, allow those steps without one next time.

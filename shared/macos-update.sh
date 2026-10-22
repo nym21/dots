@@ -5,9 +5,19 @@ set -euo pipefail
 # step of ship update. It downloads while everything keeps running, then gives
 # 30 seconds to cancel before stopping a server's workloads cleanly, which
 # come back at boot. With macOS current, it installs the other updates, such
-# as Safari or the Command Line Tools, the newest of each.
+# as Safari or the Command Line Tools, the newest of each. With --download, it
+# only downloads a macOS update, for ship fetch.
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+download=0
+case "$*" in
+    '') ;;
+    --download) download=1 ;;
+    *)
+        echo "Usage: $0 [--download]" >&2
+        exit 1
+        ;;
+esac
 
 if [ "$(id -u)" -eq 0 ]; then
     echo "Run this as the logged-in administrator, not with sudo." >&2
@@ -44,6 +54,18 @@ newest() {
 }
 
 macos="$(newest macOS)"
+if [ "$download" -eq 1 ]; then
+    [ -n "$macos" ] || exit 0
+    IFS='|' read -r _ version label <<< "$macos"
+    echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
+    # Without a password, which /etc/sudoers.d/dots allows for softwareupdate.
+    if sudo -n softwareupdate --download "$label" </dev/null; then
+        echo "macOS $version is downloaded."
+    else
+        echo "Could not download macOS $version without a password; ship update will."
+    fi
+    exit 0
+fi
 if [ -z "$macos" ]; then
     # Without a macOS update, install the newest of each other product.
     while IFS= read -r product; do
