@@ -78,6 +78,7 @@ commands this Mac has.
 
 ```sh
 ship update    # Update everything and restart what changed; macOS last.
+ship clean     # Free what caches and old builds take; ship update runs it too.
 ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 fleet status   # On the workstation: one line per server.
 fleet update   # On the workstation: give each server its part and update it, in turn.

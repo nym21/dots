@@ -43,7 +43,6 @@ brew update
 brew bundle install --file="$DOTS_DIR/shared/Brewfile"
 brew bundle install --file="$DOTS_DIR/$ROLE/Brewfile"
 brew upgrade
-brew cleanup
 
 echo "Updating Rust and the Cargo tools..."
 rustup update
@@ -118,6 +117,7 @@ case "$ROLE" in
         ;;
 esac
 
+"$DOTS_DIR/shared/clean.sh"
 "$DOTS_DIR/shared/macos-update.sh"
 
 # Last, since a restart drops the connections over it, this update's own when

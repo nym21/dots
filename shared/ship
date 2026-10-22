@@ -12,6 +12,7 @@ usage() {
     echo "Usage: ship COMMAND" >&2
     echo >&2
     echo "  update                      update everything, restart what changed, then macOS" >&2
+    echo "  clean                       free what caches and old builds take; update runs it" >&2
     case "$ROLE" in
         pc)
             echo "  save                        save Cargo tools and Rex settings into dots" >&2
@@ -41,6 +42,7 @@ command="${1:-}"
 [ "$#" -eq 0 ] || shift
 case "$ROLE:$command" in
     *:update) exec "$DOTS_DIR/shared/update.sh" "$@" ;;
+    *:clean) exec "$DOTS_DIR/shared/clean.sh" "$@" ;;
     pc:save) exec "$DOTS_DIR/pc/save.sh" "$@" ;;
     server:fetch)
         [ "$#" -eq 0 ] || usage
