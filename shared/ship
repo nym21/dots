@@ -16,7 +16,7 @@ usage() {
     case "$ROLE" in
         pc)
             echo "  save                        save Cargo tools and Rex settings into dots" >&2
-            echo "  backup                      back up with Time Machine, then eject its disk" >&2
+            echo "  backup                      back up with Time Machine, then lock its disk" >&2
             ;;
         server)
             echo "  fetch                       build the workloads and download macOS, restarting nothing" >&2

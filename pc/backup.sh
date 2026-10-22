@@ -4,8 +4,8 @@ set -euo pipefail
 # ship backup: back this Mac up with Time Machine, by hand, as its automatic
 # backups stay off: they keep snapshots on the local disk while the backup
 # disk is away. It leaves out what can be rebuilt or downloaded again, unlocks
-# the backup disk, asking for its password when it is locked, backs up, and
-# ejects the disk once done.
+# the backup disk, with its password from the keychain, backs up, and locks
+# the disk again, which can then stay in or come out.
 
 if [ "$#" -ne 0 ]; then
     echo "Usage: ship backup" >&2
@@ -116,7 +116,10 @@ else
     echo "The backup did not complete; Time Machine's log says why." >&2
 fi
 
-# The disk under the volume's APFS container, ejected whole.
-store="$(diskutil info "$volume" | awk -F ': *' '/APFS Physical Store/ { print $2 }')"
-disk="$(diskutil info "${store:-$volume}" | awk -F ': *' '/Part of Whole/ { print $2 }')"
-diskutil eject "$disk" >/dev/null && echo "Ejected $name."
+# Locked, not ejected: an ejected card is gone until put in again, while a
+# locked one stays for the next backup, and can come out as safely.
+if [ -n "$user" ]; then
+    diskutil apfs lockVolume "$volume" >/dev/null && echo "Locked $name."
+else
+    diskutil unmount "$volume" >/dev/null && echo "Unmounted $name."
+fi
