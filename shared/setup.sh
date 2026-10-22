@@ -20,6 +20,8 @@ fi
 
 SHARED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROLE_DIR="$(dirname "$SHARED_DIR")/$ROLE"
+# Homebrew asks before each install or upgrade by default.
+export HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1
 
 link() {
     if [ -L "$2" ]; then

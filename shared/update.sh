@@ -9,6 +9,8 @@ set -euo pipefail
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 SERVER_DIR="$DOTS_DIR/server"
 ROLE="$(cat "$HOME/.config/dots/role")"
+# Homebrew asks before each upgrade by default, which would stop the update.
+export HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1
 
 if [ -z "${DOTS_PULLED:-}" ]; then
     echo "Updating dots..."
