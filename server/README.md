@@ -153,13 +153,26 @@ Running server setup again reinstalls the workaround.
 
 ## Workloads
 
-`./server/services.sh` runs Bitcoin Core, Bitview, the MCP server, and the
-Cloudflare tunnels as LaunchDaemons under the server's user, so they start at
-boot while the mini stays at the login screen, and restart whenever they exit.
-Run it as that user, without `sudo`; it uses `sudo` where needed. Running it
-again restarts only the daemons whose definition changed. It skips a workload
-that already runs outside launchd, in a Rex pane for example; stop that copy
-first.
+One command sets up a mini in its mode and keeps it there. Run it as the
+server's user, without `sudo`; it uses `sudo` where needed:
+
+```sh
+./server/install.sh            # prod: crates.io
+./server/install.sh next       # next: the official repository's next branch
+./server/install.sh --local    # local: ~/Developer/mono
+```
+
+Every mini runs the same setup, and the mode is the only difference: Bitview and
+the MCP server come from crates.io, from a branch of the official
+`bitcoinresearchkit/mono` repository, or from the checkout in `~/Developer/mono`.
+Any other branch name works too, and becomes the mode. `install.sh` installs
+both servers from that source, then runs Bitcoin Core, Bitview, the MCP server,
+and the Cloudflare tunnels as LaunchDaemons under the server's user, so they
+start at boot while the mini stays at the login screen, and restart whenever
+they exit. Running it again restarts only what changed, a daemon's definition
+or binary, so a run with nothing new leaves a prod mini alone. It skips a
+workload that already runs outside launchd, in a Rex pane for example; stop that
+copy first.
 
 | Daemon | Runs | Log in `~/Library/Logs` |
 | --- | --- | --- |
@@ -171,37 +184,24 @@ first.
 The daemons need no start order: a launcher exits until what it needs is up,
 and launchd retries it 10 seconds later. Bitcoin Core and Bitview wait for the
 external volume at `/Volumes/External`, so nothing is written to the boot disk
-before it mounts, and the tunnels wait for the three backends.
+before it mounts, and the tunnels wait for both servers. When stopped, Bitcoin
+Core and Bitview get 10 minutes to shut down cleanly before launchd kills them.
 `com.local.trim-logs` checks the logs hourly and moves one above 100 MB to
 `NAME.log.1`, replacing the previous one.
 
 ```sh
-sudo launchctl kickstart -k system/com.local.bitviewd   # restart
-sudo launchctl bootout system/com.local.bitviewd        # stop until services.sh runs again
+sudo launchctl kill TERM system/com.local.bitviewd   # restart cleanly
+sudo launchctl bootout system/com.local.bitviewd     # stop until install.sh runs again
 tail -f ~/Library/Logs/bitviewd.log
 ```
 
-### Versions
-
-Every mini runs the same setup in one of three modes, chosen by how Bitview is
-installed: **prod** from crates.io, **next** from the official
-`bitcoinresearchkit/mono` repository's `next` branch, or **local** from the
-checkout in `~/Developer/mono`. `install.sh` installs Bitview and the MCP server
-from the same source, then restarts the daemons whose binary changed, so a run
-with nothing new restarts nothing. The daemons only run the installed binaries,
-so a reboot keeps the version installed last:
-
-```sh
-./server/install.sh            # prod: crates.io
-./server/install.sh next       # next: the official repository's next branch
-./server/install.sh --local    # local: ~/Developer/mono
-```
-
-Any other branch name works too, and becomes the mode. `cargo install --list`
-shows each installed version, with the branch and commit or the checkout's
-path. Builds use the native-CPU settings in `shared/home/.cargo/config.toml`,
-linked during setup. A local build uses its own target directory in
-`~/Library/Caches/dots`, so it never touches the checkout's `target`.
+The daemons only run the installed binaries, so a reboot keeps the version
+installed last. `cargo install --list` shows each installed version, with the
+branch and commit or the checkout's path. Builds use the native-CPU settings in
+`shared/home/.cargo/config.toml`, linked during setup. A local build uses its own
+target directory in `~/Library/Caches/dots`, so it never touches the checkout's
+`target`. The checkout only reads from GitHub; commit and push from your other
+Mac, then pull it before installing.
 
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 `--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
@@ -230,7 +230,7 @@ must be running and synced. The benchmark exits after bootstrap without starting
 the HTTP server. Results are stored under
 `/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`, following
 `--bitviewdir`. It prints that path before bootstrap starts and after completion.
-Run `./server/services.sh` afterwards to start Bitview again.
+Run `./server/install.sh` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
 
@@ -258,7 +258,7 @@ or any tunnel exits, the launcher stops its remaining tunnels and exits, and
 launchd starts it again.
 `install.sh` restarts it when Bitview changed, since the mode may have too.
 After changing `server/.tokens`, restart it with
-`sudo launchctl kickstart -k system/com.local.tunnels`.
+`sudo launchctl kill TERM system/com.local.tunnels`.
 
 ## Rex
 
