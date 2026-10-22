@@ -12,6 +12,10 @@ if [ "$#" -ne 0 ]; then
     exit 1
 fi
 
+# shellcheck disable=SC2034 # read by shared/setup.sh
+ROLE=pc
+source "$(dirname "$(readlink -f "$0")")/../shared/setup.sh"
+
 # Rebuilt or downloaded again: Bitcoin Core's chain and Bitview's, from it;
 # Rust's, Cargo's, and Bun's; caches; Xcode's simulators and builds; the
 # Claude app's VM; and every project's build.
@@ -94,7 +98,7 @@ if [ "$(diskutil info "$volume" | awk -F ': *' '/^ *Mounted:/ { print $2 }')" !=
 fi
 unset password
 
-before="$(tmutil latestbackup 2>/dev/null || true)"
+before="$(last_backup)"
 if running; then
     echo "A backup to $name is already running; following it..."
 else
@@ -105,9 +109,9 @@ else
     done
 fi
 follow
-after="$(tmutil latestbackup 2>/dev/null || true)"
+after="$(last_backup)"
 if [ -n "$after" ] && [ "$after" != "$before" ]; then
-    echo "Backed up: ${after##*/}"
+    echo "Backed up, at ${after% *}."
 else
     echo "The backup did not complete; Time Machine's log says why." >&2
 fi

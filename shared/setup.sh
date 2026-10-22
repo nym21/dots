@@ -111,16 +111,22 @@ update_cargo_hawk() {
         sh -s -- --quiet --no-modify-path
 }
 
-# Whether this Mac's last Time Machine backup is missing or over a week old.
-# Its backups run by hand, automatic ones being off, as they keep snapshots on
-# the local disk while the backup disk is away. It reads only Time Machine's
-# settings, so a locked or missing backup disk does not matter.
-backup_problem() {
-    local plist=/Library/Preferences/com.apple.TimeMachine last
-    last="$(defaults read "$plist" Destinations 2>/dev/null | awk '
+# When this Mac's last Time Machine backup completed, as Time Machine's
+# settings list it, so a locked or missing backup disk does not matter. Empty
+# without one.
+last_backup() {
+    defaults read /Library/Preferences/com.apple.TimeMachine Destinations 2>/dev/null | awk '
         /SnapshotDates/ { inside = 1; next }
         inside && /\)/ { inside = 0 }
-        inside { gsub(/[",]/, ""); sub(/^ +/, ""); if ($0 != "") print }' | sort | tail -1)"
+        inside { gsub(/[",]/, ""); sub(/^ +/, ""); if ($0 != "") print }' | sort | tail -1
+}
+
+# Whether this Mac's last Time Machine backup is missing or over a week old.
+# Its backups run by hand, automatic ones being off, as they keep snapshots on
+# the local disk while the backup disk is away.
+backup_problem() {
+    local last
+    last="$(last_backup)"
     if [ -z "$last" ]; then
         echo "Time Machine has completed no backup"
     elif [ "$(date -j -f '%Y-%m-%d %H:%M:%S %z' "$last" +%s 2>/dev/null || echo 0)" -lt "$(date -v-7d +%s)" ]; then
