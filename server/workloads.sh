@@ -67,24 +67,57 @@ supervisor() {
 
 # Log that workload $1 exited with status $2, and keep the end of its output.
 crashed() {
-    local stamp
+    local stamp own
     stamp="$(date +%Y-%m-%dT%H:%M:%S)"
     mkdir -p "$(dirname "$CRASH_LOG")"
     echo "$stamp $1 exited with status $2" >> "$CRASH_LOG"
-    rex capture -s "$SESSION" -b "$1" 2>/dev/null | tail -n 200 > "${CRASH_LOG%.log}-$1-$stamp.log" || true
+    own="$(own_log "$1")"
+    {
+        rex capture -s "$SESSION" -b "$1" 2>/dev/null | tail -n 200 || true
+        if [ -n "$own" ] && [ -f "$own" ]; then
+            echo "--- The end of $own:"
+            tail -n 200 "$own"
+        fi
+    } > "${CRASH_LOG%.log}-$1-$stamp.log"
+}
+
+# The log workload $1 writes itself rather than to its window, if any:
+# Bitview's of the day, or Bitcoin Core's debug.log.
+own_log() {
+    case "$1" in
+        bitviewd) find /Volumes/External/bitview/logs -name '????-??-??.txt' 2>/dev/null | sort | tail -1 ;;
+        bitcoind) echo /Volumes/External/bitcoin/debug.log ;;
+    esac
+}
+
+# Clear workload $1's window, checked every ten minutes, once it holds over
+# half a megabyte: the Rex app loads a window's whole scrollback, and Rex keeps
+# no limit of its own yet. A capture fails past a megabyte, which counts as
+# over. The workload keeps running.
+trim_window() {
+    local size
+    while sleep 600; do
+        if ! size="$(rex capture -s "$SESSION" -b "$1" 2>/dev/null | wc -c)" || [ "$size" -gt 524288 ]; then
+            rex block call -s "$SESSION" -b "$1" clear </dev/null >/dev/null 2>&1 || true
+        fi
+    done
 }
 
 # Run workload $1 until it exits, logging a failing exit; only the tunnels
 # start again, 10 seconds later. TERM, which stop sends, passes on to the
 # workload and ends the loop once it has exited. Each start of Bitview or the
-# MCP server records the build it runs, in RUNNING_DIR.
+# MCP server records the build it runs, in RUNNING_DIR. Meanwhile its window is
+# kept small.
 supervise() {
-    local name="$1" command crate='' pid='' status stopping=0
+    local name="$1" command crate='' pid='' status stopping=0 trimmer
     command="$SERVER_DIR/$(script "$name")"
     case "$name" in
         bitviewd) crate=bitviewd ;;
         mcp) crate=bitview_mcp ;;
     esac
+    trim_window "$name" &
+    trimmer=$!
+    trap 'kill "$trimmer" 2>/dev/null || true' EXIT
     trap 'stopping=1; kill -TERM "$pid" 2>/dev/null || true' TERM INT HUP
     while :; do
         if [ -n "$crate" ]; then
