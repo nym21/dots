@@ -11,7 +11,8 @@ set -euo pipefail
 #     crates downloaded over 90 days ago, unless a build is running
 #   - a project's target directory in ~/Developer unbuilt for 30 days
 #   - on the workstation, every simulator runtime but the newest stable iOS,
-#     so no older iOS, tvOS, or watchOS
+#     so no older iOS, tvOS, or watchOS; Bun's download cache; and the
+#     releases of Codex's packages but the one it runs
 #   - on a server, the local-mode build directory once it runs another mode
 #   - crash logs over 90 days old
 
@@ -60,6 +61,14 @@ done
 
 case "$ROLE" in
     pc)
+        rm -rf "$HOME/.bun/install/cache"
+        for package in "$HOME"/.codex/packages/*/; do
+            current="$(readlink "${package}current" 2>/dev/null || true)"
+            [ -n "$current" ] && [ -d "$current" ] || continue
+            for release in "${package}releases"/*; do
+                [ "$release" = "$current" ] || rm -rf "$release"
+            done
+        done
         if xcrun --find simctl >/dev/null 2>&1; then
             echo "Cleaning Xcode's simulators..."
             # A beta's build ends in a lowercase letter.
