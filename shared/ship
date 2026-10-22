@@ -16,6 +16,7 @@ usage() {
     case "$ROLE" in
         pc)
             echo "  save                        save Cargo tools and Rex settings into dots" >&2
+            echo "  backup                      back up with Time Machine, then eject its disk" >&2
             ;;
         server)
             echo "  fetch                       build the workloads and download macOS, restarting nothing" >&2
@@ -44,6 +45,7 @@ case "$ROLE:$command" in
     *:update) exec "$DOTS_DIR/shared/update.sh" "$@" ;;
     *:clean) exec "$DOTS_DIR/shared/clean.sh" "$@" ;;
     pc:save) exec "$DOTS_DIR/pc/save.sh" "$@" ;;
+    pc:backup) exec "$DOTS_DIR/pc/backup.sh" "$@" ;;
     server:fetch)
         [ "$#" -eq 0 ] || usage
         exec "$DOTS_DIR/shared/update.sh" --fetch

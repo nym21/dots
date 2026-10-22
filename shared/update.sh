@@ -71,7 +71,7 @@ if [ -n "$unlisted" ]; then
 fi
 if [ "$ROLE" = pc ]; then
     problem="$(backup_problem)"
-    [ -z "$problem" ] || echo "Back up: $problem; connect the backup disk and run tmutil startbackup."
+    [ -z "$problem" ] || echo "Back up: $problem; connect the backup disk and run ship backup."
 fi
 
 case "$ROLE" in
