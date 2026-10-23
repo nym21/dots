@@ -20,7 +20,7 @@ SERVICE="system/$LABEL"
 # --yes restarts the server without asking, as ship apply does. --download
 # only installs the newest build, restarting nothing, as ship fetch does.
 # --pending prints "rex" when the daemon would be installed or restarted,
-# changing nothing, for ship apply --pending.
+# changing nothing, so ship apply runs this only then.
 YES=0
 STEP=all
 case "$#:${1:-}" in

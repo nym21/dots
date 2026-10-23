@@ -183,8 +183,8 @@ newest version of their mode:
    server, Bitview and the MCP server, and the tunnels, for a new cloudflared
    or the tokens just given. Then it waits until the server serves again:
    workloads running, tunnels connected, and Bitview at the tip. A Bitview
-   restart takes about 10 seconds, its load, and a run with nothing new stops
-   nothing.
+   restart takes about 10 seconds, its load, or as long as it recomputes what
+   a new version changed, and a run with nothing new stops nothing.
 5. Once servers sharing tunnels all run a new version, it purges Cloudflare's
    cache of the hostnames their tunnels route, so none serves what the old
    version cached. Servers already at the run's versions keep their tunnels
@@ -196,7 +196,8 @@ decided when the run starts: servers that do not serve go first, as updating
 them costs no service, and before taking down a server that serves, `fleet`
 checks that the others of its group serve, stopping otherwise, so it never
 leaves a shared tunnel without a server it found serving. It stops if a server does
-not serve again within 45 minutes. Selecting a server selects every server it
+not serve again within 12 hours, or at once when a workload of the server
+crashed, as it stays down until looked at. Selecting a server selects every server it
 shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
 
 Whatever moment it stops at, as when this Mac sleeps, every shared tunnel keeps
@@ -226,11 +227,9 @@ over 3 days.
 newer version than its servers have, when an update is due.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, and each
-server's own tunnel says which server. `fleet` silences those alerts only while
-it restarts something on a server on purpose, the seconds `ship apply` takes,
-an hour at most, lifting the silence once the server serves again, so an email
-means something went wrong: a crash, a server down, or Bitview stuck behind the
-tip (see the [server instructions](server/README.md#cloudflare-tunnels)).
+server's own tunnel says which server: a deliberate restart, a crash, a server
+down, or Bitview stuck behind the tip (see the
+[server instructions](server/README.md#cloudflare-tunnels)).
 
 ## SSH over Tailscale
 

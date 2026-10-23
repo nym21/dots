@@ -171,7 +171,7 @@ that servers sharing a tunnel run the same one. Given a mode, as in
 `ship install next`, it switches the mini to it until `fleet update` sets it
 back. `ship fetch` only builds them, among the rest of the update, restarting
 nothing, as `fleet update` has every server do at once; `ship apply` then only
-restarts, and `ship apply --pending` names what it would take down.
+restarts.
 The first run asks for `sudo` to install `com.local.workloads`, which starts the
 workloads at boot.
 
@@ -283,11 +283,8 @@ other servers may be stuck at the same block.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
 tunnel of the account. Since each server also serves its own tunnel, its
-email says which server. `fleet` silences these alerts only while it restarts
-something on a server on purpose, for the seconds that takes, an hour at most,
-and lifts the silence once the server serves again, so an email means
-something went wrong, such as a crash. Cloudflare silences a whole alert
-policy, so an alert about another server during those seconds is silenced too.
+email says which server, whether `fleet` restarted it on purpose or it went
+down by itself, such as in a crash.
 
 ## Rex
 

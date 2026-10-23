@@ -13,19 +13,19 @@ set -euo pipefail
 #
 # With --build, it only installs them, restarting nothing, as ship fetch does
 # while the mini serves; with --restart, it only restarts and starts, as ship
-# apply does after; with --pending, it names what --restart would restart.
+# apply does after.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
     echo "Usage: $0 [--build] [prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
-    echo "       $0 --restart | --pending" >&2
+    echo "       $0 --restart" >&2
     exit 1
 }
 
 step=all
 case "${1:-}" in
-    --build | --restart | --pending)
+    --build | --restart)
         step="${1#--}"
         shift
         ;;
@@ -88,11 +88,6 @@ if stale bitview_mcp; then
 fi
 if tunnels_stale; then
     restart="$restart tunnels"
-fi
-if [ "$step" = pending ]; then
-    # shellcheck disable=SC2086
-    [ -z "$restart" ] || printf '%s\n' $restart | sort -u | paste -s -d ' ' -
-    exit 0
 fi
 
 # The Rex server comes back at boot on its own, the workloads with this daemon.

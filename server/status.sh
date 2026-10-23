@@ -4,7 +4,9 @@ set -euo pipefail
 # ship status: one line for this mini, its mode and version, workloads,
 # tunnels, sync, and disk. With --check, print nothing and exit 0 only when it
 # serves: every workload runs, every tunnel is connected, and Bitview is at
-# Bitcoin Core's tip. fleet update waits for that.
+# Bitcoin Core's tip. fleet update waits for that, as long as Bitview takes,
+# but not for a workload that crashed since this Mac started, with nothing to
+# start it again: that exits 2.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -50,9 +52,21 @@ behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_be
 crashes="$(awk -v since="$(date -v-7d +%Y-%m-%dT%H:%M:%S)" '$1 >= since' "$CRASH_LOG" 2>/dev/null || true)"
 
 if [ "$check" -eq 1 ]; then
-    [ "$workloads" -eq "$expected" ] && [ "$ready" -eq "$(wc -w <<< "$names")" ] &&
-        [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]
-    exit
+    if [ "$workloads" -eq "$expected" ] && [ "$ready" -eq "$(wc -w <<< "$names")" ] &&
+        [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]; then
+        exit 0
+    fi
+    # A crashed workload's supervisor ends, and it stays down until ship start.
+    booted="$(date -r "$(sysctl -n kern.boottime | sed -E 's/^[{] sec = ([0-9]+),.*/\1/')" +%Y-%m-%dT%H:%M:%S)"
+    for name in $down; do
+        [ "$name" != bitview_mcp ] || name=mcp
+        pgrep -f "server/workloads.sh supervise $name\$" >/dev/null && continue
+        if awk -v since="$booted" -v name="$name" '$1 >= since && $2 == name { found = 1 } END { exit !found }' \
+            "$CRASH_LOG" 2>/dev/null; then
+            exit 2
+        fi
+    done
+    exit 1
 fi
 
 mode="$(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true)"

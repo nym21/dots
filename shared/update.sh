@@ -16,8 +16,6 @@ set -euo pipefail
 #                         downloaded
 #   update.sh --apply     ship apply: restart only what runs something other
 #                         than what is installed, and start what is not running
-#   update.sh --pending   ship apply --pending: name what apply would take
-#                         down while it restarts it, on one line, or nothing
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 SERVER_DIR="$DOTS_DIR/server"
@@ -28,25 +26,16 @@ case "$#:${1:-}" in
     0:) ;;
     1:--fetch) step=fetch ;;
     1:--apply) step=apply ;;
-    1:--pending) step=pending ;;
     *)
-        echo "Usage: $0 [--fetch | --apply | --pending]" >&2
+        echo "Usage: $0 [--fetch | --apply]" >&2
         exit 1
         ;;
 esac
 
-# The Rex server, which restarts the workloads too; Bitview and the MCP server,
-# with the tunnels; and the tunnels, for a new cloudflared or other tokens.
-if [ "$step" = pending ]; then
-    {
-        [ ! -r "$SERVER_DIR/.rex-feed" ] || "$SERVER_DIR/rex.sh" --pending
-        "$SERVER_DIR/install.sh" --pending
-    } | paste -s -d ' ' -
-    exit 0
-fi
-
 # Restart what runs something other than what is installed, each for the
-# seconds it takes, and start what is not running.
+# seconds it takes, and start what is not running: the Rex server, which
+# restarts the workloads too; Bitview and the MCP server, with the tunnels; and
+# the tunnels, for a new cloudflared or other tokens.
 apply() {
     if [ -r "$SERVER_DIR/.rex-feed" ] && [ -n "$("$SERVER_DIR/rex.sh" --pending)" ]; then
         "$SERVER_DIR/rex.sh" --yes
