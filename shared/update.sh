@@ -6,13 +6,69 @@ set -euo pipefail
 # listed Cargo tools; on a server also Rex and the workloads, within the
 # mini's mode; macOS last, which restarts the Mac when it installs.
 #
-# ship fetch, on a server, runs it with --fetch: it readies the slow parts
-# while the mini keeps serving, restarting nothing, so the update after only
-# installs and restarts. fleet runs it on every server at once.
+# On a server it is two halves, which fleet runs apart: every server readies at
+# once while all serve, and only then does each restart, in turn, for seconds.
+#
+#   update.sh --fetch     ship fetch: ready everything, restarting nothing:
+#                         Homebrew, Rust, the Cargo tools, Rex's newest build,
+#                         Bitview and the MCP server in the mini's mode, the
+#                         cleanup, Apple's updates but macOS, and macOS's
+#                         downloaded
+#   update.sh --apply     ship apply: restart only what runs something other
+#                         than what is installed, and start what is not running
+#   update.sh --pending   ship apply --pending: name what apply would take
+#                         down while it restarts it, on one line, or nothing
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 SERVER_DIR="$DOTS_DIR/server"
 ROLE="$(cat "$HOME/.config/dots/role")"
+
+step=all
+case "$#:${1:-}" in
+    0:) ;;
+    1:--fetch) step=fetch ;;
+    1:--apply) step=apply ;;
+    1:--pending) step=pending ;;
+    *)
+        echo "Usage: $0 [--fetch | --apply | --pending]" >&2
+        exit 1
+        ;;
+esac
+
+# The Rex server, which restarts the workloads too; Bitview and the MCP server,
+# with the tunnels; and the tunnels, for a new cloudflared or other tokens.
+if [ "$step" = pending ]; then
+    {
+        [ ! -r "$SERVER_DIR/.rex-feed" ] || "$SERVER_DIR/rex.sh" --pending
+        "$SERVER_DIR/install.sh" --pending
+    } | paste -s -d ' ' -
+    exit 0
+fi
+
+# Restart what runs something other than what is installed, each for the
+# seconds it takes, and start what is not running.
+apply() {
+    if [ -r "$SERVER_DIR/.rex-feed" ] && [ -n "$("$SERVER_DIR/rex.sh" --pending)" ]; then
+        "$SERVER_DIR/rex.sh" --yes
+    fi
+    "$SERVER_DIR/install.sh" --restart || echo "Bitview is not installed; fleet update gives this mini its mode."
+}
+
+# Last, since a restart drops the connections over it, this update's own when
+# it runs over SSH. The daemon runs the version it started with.
+restart_tailscale() {
+    if [ "$(tailscale version | head -1)" != "$(tailscale version --daemon | sed -n 's/^Daemon: //p' | cut -d - -f 1)" ]; then
+        "$DOTS_DIR/shared/sudoers.sh"
+        sudo launchctl kickstart -k system/com.local.tailscaled
+    fi
+}
+
+if [ "$step" = apply ]; then
+    apply
+    restart_tailscale
+    echo "Applied."
+    exit 0
+fi
 
 if [ -z "${DOTS_PULLED:-}" ]; then
     echo "Updating dots..."
@@ -23,18 +79,9 @@ fi
 source "$DOTS_DIR/shared/setup.sh"
 link_commands
 
-if [ "${1:-}" = --fetch ]; then
-    # Bitview and the MCP server built in the mini's mode, and a macOS update
-    # downloaded.
-    "$SERVER_DIR/install.sh" --build
-    "$DOTS_DIR/shared/macos-update.sh" --download
-    exit 0
-fi
-
 binary() {
     readlink -f "$(command -v "$1")" 2>/dev/null || true
 }
-cloudflared_before="$(binary cloudflared)"
 tailscaled_before="$(binary tailscaled)"
 
 echo "Updating Homebrew..."
@@ -115,28 +162,22 @@ case "$ROLE" in
         ;;
     server)
         if [ -r "$SERVER_DIR/.rex-feed" ]; then
-            "$SERVER_DIR/rex.sh" --yes
+            "$SERVER_DIR/rex.sh" --download
         fi
-
         # Within the mode this mini has, which fleet sets.
-        "$SERVER_DIR/install.sh" || echo "Bitview is not installed; fleet update gives this mini its mode."
-
-        # A running cloudflared keeps its old binary. The tunnels come back
-        # once the node is ready.
-        if [ "$(binary cloudflared)" != "$cloudflared_before" ] && pgrep -f server/tunnels.sh >/dev/null; then
-            "$SERVER_DIR/workloads.sh" stop tunnels
-            "$SERVER_DIR/workloads.sh" start
+        if ! "$SERVER_DIR/install.sh" --build; then
+            [ "$step" = all ] || exit 1
+            echo "Bitview is not installed; fleet update gives this mini its mode."
         fi
         ;;
 esac
 
 "$DOTS_DIR/shared/clean.sh"
-"$DOTS_DIR/shared/macos-update.sh"
-
-# Last, since a restart drops the connections over it, this update's own when
-# it runs over SSH.
-if [ "$ROLE" = server ] && [ "$(binary tailscaled)" != "$tailscaled_before" ]; then
-    "$DOTS_DIR/shared/sudoers.sh"
-    sudo launchctl kickstart -k system/com.local.tailscaled
+if [ "$step" = fetch ]; then
+    "$DOTS_DIR/shared/macos-update.sh" --download
+    exit 0
 fi
+[ "$ROLE" != server ] || apply
+"$DOTS_DIR/shared/macos-update.sh"
+[ "$ROLE" != server ] || restart_tailscale
 echo "Up to date."

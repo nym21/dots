@@ -86,7 +86,7 @@ ship status    # On the workstation: what only you can do, while it is missing.
 ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
 fleet status   # On the workstation: one line per server, and what is due.
-fleet update   # On the workstation: build on every server at once, then update them in turn.
+fleet update   # On the workstation: ready every server at once, then restart what changed, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 fleet tunnels  # On the workstation: give each server a tunnel named after it.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
@@ -98,8 +98,11 @@ what the Brewfiles and Cargo lists gained, upgrades Homebrew, Rust, and the
 listed Cargo tools, and names anything installed that the lists lack, so the
 Macs stay alike: add it to one, or uninstall it. On a server it updates Rex and
 the workloads within the mini's mode (see the
-[server instructions](server/README.md)); on the workstation it backs up
-whenever the backup disk is in. It then runs `ship clean`, which keeps what is
+[server instructions](server/README.md)), in two halves that `fleet` runs
+apart: `ship fetch` readies everything while the mini serves, restarting
+nothing, then `ship apply` restarts only what runs an older build than the one
+installed, for the seconds that takes. On the workstation it backs up whenever
+the backup disk is in. It then runs `ship clean`, which keeps what is
 in use and frees the rest: Homebrew's downloads, Rust toolchains but the
 default and those a project pins, Cargo's caches, builds unused for 30 days,
 old releases of Codex's packages, and simulator runtimes but the newest stable
@@ -166,18 +169,22 @@ newest version of their mode:
    mode end on the same version even when the branch moves meanwhile.
 2. It readies every server at once, while all keep serving: it writes each
    one's mode and the run's versions, in local mode copies `~/Developer/mono`
-   to it, and runs `ship fetch` there at a low priority, which builds them and
-   downloads a macOS update, restarting nothing. A failed build stops the run
-   before any server restarts.
+   to it, and runs `ship fetch` there at a low priority, which does all of
+   `ship update` that restarts nothing: Homebrew, Rust, Cargo, Rex's newest
+   build, Bitview and the MCP server, the cleanup, Apple's other updates, and
+   macOS's download. A server that fails stops the run before any restarts.
 3. Then it updates them in turn, those sharing a tunnel together, so a tunnel
    never serves two versions: each leaves the shared tunnels while it updates,
    the others still serving them, and the updated ones take them back before
    the last one leaves, which overlaps two versions for a few seconds rather
    than leaving the tunnel without a server.
-4. For each server it gives it its tunnels, runs `ship update` there, which
-   installs what was readied and restarts only what runs another build than the
-   one installed, and waits until it serves again: workloads running, tunnels
-   connected, and Bitview at the tip.
+4. For each server it gives it its tunnels and runs `ship apply` there, which
+   restarts only what runs another build than the one installed: the Rex
+   server, Bitview and the MCP server, and the tunnels, for a new cloudflared
+   or the tokens just given. Then it waits until the server serves again:
+   workloads running, tunnels connected, and Bitview at the tip. A Bitview
+   restart takes about 10 seconds, its load, and a run with nothing new stops
+   nothing.
 5. Once servers sharing tunnels all run a new version, it purges Cloudflare's
    cache of the hostnames their tunnels route, so none serves what the old
    version cached. Servers already at the run's versions keep their tunnels
@@ -197,7 +204,8 @@ a server, as a server takes a tunnel back before another leaves it. A step that
 stops and starts what a server runs is a job of the server's own, started with
 `nohup`, which finishes there however the connection fares, while `fleet`
 follows its output and, after a lost connection, takes it up again. From a
-terminal, `ship update` runs in it instead, to ask for macOS's password.
+terminal, a macOS update that `ship fetch` downloaded then installs in it, to
+ask for the password, and restarts the server; without one, it waits.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
 hourly, runs `fleet update` without a terminal, when this Mac is on power and a
@@ -218,11 +226,11 @@ over 3 days.
 newer version than its servers have, when an update is due.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, and each
-server's own tunnel says which server. `fleet` silences those alerts while it
-restarts a server on purpose, an hour at most, lifting the silence once the
-server serves again, so an email means something went wrong: a crash, a server
-down, or Bitview stuck behind the tip (see the
-[server instructions](server/README.md#cloudflare-tunnels)).
+server's own tunnel says which server. `fleet` silences those alerts only while
+it restarts something on a server on purpose, the seconds `ship apply` takes,
+an hour at most, lifting the silence once the server serves again, so an email
+means something went wrong: a crash, a server down, or Bitview stuck behind the
+tip (see the [server instructions](server/README.md#cloudflare-tunnels)).
 
 ## SSH over Tailscale
 

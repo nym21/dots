@@ -151,7 +151,7 @@ Running server setup again reinstalls the workaround.
 
 The workstation decides what each mini runs: `pc/fleet.conf` gives each its
 mode and tunnels, and `fleet update` hands a mini its part, then runs
-`ship update` there (see the [main README](../README.md#servers)). A mini keeps
+`ship fetch` and `ship apply` there (see the [main README](../README.md#servers)). A mini keeps
 what it was given, so it boots and serves without the workstation.
 
 Every mini runs the same setup, and the mode is the only difference: Bitview and
@@ -169,8 +169,9 @@ none. `ship update` runs it, taking prod's newest crates.io release and a
 branch's newest commit, unless `fleet update` pinned a version, as it does so
 that servers sharing a tunnel run the same one. Given a mode, as in
 `ship install next`, it switches the mini to it until `fleet update` sets it
-back. `ship fetch` only builds them, restarting nothing, and downloads a macOS
-update, as `fleet update` has every server do at once before restarting any.
+back. `ship fetch` only builds them, among the rest of the update, restarting
+nothing, as `fleet update` has every server do at once; `ship apply` then only
+restarts, and `ship apply --pending` names what it would take down.
 The first run asks for `sudo` to install `com.local.workloads`, which starts the
 workloads at boot.
 
@@ -269,8 +270,10 @@ server run, both servers answer, and Bitview has reached Bitcoin Core's tip
 tip), so a restarting node gets no public traffic. While a backend is down, it
 takes the tunnels down and waits until the node serves again. If a tunnel
 exits, it stops the others and exits, and starts again 10 seconds later,
-logged as a crash. `ship install` restarts them when Bitview changes version,
-and `ship update` when it upgraded `cloudflared`.
+logged as a crash. `ship install` and `ship apply` restart them when Bitview
+changes version, when they run an older `cloudflared` than the one installed,
+and when they run on other tokens than `fleet` gave, as each start records
+them in `~/.config/dots/running/tunnels`.
 
 While serving, `tunnels.sh` checks every minute that Bitview is at the tip. One
 stuck behind it for 10 minutes would serve on what it has, so the mini's own
@@ -280,11 +283,11 @@ other servers may be stuck at the same block.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
 tunnel of the account. Since each server also serves its own tunnel, its
-email says which server. `fleet` silences these alerts while it restarts a
-server on purpose, an hour at most, and lifts the silence once the server
-serves again, so an email means something went wrong, such as a crash.
-Cloudflare silences a whole alert policy, so an alert about another server
-during those minutes is silenced too.
+email says which server. `fleet` silences these alerts only while it restarts
+something on a server on purpose, for the seconds that takes, an hour at most,
+and lifts the silence once the server serves again, so an email means
+something went wrong, such as a crash. Cloudflare silences a whole alert
+policy, so an alert about another server during those seconds is silenced too.
 
 ## Rex
 
@@ -302,13 +305,14 @@ plutil -extract SUFeedURL raw "/Applications/Rex Beta.app/Contents/Info.plist" |
 
 Then `ship update` on the mini installs it, and every later run updates it: it
 downloads the newest build, checks its Developer ID signature, and installs it
-in `~/Applications/Rex Server.app`, linked as `~/.local/bin/rex`. A new build
-needs a restart of the server, which ends its sessions and every program in
-them, so it stops the workloads cleanly first and starts them again after. A
-terminal of the server would end too, so update servers with `fleet update` from
-the workstation, which runs `ship update` over SSH; from a Rex terminal of the
-mini, `ship update` installs the build and leaves the restart for a run over
-SSH. The restart needs no password. `server/rex.sh` alone asks before ending
+in `~/Applications/Rex Server.app`, linked as `~/.local/bin/rex`, which
+`ship fetch` does alone. A new build needs a restart of the server, which
+`ship apply` does: it ends its sessions and every program in them, so it stops
+the workloads cleanly first and starts them again after, Bitcoin Core
+included, which takes minutes. A terminal of the server would end too, so
+update servers with `fleet update` from the workstation, which runs it over
+SSH; from a Rex terminal of the mini, `ship update` installs the build and
+leaves the restart for a run over SSH. The restart needs no password. `server/rex.sh` alone asks before ending
 open sessions. The server logs to `~/Library/Logs/rex-server.log`.
 
 Grant the Rex server Full Disk Access once, so the programs it runs, the

@@ -10,8 +10,10 @@
 MODE_FILE="$HOME/.config/dots/mode"
 
 # The build each of Bitview's workloads runs, as installed() named it when its
-# supervisor started it, one file per crate. ship update restarts a workload
-# whose build installed differs, and fleet reads them for what each server runs.
+# supervisor started it, one file per crate, and the tokens the tunnels run on,
+# as tokens_digest() named them. ship apply restarts a workload whose build
+# installed differs, or the tunnels on new tokens, and fleet reads them for
+# what each server runs.
 RUNNING_DIR="$HOME/.config/dots/running"
 
 # Each workload's failing exits, one line each, and beside it the end of its
@@ -28,6 +30,11 @@ installed() {
         *" (/"*) shasum "$HOME/.cargo/bin/$1" ;;
         *) echo "$line" ;;
     esac
+}
+
+# The tunnel tokens fleet gave this mini, by their digest. Empty without any.
+tokens_digest() {
+    shasum "$SERVER_DIR/.tokens" 2>/dev/null | cut -d ' ' -f 1
 }
 
 # The mode bitviewd was installed in, by its source. Empty when cargo did not

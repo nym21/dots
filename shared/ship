@@ -20,7 +20,8 @@ usage() {
             echo "  backup                      back up with Time Machine, then unmount its disk" >&2
             ;;
         server)
-            echo "  fetch                       build the workloads and download macOS, restarting nothing" >&2
+            echo "  fetch                       ready all of update while serving, restarting nothing" >&2
+            echo "  apply [--pending]           then restart what runs an older build; --pending names it" >&2
             echo "  status [--check]            this mini's mode, workloads, tunnels, and disk" >&2
             echo "  install [MODE]              install this mini's mode, or MODE: prod, next, a branch, or local" >&2
             echo "  start                       start the workloads that are not running" >&2
@@ -51,6 +52,13 @@ case "$ROLE:$command" in
     server:fetch)
         [ "$#" -eq 0 ] || usage
         exec "$DOTS_DIR/shared/update.sh" --fetch
+        ;;
+    server:apply)
+        case "$#:${1:-}" in
+            0:) exec "$DOTS_DIR/shared/update.sh" --apply ;;
+            1:--pending) exec "$DOTS_DIR/shared/update.sh" --pending ;;
+            *) usage ;;
+        esac
         ;;
     server:status) exec "$DOTS_DIR/server/status.sh" "$@" ;;
     server:install) exec "$DOTS_DIR/server/install.sh" "$@" ;;

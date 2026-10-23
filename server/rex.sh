@@ -17,13 +17,19 @@ LABEL="com.local.rex"
 PLIST_DEST="/Library/LaunchDaemons/$LABEL.plist"
 SERVICE="system/$LABEL"
 
-# --yes restarts the server without asking, as ship update does.
+# --yes restarts the server without asking, as ship apply does. --download
+# only installs the newest build, restarting nothing, as ship fetch does.
+# --pending prints "rex" when the daemon would be installed or restarted,
+# changing nothing, for ship apply --pending.
 YES=0
+STEP=all
 case "$#:${1:-}" in
     0:) ;;
     1:--yes) YES=1 ;;
+    1:--download) STEP=download ;;
+    1:--pending) STEP=pending ;;
     *)
-        echo "Usage: $0 [--yes]" >&2
+        echo "Usage: $0 [--yes | --download | --pending]" >&2
         exit 1
         ;;
 esac
@@ -82,6 +88,83 @@ server_status() {
 status_field() {
     awk -v key="$1:" '$1 == key { print $2; exit }'
 }
+
+# The daemon's settings, in PLIST_TMP.
+PLIST_TMP="$WORK/$LABEL.plist"
+write_plist() {
+    local user_shell
+    user_shell="$(dscl . -read "/Users/$SERVER_USER" UserShell | awk '{ print $2 }')"
+    cat > "$PLIST_TMP" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+
+    <key>UserName</key>
+    <string>$SERVER_USER</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$REX</string>
+        <string>server</string>
+        <string>run</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>$HOME</string>
+        <key>USER</key>
+        <string>$SERVER_USER</string>
+        <key>LOGNAME</key>
+        <string>$SERVER_USER</string>
+        <key>SHELL</key>
+        <string>$user_shell</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>$HOME</string>
+
+    <key>StandardOutPath</key>
+    <string>$LOG</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+    plutil -lint "$PLIST_TMP" >/dev/null
+}
+
+# What the daemon needs: install, when it is missing or its settings changed,
+# which asks for a password; restart, when it runs another build than the one
+# installed, which /etc/sudoers.d/dots allows without one; or none.
+daemon_action() {
+    if ! launchctl print "$SERVICE" >/dev/null 2>&1 || ! cmp -s "$PLIST_TMP" "$PLIST_DEST"; then
+        echo install
+    elif [ "$(server_status | status_field version)" != "$("$REX" version 2>/dev/null | awk 'NR == 1 { print $2 }')" ]; then
+        echo restart
+    else
+        echo none
+    fi
+}
+
+if [ "$STEP" = pending ]; then
+    write_plist
+    [ "$(daemon_action)" = none ] || echo rex
+    exit 0
+fi
 
 # --- Download the newest build when it is not installed ---
 curl -fsSL --proto '=https' -o "$WORK/feed.xml" "$FEED"
@@ -155,79 +238,12 @@ if [ -L "$HOME/.local/bin/rex" ] || [ ! -e "$HOME/.local/bin/rex" ]; then
 else
     echo "Leaving $HOME/.local/bin/rex alone: it is not a link." >&2
 fi
+[ "$STEP" != download ] || exit 0
 
 # --- LaunchDaemon ---
-USER_SHELL="$(dscl . -read "/Users/$SERVER_USER" UserShell | awk '{ print $2 }')"
 mkdir -p "$(dirname "$LOG")"
-
-PLIST_TMP="$WORK/$LABEL.plist"
-cat > "$PLIST_TMP" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$LABEL</string>
-
-    <key>UserName</key>
-    <string>$SERVER_USER</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>$REX</string>
-        <string>server</string>
-        <string>run</string>
-    </array>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>HOME</key>
-        <string>$HOME</string>
-        <key>USER</key>
-        <string>$SERVER_USER</string>
-        <key>LOGNAME</key>
-        <string>$SERVER_USER</string>
-        <key>SHELL</key>
-        <string>$USER_SHELL</string>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <key>LANG</key>
-        <string>en_US.UTF-8</string>
-    </dict>
-
-    <key>WorkingDirectory</key>
-    <string>$HOME</string>
-
-    <key>StandardOutPath</key>
-    <string>$LOG</string>
-    <key>StandardErrorPath</key>
-    <string>$LOG</string>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>
-PLIST
-
-plutil -lint "$PLIST_TMP" >/dev/null
-
-# Install the daemon when it is missing or its settings changed, which asks
-# for a password; restart it when it runs another build than the one
-# installed, which /etc/sudoers.d/dots allows without one.
-ACTION=none
-if ! launchctl print "$SERVICE" >/dev/null 2>&1; then
-    ACTION=install
-elif ! cmp -s "$PLIST_TMP" "$PLIST_DEST"; then
-    ACTION=install
-else
-    running="$(server_status | status_field version)"
-    if [ "$running" != "$("$REX" version | awk 'NR == 1 { print $2 }')" ]; then
-        ACTION=restart
-    fi
-fi
+write_plist
+ACTION="$(daemon_action)"
 
 WORKLOADS=0
 if [ "$ACTION" != none ] && launchctl print "$SERVICE" >/dev/null 2>&1; then

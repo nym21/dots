@@ -18,13 +18,14 @@ set -euo pipefail
 #   fleet auto                 fleet update, hourly, when this Mac can
 #
 # A tunnel never serves two versions, and loses no server but to a restart.
-# An update pins one version per mode for the whole run, then builds it on
-# every server at once while all serve, and only then restarts them, in turn.
-# The servers that share a tunnel restart together: each leaves the shared
-# tunnels while it restarts, the others still serving them, and the restarted
-# ones take them back before the last one leaves. Servers not in prod go
-# first, so a bad version shows there before prod, and each must serve again
-# before the next.
+# An update pins one version per mode for the whole run, then readies every
+# server at once while all serve, building it and updating everything else,
+# and only then, in turn, restarts on each what runs an older build, for the
+# seconds that takes, with Cloudflare's alerts silenced just then. The servers
+# that share a tunnel restart together: each leaves the shared tunnels while it
+# restarts, the others still serving them, and the restarted ones take them
+# back before the last one leaves. Servers not in prod go first, so a bad
+# version shows there before prod, and each must serve again before the next.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
@@ -32,6 +33,8 @@ TUNNELS="$PC_DIR/.tunnels"
 # The servers' ship, its ~ expanded there, by their shell.
 # shellcheck disable=SC2088
 SHIP='~/Developer/dots/shared/ship'
+# shellcheck disable=SC2088
+MACOS_UPDATE='~/Developer/dots/shared/macos-update.sh'
 server_user=mini
 tssh="$(command -v tssh)"
 # How long a server may take to serve again, a macOS upgrade included.
@@ -161,8 +164,8 @@ wait_serving() {
             echo "$server does not serve again after $((ready_timeout / 60)) minutes; stopping here." >&2
             exit 1
         fi
-        sleep 15
-        waited=$((waited + 15))
+        sleep 2
+        waited=$((waited + 2))
     done
     echo "$server: $(on "$server" "$SHIP status")"
 }
@@ -187,7 +190,7 @@ detach() {
 follow_job() {
     local server="$1" shown=0 lines status=''
     while [ -z "$status" ]; do
-        sleep 5
+        sleep 2
         lines="$(on "$server" "tail -n +$((shown + 1)) ~/Library/Logs/dots/fleet.log" 2>/dev/null)" || continue
         status="$(on "$server" "bash -c 'cat ~/Library/Logs/dots/fleet.status 2>/dev/null ||
             kill -0 \$(cat ~/Library/Logs/dots/fleet.pid) 2>/dev/null || echo gone'" 2>/dev/null)" || status=''
@@ -209,7 +212,7 @@ follow_job() {
 
 # Silence Cloudflare's tunnel alerts while fleet restarts a server on purpose,
 # so that an alert email means something went wrong. Cloudflare silences a
-# whole policy, not one tunnel, so a silence lasts only while one server
+# whole policy, not one tunnel, so a silence lasts only the seconds one server
 # restarts, an hour at most, lifted once it serves again. Nested calls share
 # the outer silence. Failing to silence costs only the emails.
 quiet_depth=0
@@ -243,23 +246,29 @@ lift() {
     silences=''
 }
 
-# Give SERVER the tokens of TUNNEL..., only those, and when that changes
-# them, restart its tunnels on them and wait until it serves again.
-give_tunnels() {
+# Give SERVER the tokens of TUNNEL..., only those, failing when it has them
+# already. Its tunnels run on the ones they started on until they restart.
+set_tokens() {
     local server="$1" tokens tunnel
     shift
     tokens="$(for tunnel; do awk -v name="$tunnel" '$1 == name { print $1, $2 }' "$TUNNELS"; done)"
     if [ "$(on "$server" 'shasum ~/Developer/dots/server/.tokens 2>/dev/null' | cut -d ' ' -f 1)" = \
         "$(printf '%s\n' "$tokens" | shasum | cut -d ' ' -f 1)" ]; then
-        return 0
+        return 1
     fi
     echo "$server: serving tunnels ${*:-none}"
-    quiet
     printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
         'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
-    detach "$server" "$SHIP stop tunnels && $SHIP start"
-    follow_job "$server"
-    wait_serving "$server"
+}
+
+# Give SERVER the tokens of TUNNEL..., only those, and when that changes
+# them, restart its tunnels on them and wait until it serves again.
+give_tunnels() {
+    set_tokens "$@" || return 0
+    quiet
+    detach "$1" "$SHIP stop tunnels && $SHIP start"
+    follow_job "$1"
+    wait_serving "$1"
     unquiet
 }
 
@@ -284,8 +293,9 @@ resolve() {
 
 # Ready SERVER... at once, while each still serves: give each its mode and
 # the run's versions, in local mode its copy of ~/Developer/mono, and run ship
-# fetch there, which builds them and downloads a macOS update, restarting
-# nothing. A server that fails stops the run before any restarts.
+# fetch there, which builds them, updates Homebrew, Rust, and Rex, and
+# downloads a macOS update, restarting nothing. A server that fails stops the
+# run before any restarts.
 fetch() {
     local server mode pins note pids=() i failed=0
     echo "== Building on $* at once, while they serve..."
@@ -322,9 +332,14 @@ fetch() {
 }
 
 # Update SERVER, which fetch readied, without the tunnels HELD while others
-# still serve them.
+# still serve them: give it its tokens, then have ship apply restart what runs
+# an older build than fetch installed, and the tunnels on their new tokens, at
+# once. Cloudflare's alerts are silenced only when that takes something down,
+# for those seconds; with nothing new, nothing stops. It is a job of the
+# server's own, which finishes there whatever happens to this Mac or the
+# connection, which a Tailscale update ends.
 update_server() {
-    local server="$1" held="$2" mode tunnel give='' pins
+    local server="$1" held="$2" mode tunnel give='' pins pending
     read -r _ mode _ < <(entries "$server")
     for tunnel in $(tunnels_of "$server"); do
         case " $held " in
@@ -334,26 +349,30 @@ update_server() {
     done
     pins="$(cat "$work/pins.$mode")"
     echo "== $server: $mode${pins:+ ${pins%% *}}"
-    quiet
     # shellcheck disable=SC2086
-    give_tunnels "$server" $give
+    set_tokens "$server" $give || true
+    pending="$(on "$server" "$SHIP apply --pending")"
+    if [ -n "$pending" ]; then
+        echo "$server: restarting $pending"
+        quiet
+    fi
+    detach "$server" "$SHIP apply"
+    follow_job "$server" || echo "$server: ship apply failed; see above." >&2
+    wait_serving "$server"
+    [ -z "$pending" ] || unquiet
 
-    # From a terminal, ship update runs in it, to ask for macOS's password, and
-    # its connection ends early when it restarts Tailscale or the Mac. Without
-    # one, as fleet auto runs, it is a job of the server's own, which installs
-    # no macOS. Either way, whether the server serves again is what counts.
-    if [ -t 0 ]; then
-        "$tssh" -t "$server_user@$server" "$SHIP update" || true
+    # A macOS update that fetch downloaded installs from a terminal only, as it
+    # asks for the password, and restarts the server.
+    if [ -t 0 ] && grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server"; then
+        quiet
+        "$tssh" -t "$server_user@$server" "$MACOS_UPDATE" || true
         until on "$server" true 2>/dev/null; do
             sleep 15
         done
-    else
-        detach "$server" "$SHIP update"
-        follow_job "$server" || echo "$server: ship update failed; see above." >&2
+        echo "$server: waiting until it serves again..."
+        wait_serving "$server"
+        unquiet
     fi
-    echo "$server: waiting until it serves again..."
-    wait_serving "$server"
-    unquiet
 }
 
 # Whether SERVER already runs PINS, bitviewd's and bitview_mcp's, as the

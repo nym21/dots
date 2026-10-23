@@ -8,42 +8,92 @@ set -euo pipefail
 # running mini alone. fleet passes the versions to pin, bitviewd's and
 # bitview_mcp's, so servers sharing a tunnel run the same one; without, it
 # takes the newest. The first run asks for sudo, to have them start at boot.
+# The tunnels restart too when they run an older cloudflared than the one
+# installed, or other tokens than fleet gave.
+#
 # With --build, it only installs them, restarting nothing, as ship fetch does
-# while the mini serves.
+# while the mini serves; with --restart, it only restarts and starts, as ship
+# apply does after; with --pending, it names what --restart would restart.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-build_only=0
-if [ "${1:-}" = --build ]; then
-    build_only=1
-    shift
-fi
-if [ "$#" -gt 3 ]; then
+usage() {
     echo "Usage: $0 [--build] [prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
+    echo "       $0 --restart | --pending" >&2
     exit 1
-fi
+}
+
+step=all
+case "${1:-}" in
+    --build | --restart | --pending)
+        step="${1#--}"
+        shift
+        ;;
+esac
+[ "$#" -le 3 ] || usage
+[ "$step" = all ] || [ "$step" = build ] || [ "$#" -eq 0 ] || usage
 
 source "$SERVER_DIR/crate.sh"
 
-if [ "$#" -gt 0 ]; then
-    mode="$1" pin="${2:-}" mcp_pin="${3:-${2:-}}"
-elif [ -r "$MODE_FILE" ]; then
-    read -r mode pin mcp_pin < "$MODE_FILE" || true
-    mcp_pin="${mcp_pin:-$pin}"
-else
-    mode="$(bitview_mode)" pin='' mcp_pin=''
-fi
-if [ -z "${mode:-}" ]; then
-    echo "This mini has no mode yet; give one: prod, next, a branch, or local." >&2
-    exit 1
-fi
+if [ "$step" = all ] || [ "$step" = build ]; then
+    if [ "$#" -gt 0 ]; then
+        mode="$1" pin="${2:-}" mcp_pin="${3:-${2:-}}"
+    elif [ -r "$MODE_FILE" ]; then
+        read -r mode pin mcp_pin < "$MODE_FILE" || true
+        mcp_pin="${mcp_pin:-$pin}"
+    else
+        mode="$(bitview_mode)" pin='' mcp_pin=''
+    fi
+    if [ -z "${mode:-}" ]; then
+        echo "This mini has no mode yet; give one: prod, next, a branch, or local." >&2
+        exit 1
+    fi
 
-rustup update
-install_crate bitviewd "$mode" "$pin"
-install_crate bitview_mcp "$mode" "$mcp_pin"
-mkdir -p "$(dirname "$MODE_FILE")"
-echo "$mode${pin:+ $pin}${pin:+ $mcp_pin}" > "$MODE_FILE"
-[ "$build_only" -eq 0 ] || exit 0
+    rustup update
+    install_crate bitviewd "$mode" "$pin"
+    install_crate bitview_mcp "$mode" "$mcp_pin"
+    mkdir -p "$(dirname "$MODE_FILE")"
+    echo "$mode${pin:+ $pin}${pin:+ $mcp_pin}" > "$MODE_FILE"
+fi
+[ "$step" != build ] || exit 0
+
+# Whether CRATE's binary runs, but not the build installed: another version,
+# or commit of a branch, which a rebuild of the same one, as cargo does after a
+# Rust update, keeps; or one unrecorded, started before records were.
+stale() {
+    pgrep -x "$1" >/dev/null && [ "$(installed "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
+}
+
+# Whether the tunnels run on other tokens than fleet gave, as their supervisor
+# recorded at their start, or a cloudflared other than the one installed.
+tunnels_stale() {
+    local pid current
+    pgrep -f server/tunnels.sh >/dev/null || return 1
+    [ "$(tokens_digest)" = "$(cat "$RUNNING_DIR/tunnels" 2>/dev/null)" ] || return 0
+    current="$(readlink -f "$(command -v cloudflared)")"
+    for pid in $(pgrep -x cloudflared); do
+        [ "$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)" = "$current" ] || return 0
+    done
+    return 1
+}
+
+# The tunnels stop before a server restarts, so no traffic reaches it
+# meanwhile.
+restart=''
+if stale bitviewd; then
+    restart="$restart tunnels bitviewd"
+fi
+if stale bitview_mcp; then
+    restart="$restart tunnels mcp"
+fi
+if tunnels_stale; then
+    restart="$restart tunnels"
+fi
+if [ "$step" = pending ]; then
+    # shellcheck disable=SC2086
+    [ -z "$restart" ] || printf '%s\n' $restart | sort -u | paste -s -d ' ' -
+    exit 0
+fi
 
 # The Rex server comes back at boot on its own, the workloads with this daemon.
 # It is only installed, for the next boot: loading it now would start them
@@ -92,22 +142,6 @@ if ! cmp -s "$plist" "$BOOT_PLIST"; then
     sudo launchctl enable system/com.local.workloads
 fi
 
-# Whether CRATE's binary runs, but not the build installed: another version,
-# or commit of a branch, which a rebuild of the same one, as cargo does after a
-# Rust update, keeps; or one unrecorded, started before records were.
-stale() {
-    pgrep -x "$1" >/dev/null && [ "$(installed "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
-}
-
-# The tunnels stop before a server restarts, so no traffic reaches it
-# meanwhile.
-restart=''
-if stale bitviewd; then
-    restart="$restart tunnels bitviewd"
-fi
-if stale bitview_mcp; then
-    restart="$restart tunnels mcp"
-fi
 if [ -n "$restart" ]; then
     # shellcheck disable=SC2086
     "$SERVER_DIR/workloads.sh" stop $restart

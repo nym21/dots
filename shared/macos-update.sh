@@ -5,8 +5,9 @@ set -euo pipefail
 # step of ship update. It downloads while everything keeps running, then gives
 # 30 seconds to cancel before stopping a server's workloads cleanly, which
 # come back at boot. With macOS current, it installs the other updates, such
-# as Safari or the Command Line Tools, the newest of each. With --download, it
-# only downloads a macOS update, for ship fetch.
+# as Safari or the Command Line Tools, the newest of each. With --download, for
+# ship fetch, it restarts nothing: it installs those, or downloads a macOS
+# update.
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 download=0
@@ -53,9 +54,24 @@ newest() {
     awk -F '|' -v product="$1" '$1 == product { line = $0 } END { if (line) print line }' <<< "$UPDATES"
 }
 
+# Install the newest of each product but macOS, which restarts nothing, with
+# sudo's OPTIONS.
+install_others() {
+    local product version label
+    while IFS= read -r product; do
+        IFS='|' read -r _ version label <<< "$(newest "$product")"
+        echo "Installing $product $version..."
+        sudo "$@" softwareupdate --install "$label" --agree-to-license </dev/null
+    done < <(cut -d '|' -f 1 <<< "$UPDATES" | sort -u)
+}
+
 macos="$(newest macOS)"
 if [ "$download" -eq 1 ]; then
-    [ -n "$macos" ] || exit 0
+    if [ -z "$macos" ]; then
+        # Without a password, which /etc/sudoers.d/dots allows for softwareupdate.
+        install_others -n || echo "Could not install them without a password; ship update will."
+        exit 0
+    fi
     IFS='|' read -r _ version label <<< "$macos"
     echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
     # Without a password, which /etc/sudoers.d/dots allows for softwareupdate.
@@ -69,12 +85,7 @@ fi
 # Asks for the password only if a rule is missing, then needs none.
 "$DOTS_DIR/shared/sudoers.sh"
 if [ -z "$macos" ]; then
-    # Without a macOS update, install the newest of each other product.
-    while IFS= read -r product; do
-        IFS='|' read -r _ version label <<< "$(newest "$product")"
-        echo "Installing $product $version..."
-        sudo softwareupdate --install "$label" --agree-to-license </dev/null
-    done < <(cut -d '|' -f 1 <<< "$UPDATES" | sort -u)
+    install_others
     exit 0
 fi
 

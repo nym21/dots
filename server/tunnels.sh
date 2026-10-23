@@ -58,11 +58,12 @@ ready() {
         curl -sf -m 5 -o /dev/null http://127.0.0.1:3111/ &&
         at_tip
 }
+# Checked every second, so a restart is over as soon as Bitview serves.
 wait_ready() {
     if ! ready; then
         echo "Waiting for Bitview to reach the tip and both servers to answer..."
         until ready; do
-            sleep 10
+            sleep 1
         done
     fi
 }
