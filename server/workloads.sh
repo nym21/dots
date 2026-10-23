@@ -162,12 +162,16 @@ session_exists() {
 }
 
 # Run COMMAND in the block LABEL, in a window named LABEL too, which the Rex
-# app lists, replacing the one a previous run left with its last output.
+# app lists, replacing every one a previous run left with its last output, by
+# ID: closing by label fails once two share it, and each run would add one.
 run_block() {
     local label="$1" block window
     shift
     if session_exists; then
-        rex block close -s "$SESSION" "$label" >/dev/null 2>&1 || true
+        for block in $(rex block ls -s "$SESSION" --json |
+            jq -r --arg label "$label" '.blocks[] | select(.label == $label) | .block_id'); do
+            rex block close -s "$SESSION" "$block" >/dev/null 2>&1 || true
+        done
         window="$(rex run -s "$SESSION" --label "$label" --keep-open --focus=false -c "$HOME" --json \
             -- "$@" | jq -r .window_id)"
         rex window rename -s "$SESSION" "$window" "$label" >/dev/null
