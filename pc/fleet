@@ -26,6 +26,10 @@ set -euo pipefail
 # restarts, the others still serving them, and the restarted ones take them
 # back before the last one leaves. Servers not in prod go first, so a bad
 # version shows there before prod, and each must serve again before the next.
+# Each group gets ready on its own: one that cannot, as when its servers fail
+# to build, is left as it is while the others update, and the run ends
+# failing. A server that fails to restart stops the run, as the next could
+# fail the same way.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
@@ -251,8 +255,14 @@ resolve() {
     local commit
     case "$1" in
         prod)
+            # The newest release out for 10 minutes, by when crates.io's index
+            # has it everywhere: cargo may not find one just published.
             for crate in bitviewd bitview_mcp; do
-                curl -s -m 10 -A fleet "https://crates.io/api/v1/crates/$crate" | jq -er '.crate.max_stable_version'
+                curl -s -m 10 -A fleet "https://crates.io/api/v1/crates/$crate/versions?per_page=50" |
+                    jq -er --arg before "$(date -u -v-10M +%Y-%m-%dT%H:%M:%S)" '
+                        [.versions[] | select((.yanked | not) and (.num | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                            and .created_at[0:19] < $before)]
+                        | max_by(.num | split(".") | map(tonumber)) | .num' || exit 1
             done | paste -s -d ' ' -
             ;;
         local) ;;
@@ -266,11 +276,12 @@ resolve() {
 # Ready SERVER... at once, while each still serves: give each its mode and
 # the run's versions, in local mode its copy of ~/Developer/mono, and run ship
 # fetch there, which builds them, updates Homebrew, Rust, and Rex, and
-# downloads a macOS update, restarting nothing. A server that fails stops the
-# run before any restarts.
+# downloads a macOS update, restarting nothing. It is a job of each server's
+# own, which finishes there whatever happens to this Mac or the connection, as
+# when it sleeps. The servers that fail are listed in $work/unready.
 fetch() {
-    local server mode pins note pids=() i failed=0
-    echo "== Building on $* at once, while they serve..."
+    local server mode pins note pids=() i
+    echo "== Readying $* at once, while they serve..."
     for server; do
         read -r _ mode _ < <(entries "$server")
         pins="$(cat "$work/pins.$mode")"
@@ -281,7 +292,8 @@ fetch() {
                     rsync -a --delete --exclude /target/ -e "$tssh -T" \
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
                 fi &&
-                on "$server" "nice -n 10 $SHIP fetch"
+                detach "$server" "nice -n 10 $SHIP fetch" &&
+                follow_job "$server"
         } >"$work/fetch.$server" 2>&1 &
         pids+=("$!")
     done
@@ -289,18 +301,14 @@ fetch() {
     for server; do
         if wait "${pids[$i]}"; then
             note="$(grep -E '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server" | tail -1 || true)"
-            echo "$server: built${note:+; $note}"
+            echo "$server: ready${note:+; $note}"
         else
-            echo "$server: failed to build:" >&2
+            echo "$server: failed to get ready:" >&2
             tail -n 20 "$work/fetch.$server" | sed 's/^/  /' >&2
-            failed=1
+            echo "$server" >> "$work/unready"
         fi
         i=$((i + 1))
     done
-    if [ "$failed" -eq 1 ]; then
-        echo "Stopping before any server restarts." >&2
-        exit 1
-    fi
 }
 
 # Update SERVER, which fetch readied, without the tunnels HELD while others
@@ -323,8 +331,17 @@ update_server() {
     # shellcheck disable=SC2086
     set_tokens "$server" $give || true
     detach "$server" "$SHIP apply"
-    follow_job "$server" || echo "$server: ship apply failed; see above." >&2
+    if ! follow_job "$server"; then
+        echo "$server: ship apply failed; see above. Stopping here, before a shared tunnel serves two versions." >&2
+        exit 1
+    fi
     wait_serving "$server"
+    # Serving is not enough: it must run the run's versions, or the next servers
+    # would join it on a shared tunnel with another.
+    if [ -n "$pins" ] && ! at_pins "$server" "$pins"; then
+        echo "$server serves, but not ${pins%% *}; stopping here." >&2
+        exit 1
+    fi
 
     # A macOS update that fetch downloaded installs from a terminal only, as it
     # asks for the password, and restarts the server.
@@ -437,6 +454,7 @@ update_group() {
     # A rerun finds the group at its versions and would not purge again.
     if [ -n "$changed" ] && ! purge "$@"; then
         echo "Could not purge their cache; run fleet purge $*" >&2
+        incomplete=1
     fi
 }
 
@@ -458,8 +476,15 @@ lock() {
     trap 'rm -rf "$LOCK"' EXIT
 }
 
+# Leave GROUP as it is, for REASON, and have the run end failing.
+incomplete=''
+leave() {
+    echo "$2; leaving $1 alone." >&2
+    incomplete=1
+}
+
 update() {
-    local server mode tunnels tunnel group
+    local server mode tunnels tunnel group down servers='' kept=''
     lock
     if ! awk '!/^#/ && NF >= 2 {
             for (i = 3; i <= NF; i++) {
@@ -491,17 +516,54 @@ update() {
     for mode in $(entries | awk '{ print $2 }' | sort -u); do
         if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
             echo "Could not find the newest version of $mode." >&2
-            exit 1
+            rm -f "$work/pins.$mode"
         fi
     done
-    # shellcheck disable=SC2046
-    fetch $(groups "$@")
+    while read -r group; do
+        read -r _ mode _ < <(entries "${group%% *}")
+        if [ ! -e "$work/pins.$mode" ]; then
+            leave "$group" "$mode has no version to install"
+            continue
+        fi
+        # fleet auto leaves alone a group of which a server does not serve, as
+        # one stopped on purpose or after a crash, to be looked at; fleet update
+        # by hand starts with those, which costs no service.
+        if [ -n "${FLEET_AUTO:-}" ]; then
+            down=''
+            for server in $group; do
+                serving "$server" || down="$down $server"
+            done
+            if [ -n "$down" ]; then
+                leave "$group" "${down# } does not serve, which ship status there explains"
+                continue
+            fi
+        fi
+        kept="$kept$group"$'\n'
+        servers="$servers $group"
+    done < <(groups "$@")
+    if [ -n "$servers" ]; then
+        # shellcheck disable=SC2086
+        fetch $servers
+    fi
     # On another descriptor, as ssh reads its input: the update's own needs
     # the terminal, for a password.
     while read -r group <&3; do
+        [ -n "$group" ] || continue
+        down=''
+        for server in $group; do
+            ! grep -qx "$server" "$work/unready" 2>/dev/null || down="$down $server"
+        done
+        if [ -n "$down" ]; then
+            leave "$group" "${down# } did not get ready"
+            continue
+        fi
         # shellcheck disable=SC2086
         update_group $group
-    done 3< <(groups "$@")
+    done 3<<< "$kept"
+    if [ -n "$incomplete" ]; then
+        echo "Not everything was updated; see above." >&2
+        exit 1
+    fi
 }
 
 restart() {
@@ -524,7 +586,7 @@ restart() {
 }
 
 status() {
-    local work server mode tunnels line tunnel versions newest behind version
+    local work server mode tunnels line tunnel versions newest behind version waiting
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' RETURN
     while read -r server _; do
@@ -545,6 +607,10 @@ status() {
             *" $server "*) ;;
             *) printf '%-6s has no tunnel of its own; run fleet tunnels %s\n' '' "$server" ;;
         esac
+        waiting="$(sed -nE 's/.*, macOS [^ ]+ \(([^ ]+) downloaded\).*/\1/p' <<< "$line")"
+        if [ -n "$waiting" ]; then
+            printf '%-6s has macOS %s downloaded; run fleet update in a terminal to install it\n' '' "$waiting"
+        fi
     done < <(entries "$@")
     check_names "$@" || true
     for tunnel in $(shared "$@"); do
@@ -678,13 +744,33 @@ tunnels() {
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
 # the servers the newest release or commit of their mode, and Homebrew, Rust,
 # Rex, cloudflared, and macOS's downloads; a run with nothing new restarts
-# nothing. Only on power and with a server in reach, so a closed or
-# travelling Mac skips its hours, and the next one it is open for catches up.
-# It keeps the Mac awake meanwhile, logs why it skips an hour, and notifies
-# once when runs start failing; ship status says when none succeeded for over
-# 3 days.
+# nothing. Only on power, with this Mac's dots as pushed, since the servers
+# pull it, and with a server in reach, so a closed or travelling Mac skips its
+# hours, and the next one it is open for catches up. It keeps the Mac awake
+# meanwhile, logs why it skips an hour, and notifies once when runs start
+# failing, or none has run for a day; ship status says when none succeeded for
+# over 3 days.
+AUTO_DIR="$HOME/Library/Application Support/dots"
+
+# Notify with TITLE, once until a run succeeds again.
+alert() {
+    [ ! -e "$AUTO_DIR/fleet-auto-failed" ] || return 0
+    mkdir -p "$AUTO_DIR"
+    touch "$AUTO_DIR/fleet-auto-failed"
+    osascript -e "display notification \"See ~/Library/Logs/fleet-auto.log.\" with title \"$1\"" || true
+}
+
+# Skip this hour for REASON, and notify once no run has succeeded for a day.
+overdue() {
+    echo "$(date '+%Y-%m-%d %H:%M') skipped: $1"
+    if [ $(($(date +%s) - $(cat "$AUTO_DIR/fleet-auto" 2>/dev/null || echo 0))) -ge 86400 ]; then
+        alert "fleet update has not run for a day"
+    fi
+}
+
 auto() {
-    local dir="$HOME/Library/Application Support/dots" log="$HOME/Library/Logs/fleet-auto.log" first status=0
+    local log="$HOME/Library/Logs/fleet-auto.log" dots first status=0
+    dots="$(dirname "$PC_DIR")"
     # Its log keeps the last 5 to 10 MB.
     if [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
         tail -c 5242880 "$log" > "$log.new" && mv "$log.new" "$log"
@@ -693,25 +779,27 @@ auto() {
         echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"
         return 0
     fi
+    if [ -n "$(git -C "$dots" status --porcelain)" ] ||
+        [ "$(git -C "$dots" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" -gt 0 ]; then
+        overdue "dots has changes that are not pushed"
+        return 0
+    fi
     first="$(entries | awk '{ print $1; exit }')"
     if ! on "$first" true 2>/dev/null; then
-        echo "$(date '+%Y-%m-%d %H:%M') skipped: $first does not answer"
+        overdue "$first does not answer"
         return 0
     fi
     echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
-    caffeinate -i "$0" update </dev/null || status=$?
-    mkdir -p "$dir"
+    FLEET_AUTO=1 caffeinate -i "$0" update </dev/null || status=$?
     case "$status" in
         0)
-            date +%s > "$dir/fleet-auto"
-            rm -f "$dir/fleet-auto-failed"
+            mkdir -p "$AUTO_DIR"
+            date +%s > "$AUTO_DIR/fleet-auto"
+            rm -f "$AUTO_DIR/fleet-auto-failed"
             ;;
         3) ;;
         *)
-            if [ ! -e "$dir/fleet-auto-failed" ]; then
-                touch "$dir/fleet-auto-failed"
-                osascript -e 'display notification "See ~/Library/Logs/fleet-auto.log." with title "fleet update failed"' || true
-            fi
+            alert "fleet update failed"
             return 1
             ;;
     esac

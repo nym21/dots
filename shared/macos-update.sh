@@ -10,6 +10,9 @@ set -euo pipefail
 # update.
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# The macOS update --download readied, which a terminal must install, as it
+# asks for the password; ship status shows it until then.
+WAITING="$HOME/.config/dots/macos-downloaded"
 download=0
 case "$*" in
     '') ;;
@@ -68,11 +71,14 @@ install_others() {
 macos="$(newest macOS)"
 if [ "$download" -eq 1 ]; then
     if [ -z "$macos" ]; then
+        rm -f "$WAITING"
         # Without a password, which /etc/sudoers.d/dots allows for softwareupdate.
         install_others -n || echo "Could not install them without a password; ship update will."
         exit 0
     fi
     IFS='|' read -r _ version label <<< "$macos"
+    mkdir -p "$(dirname "$WAITING")"
+    echo "$version" > "$WAITING"
     echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
     # Without a password, which /etc/sudoers.d/dots allows for softwareupdate.
     if sudo -n softwareupdate --download "$label" </dev/null; then

@@ -166,13 +166,18 @@ newest version of their mode:
 
 1. It pins one version per mode for the whole run, the newest crates.io release
    in prod and the branch's current commit otherwise, so servers in the same
-   mode end on the same version even when the branch moves meanwhile.
+   mode end on the same version even when the branch moves meanwhile. A
+   release counts once it has been out 10 minutes, as crates.io's index can
+   lag behind a publish.
 2. It readies every server at once, while all keep serving: it writes each
    one's mode and the run's versions, in local mode copies `~/Developer/mono`
    to it, and runs `ship fetch` there at a low priority, which does all of
    `ship update` that restarts nothing: Homebrew, Rust, Cargo, Rex's newest
    build, Bitview and the MCP server, the cleanup, Apple's other updates, and
-   macOS's download. A server that fails stops the run before any restarts.
+   macOS's download. Each is a job of the server's own, which finishes however
+   this Mac or the connection fares. A group whose version cannot be found or
+   whose servers fail to get ready is left as it is while the others update,
+   and the run ends failing.
 3. Then it updates them in turn, those sharing a tunnel together, so a tunnel
    never serves two versions: each leaves the shared tunnels while it updates,
    the others still serving them, and the updated ones take them back before
@@ -180,9 +185,10 @@ newest version of their mode:
    than leaving the tunnel without a server.
 4. For each server it gives it its tunnels and runs `ship apply` there, which
    restarts only what runs another build than the one installed: the Rex
-   server, Bitview and the MCP server, and the tunnels, for a new cloudflared
-   or the tokens just given. Then it waits until the server serves again:
-   workloads running, tunnels connected, and Bitview at the tip. A Bitview
+   server, Bitview and the MCP server, the tunnels, for a new cloudflared or
+   the tokens just given, and the whole node for a new Bitcoin Core. Then it
+   waits until the server serves again, workloads running, tunnels connected,
+   and Bitview at the tip, and checks it runs the run's versions. A Bitview
    restart takes about 10 seconds, its load, or as long as it recomputes what
    a new version changed, and a run with nothing new stops nothing.
 5. Once servers sharing tunnels all run a new version, it purges Cloudflare's
@@ -195,10 +201,13 @@ server at a time, so prod never loses two at once. Within a group, the order is
 decided when the run starts: servers that do not serve go first, as updating
 them costs no service, and before taking down a server that serves, `fleet`
 checks that the others of its group serve, stopping otherwise, so it never
-leaves a shared tunnel without a server it found serving. It stops if a server does
-not serve again within 12 hours, or at once when a workload of the server
-crashed, as it stays down until looked at. Selecting a server selects every server it
-shares a tunnel with, and `fleet.conf` may not give a shared tunnel two modes.
+leaves a shared tunnel without a server it found serving. It stops if
+`ship apply` fails, if a server does not serve again within 12 hours, or at once
+when a workload of the server crashed, as it stays down until looked at, and if
+it serves another version than the run's: the later servers, prod among them,
+could fail the same way, and a shared tunnel would serve two versions.
+Selecting a server selects every server it shares a tunnel with, and
+`fleet.conf` may not give a shared tunnel two modes.
 
 Whatever moment it stops at, as when this Mac sleeps, every shared tunnel keeps
 a server, as a server takes a tunnel back before another leaves it. A step that
@@ -209,22 +218,27 @@ terminal, a macOS update that `ship fetch` downloaded then installs in it, to
 ask for the password, and restarts the server; without one, it waits.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
-hourly, runs `fleet update` without a terminal, when this Mac is on power and a
+hourly, runs `fleet update` without a terminal, when this Mac is on power, its
+dots has no change left to push, as the servers pull dots from GitHub, and a
 server answers. That one check brings the servers a new crates.io release or
 `next` commit within the hour, prod included, and Homebrew, Rust, Rex,
-cloudflared, and macOS's downloads; a run with nothing new restarts nothing. A
-closed or travelling Mac skips its hours, and the next one it is open for
-catches up. One `fleet update` or `fleet restart` runs at a time: another stops
-at once, and an hourly run skips its turn. It keeps the Mac awake meanwhile,
-logs to `~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and
-notifies when runs start failing; `ship status` says when none succeeded for
-over 3 days.
+cloudflared, Bitcoin Core, and macOS's downloads; a run with nothing new
+restarts nothing. A closed or travelling Mac skips its hours, and the next one
+it is open for catches up. It leaves alone a group of which a server does not
+serve, as one stopped on purpose or after a crash, to be looked at, while the
+other groups update; `fleet update` by hand starts with those servers instead.
+One `fleet update` or `fleet restart` runs at a time: another stops at once,
+and an hourly run skips its turn. It keeps the Mac awake meanwhile, logs to
+`~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and notifies once
+when runs start failing, or when none has run for a day; `ship status` says
+when none succeeded for over 3 days.
 
 ### Status and alerts
 
 `fleet status` prints a line per server and flags a server that differs from
-`fleet.conf`, a tunnel that serves more than one version, and a mode with a
-newer version than its servers have, when an update is due.
+`fleet.conf`, a tunnel that serves more than one version, a mode with a newer
+version than its servers have, when an update is due, and a macOS update that
+waits for `fleet update` in a terminal to install it.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, and each
 server's own tunnel says which server: a deliberate restart, a crash, a server

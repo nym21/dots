@@ -9,7 +9,9 @@ set -euo pipefail
 # bitview_mcp's, so servers sharing a tunnel run the same one; without, it
 # takes the newest. The first run asks for sudo, to have them start at boot.
 # The tunnels restart too when they run an older cloudflared than the one
-# installed, or other tokens than fleet gave.
+# installed, or other tokens than fleet gave, and the whole node when Bitcoin
+# Core runs an older binary than the one Homebrew installed, so its upgrades
+# take effect in fleet's order rather than at the next reboot.
 #
 # With --build, it only installs them, restarting nothing, as ship fetch does
 # while the mini serves; with --restart, it only restarts and starts, as ship
@@ -64,17 +66,23 @@ stale() {
     pgrep -x "$1" >/dev/null && [ "$(installed "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
 }
 
-# Whether the tunnels run on other tokens than fleet gave, as their supervisor
-# recorded at their start, or a cloudflared other than the one installed.
-tunnels_stale() {
+# Whether NAME runs from another binary than the one installed, as after
+# Homebrew upgraded it: a running process keeps the binary it started from.
+binary_stale() {
     local pid current
-    pgrep -f server/tunnels.sh >/dev/null || return 1
-    [ "$(tokens_digest)" = "$(cat "$RUNNING_DIR/tunnels" 2>/dev/null)" ] || return 0
-    current="$(readlink -f "$(command -v cloudflared)")"
-    for pid in $(pgrep -x cloudflared); do
+    current="$(readlink -f "$(command -v "$1")")"
+    for pid in $(pgrep -x "$1"); do
         [ "$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)" = "$current" ] || return 0
     done
     return 1
+}
+
+# Whether the tunnels run on other tokens than fleet gave, as their supervisor
+# recorded at their start, or an older cloudflared than the one installed.
+tunnels_stale() {
+    pgrep -f server/tunnels.sh >/dev/null || return 1
+    [ "$(tokens_digest)" = "$(cat "$RUNNING_DIR/tunnels" 2>/dev/null)" ] || return 0
+    binary_stale cloudflared
 }
 
 # The tunnels stop before a server restarts, so no traffic reaches it
@@ -88,6 +96,10 @@ if stale bitview_mcp; then
 fi
 if tunnels_stale; then
     restart="$restart tunnels"
+fi
+# Everything else needs Bitcoin Core, so it all stops with it.
+if binary_stale bitcoind; then
+    restart="$restart tunnels mcp bitviewd bitcoind"
 fi
 
 # The Rex server comes back at boot on its own, the workloads with this daemon.

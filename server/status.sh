@@ -76,10 +76,14 @@ crashed=''
 if [ -n "$crashes" ]; then
     crashed="$(awk 'END { sub(/T/, " ", $1); print NR " this week, last " $2 " at " substr($1, 6, 11) ", status " $NF }' <<< "$crashes")"
 fi
-printf '%s %s, workloads %s/%s%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s, Rex %s, dots %s\n' \
+# A macOS update ship fetch downloaded, which a terminal must install.
+macos="$(sw_vers -productVersion)"
+waiting="$(cat "$HOME/.config/dots/macos-downloaded" 2>/dev/null || true)"
+[ "$waiting" != "$macos" ] || waiting=''
+printf '%s %s, workloads %s/%s%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s%s, Rex %s, dots %s\n' \
     "${mode:-no mode}" "${version:-}" "$workloads" "$expected" "${down:+ (down:$down)}" "${crashed:+, crashes $crashed}" \
     "${names:-none}" "$ready" "$tunnels" \
     "${behind:-?}" "$(df -h /Volumes/External 2>/dev/null | awk 'NR == 2 { print $4 }')" \
-    "$(sw_vers -productVersion)" \
+    "$macos" "${waiting:+ ($waiting downloaded)}" \
     "$(rex --autostart=false server status 2>/dev/null | awk '$1 == "version:" { print $2; exit }')" \
     "$(git -C "$SERVER_DIR/.." log -1 --format=%h)"

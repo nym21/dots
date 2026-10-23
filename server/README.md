@@ -273,7 +273,9 @@ exits, it stops the others and exits, and starts again 10 seconds later,
 logged as a crash. `ship install` and `ship apply` restart them when Bitview
 changes version, when they run an older `cloudflared` than the one installed,
 and when they run on other tokens than `fleet` gave, as each start records
-them in `~/.config/dots/running/tunnels`.
+them in `~/.config/dots/running/tunnels`. They restart the whole node when
+Bitcoin Core runs an older binary than the one Homebrew installed, so its
+upgrades take effect in `fleet`'s order, not at the next reboot.
 
 While serving, `tunnels.sh` checks every minute that Bitview is at the tip. One
 stuck behind it for 10 minutes would serve on what it has, so the mini's own
