@@ -197,7 +197,29 @@ start_one() {
     fi
 }
 
+# One start at a time: after a Rex restart, its boot starts the workloads while
+# ship apply would too, and of each workload started twice, the second fails
+# on the first's data. A later start waits, then finds them running. A start
+# that died leaves its lock to the next.
+START_LOCK="$HOME/Library/Caches/dots/workloads-start.lock"
+lock_start() {
+    local waiting=''
+    mkdir -p "$(dirname "$START_LOCK")"
+    until mkdir "$START_LOCK" 2>/dev/null; do
+        if [ -f "$START_LOCK/pid" ] && ! kill -0 "$(cat "$START_LOCK/pid" 2>/dev/null)" 2>/dev/null; then
+            rm -rf "$START_LOCK"
+            continue
+        fi
+        [ -n "$waiting" ] || echo "Waiting for another start to finish..."
+        waiting=1
+        sleep 1
+    done
+    echo $$ > "$START_LOCK/pid"
+    trap 'rm -rf "$START_LOCK"' EXIT
+}
+
 start() {
+    lock_start
     source "$SERVER_DIR/external.sh"
 
     start_one bitcoind
