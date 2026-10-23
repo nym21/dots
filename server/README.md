@@ -192,6 +192,11 @@ ship stop tunnels bitviewd    # stop some; start brings them back
 | `mcp` | `server/mcp.sh` |
 | `tunnels` | `server/tunnels.sh` |
 
+The MCP server queries the public API of the mini's mode, through Cloudflare's
+cache, so its tools run against the same version of Bitview:
+`https://bitview.space` in prod, `https://next.bitview.space` in next, and the
+mini's own Bitview for a mode without one.
+
 `start` starts Bitcoin Core and waits for its RPC, then starts Bitview, the MCP
 server, and the tunnels, which wait in their block until Bitview reaches the
 tip. It leaves a workload that already runs alone, wherever it runs, and
