@@ -90,7 +90,7 @@ fleet update   # On the workstation: build on every server at once, then update 
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 fleet tunnels  # On the workstation: give each server a tunnel named after it.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
-fleet auto     # Run hourly by a LaunchAgent: fleet update once a day, when it can.
+fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
 ```
 
 `ship update` pulls this repository and runs the version pulled. It installs
@@ -200,13 +200,16 @@ follows its output and, after a lost connection, takes it up again. From a
 terminal, `ship update` runs in it instead, to ask for macOS's password.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
-hourly, runs `fleet update` without a terminal once a day: when the last run is
-over 20 hours old, this Mac is on power, and a server answers. A sleeping or
-travelling Mac runs it later instead, and missed days are fine. It keeps the
-Mac awake meanwhile, logs to `~/Library/Logs/fleet-auto.log`, and notifies when
-a run fails; `ship status` says when none ran for over 3 days. Since it updates
-prod too, a crates.io release reaches the m4s the next run after you publish
-it.
+hourly, runs `fleet update` without a terminal, when this Mac is on power and a
+server answers. That one check brings the servers a new crates.io release or
+`next` commit within the hour, prod included, and Homebrew, Rust, Rex,
+cloudflared, and macOS's downloads; a run with nothing new restarts nothing. A
+closed or travelling Mac skips its hours, and the next one it is open for
+catches up. One `fleet update` or `fleet restart` runs at a time: another stops
+at once, and an hourly run skips its turn. It keeps the Mac awake meanwhile,
+logs to `~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and
+notifies when runs start failing; `ship status` says when none succeeded for
+over 3 days.
 
 ### Status and alerts
 

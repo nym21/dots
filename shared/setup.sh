@@ -180,15 +180,14 @@ missing_steps() {
     done
     last="$(cat "$FLEET_AUTO_STAMP" 2>/dev/null || date +%s)"
     if [ $(($(date +%s) - last)) -gt $((3 * 86400)) ]; then
-        echo "fleet update has not run by itself for over 3 days: leave this Mac on power, with the servers in reach; ~/Library/Logs/fleet-auto.log says why."
+        echo "fleet auto has not completed a fleet update for over 3 days: leave this Mac on power, with the servers in reach; ~/Library/Logs/fleet-auto.log says why."
     fi
 }
 
-# When fleet auto last ran fleet update.
+# When a fleet update that fleet auto ran last succeeded.
 FLEET_AUTO_STAMP="$HOME/Library/Application Support/dots/fleet-auto"
 
-# fleet auto, as a LaunchAgent that runs it hourly; it runs fleet update once a
-# day, when it can.
+# fleet auto, as a LaunchAgent that runs it, and so fleet update, hourly.
 install_fleet_auto() {
     local label=com.local.fleet-auto plist="$HOME/Library/LaunchAgents/com.local.fleet-auto.plist" tmp
     tmp="$(mktemp)"

@@ -15,7 +15,7 @@ set -euo pipefail
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
 #   fleet tunnels [SERVER...]  give each server a tunnel named after it, with cf
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
-#   fleet auto                 fleet update once a day, when it can; run hourly
+#   fleet auto                 fleet update, hourly, when this Mac can
 #
 # A tunnel never serves two versions, and loses no server but to a restart.
 # An update pins one version per mode for the whole run, then builds it on
@@ -458,8 +458,27 @@ update_group() {
     fi
 }
 
+# One fleet update or restart at a time, as two would take servers down at
+# once: another stops with status 3, which fleet auto takes as its hour
+# skipped. A lock left by a run that died is taken over.
+LOCK="$HOME/Library/Caches/dots/fleet.lock"
+lock() {
+    mkdir -p "$(dirname "$LOCK")"
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        if kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then
+            echo "Another fleet update or restart runs, as process $(cat "$LOCK/pid"); try again once it ends." >&2
+            exit 3
+        fi
+        rm -rf "$LOCK"
+        mkdir "$LOCK"
+    fi
+    echo $$ > "$LOCK/pid"
+    trap 'rm -rf "$LOCK"' EXIT
+}
+
 update() {
     local server mode tunnels tunnel group
+    lock
     if ! awk '!/^#/ && NF >= 2 {
             for (i = 3; i <= NF; i++) {
                 if (($i in m) && m[$i] != $2) {
@@ -486,7 +505,7 @@ update() {
     check_names "$@" || exit 1
 
     work="$(mktemp -d)"
-    trap 'rm -rf "$work"; lift' EXIT
+    trap 'rm -rf "$work" "$LOCK"; lift' EXIT
     for mode in $(entries | awk '{ print $2 }' | sort -u); do
         if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
             echo "Could not find the newest version of $mode." >&2
@@ -505,7 +524,8 @@ update() {
 
 restart() {
     local group server
-    trap lift EXIT
+    lock
+    trap 'rm -rf "$LOCK"; lift' EXIT
     while read -r group; do
         # shellcheck disable=SC2086
         for server in $(needing_first $group); do
@@ -676,27 +696,46 @@ tunnels() {
     done
 }
 
-# Run fleet update once a day, from the LaunchAgent that runs this hourly: when
-# the last run is over 20 hours old, this Mac is on power, and a server answers,
-# so a sleeping or travelling Mac runs it later instead. It keeps the Mac awake
-# meanwhile and notifies when it fails. Missed days are fine.
+# Run fleet update, hourly, from its LaunchAgent: the one check, which brings
+# the servers the newest release or commit of their mode, and Homebrew, Rust,
+# Rex, cloudflared, and macOS's downloads; a run with nothing new restarts
+# nothing. Only on power and with a server in reach, so a closed or
+# travelling Mac skips its hours, and the next one it is open for catches up.
+# It keeps the Mac awake meanwhile, logs why it skips an hour, and notifies
+# once when runs start failing; ship status says when none succeeded for over
+# 3 days.
 auto() {
-    local stamp="$HOME/Library/Application Support/dots/fleet-auto" log="$HOME/Library/Logs/fleet-auto.log" now
-    now="$(date +%s)"
-    [ $((now - $(cat "$stamp" 2>/dev/null || echo 0))) -ge $((20 * 3600)) ] || return 0
-    pmset -g batt | grep -q "'AC Power'" || return 0
-    on "$(entries | awk '{ print $1; exit }')" true 2>/dev/null || return 0
-    mkdir -p "$(dirname "$stamp")"
-    echo "$now" > "$stamp"
+    local dir="$HOME/Library/Application Support/dots" log="$HOME/Library/Logs/fleet-auto.log" first status=0
     # Its log keeps the last 5 to 10 MB.
     if [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
         tail -c 5242880 "$log" > "$log.new" && mv "$log.new" "$log"
     fi
-    echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
-    if ! caffeinate -i "$0" update </dev/null; then
-        osascript -e 'display notification "See ~/Library/Logs/fleet-auto.log." with title "fleet update failed"' || true
-        return 1
+    if ! pmset -g batt | grep -q "'AC Power'"; then
+        echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"
+        return 0
     fi
+    first="$(entries | awk '{ print $1; exit }')"
+    if ! on "$first" true 2>/dev/null; then
+        echo "$(date '+%Y-%m-%d %H:%M') skipped: $first does not answer"
+        return 0
+    fi
+    echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
+    caffeinate -i "$0" update </dev/null || status=$?
+    mkdir -p "$dir"
+    case "$status" in
+        0)
+            date +%s > "$dir/fleet-auto"
+            rm -f "$dir/fleet-auto-failed"
+            ;;
+        3) ;;
+        *)
+            if [ ! -e "$dir/fleet-auto-failed" ]; then
+                touch "$dir/fleet-auto-failed"
+                osascript -e 'display notification "See ~/Library/Logs/fleet-auto.log." with title "fleet update failed"' || true
+            fi
+            return 1
+            ;;
+    esac
 }
 
 [ "$#" -ge 1 ] || usage
