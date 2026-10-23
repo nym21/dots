@@ -219,8 +219,8 @@ ask for the password, and restarts the server; without one, it waits.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
 hourly, runs `fleet update` without a terminal, when this Mac is on power, its
-dots has no change left to push, as the servers pull dots from GitHub, and a
-server answers. That one check brings the servers a new crates.io release or
+dots is exactly origin's `main`, which the servers pull (not another branch, nor
+changes left to commit, push or pull), and a server answers. That one check brings the servers a new crates.io release or
 `next` commit within the hour, prod included, and Homebrew, Rust, Rex,
 cloudflared, Bitcoin Core, and macOS's downloads; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one

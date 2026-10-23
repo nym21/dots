@@ -744,8 +744,8 @@ tunnels() {
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
 # the servers the newest release or commit of their mode, and Homebrew, Rust,
 # Rex, cloudflared, and macOS's downloads; a run with nothing new restarts
-# nothing. Only on power, with this Mac's dots as pushed, since the servers
-# pull it, and with a server in reach, so a closed or travelling Mac skips its
+# nothing. Only on power, with this Mac's dots exactly origin's main, which the
+# servers pull, and with a server in reach, so a closed or travelling Mac skips its
 # hours, and the next one it is open for catches up. It keeps the Mac awake
 # meanwhile, logs why it skips an hour, and notifies once when runs start
 # failing, or none has run for a day; ship status says when none succeeded for
@@ -768,8 +768,23 @@ overdue() {
     fi
 }
 
+# Why this Mac's dots, whose fleet runs against the servers, differs from what
+# they pull, origin's main, after fetching it; nothing when it does not.
+dots_differs() {
+    local dots="$1" branch
+    git -C "$dots" fetch -q origin main 2>/dev/null || true
+    branch="$(git -C "$dots" symbolic-ref -q --short HEAD || echo 'a detached HEAD')"
+    if [ -n "$(git -C "$dots" status --porcelain)" ]; then
+        echo "dots has uncommitted changes"
+    elif [ "$branch" != main ]; then
+        echo "dots is on $branch, not main, which the servers pull"
+    elif [ "$(git -C "$dots" rev-parse HEAD)" != "$(git -C "$dots" rev-parse origin/main)" ]; then
+        echo "dots's main is not origin's, which the servers pull"
+    fi
+}
+
 auto() {
-    local log="$HOME/Library/Logs/fleet-auto.log" dots first status=0
+    local log="$HOME/Library/Logs/fleet-auto.log" dots differs first status=0
     dots="$(dirname "$PC_DIR")"
     # Its log keeps the last 5 to 10 MB.
     if [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
@@ -779,9 +794,9 @@ auto() {
         echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"
         return 0
     fi
-    if [ -n "$(git -C "$dots" status --porcelain)" ] ||
-        [ "$(git -C "$dots" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" -gt 0 ]; then
-        overdue "dots has changes that are not pushed"
+    differs="$(dots_differs "$dots")"
+    if [ -n "$differs" ]; then
+        overdue "$differs"
         return 0
     fi
     first="$(entries | awk '{ print $1; exit }')"
