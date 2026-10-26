@@ -311,40 +311,56 @@ fetch() {
     done
 }
 
+# The tunnels of SERVER but those in HELD.
+unheld() {
+    local tunnel
+    for tunnel in $(tunnels_of "$1"); do
+        case " $2 " in
+            *" $tunnel "*) ;;
+            *) echo "$tunnel" ;;
+        esac
+    done
+}
+
 # Update SERVER, which fetch readied, without the tunnels HELD while others
 # still serve them: give it its tokens, then have ship apply restart what runs
 # an older build than fetch installed, and the tunnels on their new tokens, at
 # once; with nothing new, nothing stops. It is a job of the server's own,
 # which finishes there whatever happens to this Mac or the connection, which a
-# Tailscale update ends.
+# Tailscale update ends. Its tunnels have left HELD once it returns.
 update_server() {
-    local server="$1" held="$2" mode tunnel give='' pins
+    local server="$1" held="$2" mode pins
     read -r _ mode _ < <(entries "$server")
-    for tunnel in $(tunnels_of "$server"); do
-        case " $held " in
-            *" $tunnel "*) ;;
-            *) give="$give $tunnel" ;;
-        esac
-    done
     pins="$(cat "$work/pins.$mode")"
     echo "== $server: $mode${pins:+ ${pins%% *}}"
-    # shellcheck disable=SC2086
-    set_tokens "$server" $give || true
+    # shellcheck disable=SC2046
+    set_tokens "$server" $(unheld "$server" "$held") || true
     detach "$server" "$SHIP apply"
     if ! follow_job "$server"; then
         echo "$server: ship apply failed; see above. Stopping here, before a shared tunnel serves two versions." >&2
         exit 1
     fi
+}
+
+# Wait until SERVER serves again after its update. Serving is not enough: it
+# must run the run's versions, or the next servers would join it on a shared
+# tunnel with another.
+wait_updated() {
+    local server="$1" mode pins
+    read -r _ mode _ < <(entries "$server")
+    pins="$(cat "$work/pins.$mode")"
     wait_serving "$server"
-    # Serving is not enough: it must run the run's versions, or the next servers
-    # would join it on a shared tunnel with another.
     if [ -n "$pins" ] && ! at_pins "$server" "$pins"; then
         echo "$server serves, but not ${pins%% *}; stopping here." >&2
         exit 1
     fi
+}
 
-    # A macOS update that fetch downloaded installs from a terminal only, as it
-    # asks for the password, and restarts the server.
+# Install on SERVER a macOS update that fetch downloaded, from a terminal only,
+# as it asks for the password, and wait until the server, which it restarts,
+# serves again.
+update_macos() {
+    local server="$1"
     if [ -t 0 ] && grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server"; then
         "$tssh" -t "$server_user@$server" "$MACOS_UPDATE" || true
         until on "$server" true 2>/dev/null; do
@@ -371,11 +387,11 @@ at_pins() {
         END { exit found != 2 }' <<< "$running"
 }
 
-# Purge Cloudflare's cache of the hostnames that the tunnels of SERVER...
-# route, so none serves what an earlier version left there.
+# Purge Cloudflare's cache of the hostnames that TUNNEL... route, so none
+# serves what an earlier version left there.
 purge() {
-    local server tunnel hosts
-    hosts="$(for tunnel in $(for server; do tunnels_of "$server"; done | tr ' ' '\n' | sort -u); do
+    local tunnel hosts
+    hosts="$(for tunnel in $(printf '%s\n' "$@" | sort -u); do
         cf tunnels config get "$(tunnel_id "$tunnel")" | jq -r '.config.ingress[]?.hostname // empty' || exit 1
     done | sort -u)" || return 1
     [ -n "$hosts" ] || return 0
@@ -418,11 +434,26 @@ others_serve() {
     done
 }
 
+# Purge the cache of TUNNEL..., which SERVER's update left to servers at the
+# run's versions alone. A rerun finds the group at its versions and would not
+# purge again, so a failure fails the run, saying how to purge by hand.
+purge_for() {
+    local server="$1"
+    shift
+    if ! purge "$@"; then
+        echo "Could not purge the cache of $*; run fleet purge $server" >&2
+        incomplete=1
+    fi
+}
+
 # Update a group of servers sharing tunnels, so each tunnel serves one
 # version at a time, but for a few seconds while the last server hands its
-# shared tunnels to the updated ones, then purge their hostnames' cache. A
-# group already at the run's versions keeps serving them throughout, and
-# keeps its cache.
+# shared tunnels to the updated ones. Each tunnel's cache is purged once only
+# servers at the run's versions serve it, before any macOS update: a server's
+# own once it serves again, and the shared ones once the last server has left
+# them, as the others serve them meanwhile, however long it recomputes. A group
+# already at the run's versions keeps serving them throughout, and keeps its
+# cache.
 update_group() {
     local changed='' held='' server other last mode
     # shellcheck disable=SC2046
@@ -448,14 +479,19 @@ update_group() {
             others_serve "$server" "$@"
         fi
         update_server "$server" "$held"
+        if [ -n "$changed" ] && [ "$server" = "$last" ]; then
+            # shellcheck disable=SC2086
+            purge_for "$server" $held
+        fi
+        wait_updated "$server"
+        if [ -n "$changed" ]; then
+            # shellcheck disable=SC2046
+            purge_for "$server" $(unheld "$server" "$held")
+        fi
+        update_macos "$server"
     done
     # shellcheck disable=SC2046
     give_tunnels "$last" $(tunnels_of "$last")
-    # A rerun finds the group at its versions and would not purge again.
-    if [ -n "$changed" ] && ! purge "$@"; then
-        echo "Could not purge their cache; run fleet purge $*" >&2
-        incomplete=1
-    fi
 }
 
 # One fleet update or restart at a time, as two would take servers down at
@@ -837,7 +873,7 @@ case "$command" in
     purge)
         cf_logged_in
         # shellcheck disable=SC2046
-        purge $(entries "$@" | awk '{ print $1 }')
+        purge $(entries "$@" | while read -r server _; do tunnels_of "$server"; done)
         ;;
     update)
         update "$@"

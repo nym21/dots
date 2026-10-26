@@ -191,9 +191,12 @@ newest version of their mode:
    and Bitview at the tip, and checks it runs the run's versions. A Bitview
    restart takes about 10 seconds, its load, or as long as it recomputes what
    a new version changed, and a run with nothing new stops nothing.
-5. Once servers sharing tunnels all run a new version, it purges Cloudflare's
-   cache of the hostnames their tunnels route, so none serves what the old
-   version cached. Servers already at the run's versions keep their tunnels
+5. As soon as only servers on the new version serve a tunnel, it purges
+   Cloudflare's cache of the hostnames the tunnel routes, so none serves what
+   the old version cached: a server's own tunnel once it serves again, and the
+   shared tunnels once the last server of their group has left them, as the
+   others serve them however long it recomputes. Both come before a macOS
+   update. Servers already at the run's versions keep their tunnels
    throughout, and their cache. `fleet purge SERVER...` purges by hand.
 
 Groups not in prod go first, so a bad version shows there before prod, and one
