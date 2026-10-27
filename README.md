@@ -300,4 +300,6 @@ accepts http(s) hosts and Rex has no login on them, so any process on this Mac
 can use the ports to act as the servers' users.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
-session closes, while authentication is retained for the next connection.
+session closes, while authentication is retained for the next connection. A
+daemon left running without its files in `~/.cache`, which would take the
+node's connection from a new one, is stopped before the new one starts.

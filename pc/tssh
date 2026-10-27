@@ -122,8 +122,32 @@ session="$(mktemp "$sessions_dir/session.XXXXXX")"
 exec 8>"$session"
 /usr/bin/lockf 8
 
+# A daemon left running when the runtime files went missing, as when ~/.cache
+# is cleared, logs in as this same node and keeps its relay connection, so the
+# peers' replies never reach a new daemon. Stop it first: on exit it removes
+# the socket path, which would be the new daemon's.
+stop_orphans() {
+    for orphan in $(pgrep -x tailscaled); do
+        case " $(ps -ww -p "$orphan" -o command=) " in
+            *" --state=$state "*) ;;
+            *) continue ;;
+        esac
+        kill "$orphan" 2>/dev/null || continue
+        attempt=0
+        while kill -0 "$orphan" 2>/dev/null; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 100 ]; then
+                echo "error: an earlier tailscaled ($orphan) is still stopping" >&2
+                exit 1
+            fi
+            sleep 0.1
+        done
+    done
+}
+
 daemon_pid="$(cat "$pid_file" 2>/dev/null || true)"
 if ! daemon_running; then
+    stop_orphans
     rm -f "$socket" "$pid_file"
     # Give the shared daemon its own process group so a terminal's Ctrl-C
     # cannot stop other sessions. Close both locks in the daemon process.
