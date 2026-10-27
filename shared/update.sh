@@ -127,21 +127,8 @@ case "$ROLE" in
         # Cloudflare's cf, which Bun installs and runs in place of Node.
         bun add -g --silent cf@latest
 
-        # Mullvad's split tunneling excludes cloudflared by its versioned Cellar
-        # path, which an upgrade replaces. Move an existing exclusion to the
-        # current binary.
-        if command -v mullvad >/dev/null 2>&1 && command -v cloudflared >/dev/null 2>&1; then
-            cloudflared_bin="$(binary cloudflared)"
-            excluded="$(mullvad split-tunnel get | grep '/Cellar/cloudflared/.*/bin/cloudflared$' || true)"
-            if [ -n "$excluded" ]; then
-                while IFS= read -r path; do
-                    [ "$path" = "$cloudflared_bin" ] || mullvad split-tunnel app remove "$path"
-                done <<< "$excluded"
-                if ! grep -Fxq "$cloudflared_bin" <<< "$excluded"; then
-                    mullvad split-tunnel app add "$cloudflared_bin"
-                fi
-            fi
-        fi
+        # Mullvad's exclusion of cloudflared, onto the version just upgraded to.
+        "$DOTS_DIR/pc/split-tunnel.sh" || echo "Mullvad's exclusion of cloudflared was not moved; see above." >&2
         # The Rex forwards keep tssh's Tailscale daemon, and its old binary,
         # running until they restart.
         if [ "$(binary tailscaled)" != "$tailscaled_before" ] && command -v trex >/dev/null 2>&1; then

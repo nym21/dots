@@ -780,7 +780,8 @@ tunnels() {
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
 # the servers the newest release or commit of their mode, and Homebrew, Rust,
 # Rex, cloudflared, and macOS's downloads; a run with nothing new restarts
-# nothing. Only on power, with this Mac's dots exactly origin's main, which the
+# nothing. It is this Mac's one hourly job, so it keeps Mullvad excluding
+# cloudflared too, whatever it skips. Only on power, with this Mac's dots exactly origin's main, which the
 # servers pull, and with a server in reach, so a closed or travelling Mac skips its
 # hours, and the next one it is open for catches up. It keeps the Mac awake
 # meanwhile, logs why it skips an hour, and notifies once when runs start
@@ -826,6 +827,10 @@ auto() {
     if [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
         tail -c 5242880 "$log" > "$log.new" && mv "$log.new" "$log"
     fi
+    # Every hour, even one it skips: Mullvad's exclusion of cloudflared, onto
+    # a version upgraded without ship update.
+    "$PC_DIR/split-tunnel.sh" ||
+        echo "$(date '+%Y-%m-%d %H:%M') Mullvad's exclusion of cloudflared was not moved"
     if ! pmset -g batt | grep -q "'AC Power'"; then
         echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"
         return 0

@@ -236,6 +236,12 @@ and an hourly run skips its turn. It keeps the Mac awake meanwhile, logs to
 when runs start failing, or when none has run for a day; `ship status` says
 when none succeeded for over 3 days.
 
+Being this Mac's one hourly job, `fleet auto` also runs `pc/split-tunnel.sh`
+every hour, even one it skips, as `ship update` does after upgrading: Mullvad's
+split tunneling excludes cloudflared by its versioned Cellar path, which an
+upgrade replaces, and Cloudflare's tunnel servers are unreachable through
+Mullvad, so it moves an existing exclusion to the current binary.
+
 ### Status and alerts
 
 `fleet status` prints a line per server and flags a server that differs from
