@@ -53,6 +53,9 @@ ready_timeout=$((12 * 3600))
 DOMAIN=bitview.space
 SITE=http://localhost:3110
 export CF_QUIET=1
+# Where fleet keeps its state, which a cache cleaner leaves alone: the lock,
+# and fleet auto's last success and alerts.
+STATE_DIR="$HOME/Library/Application Support/dots"
 
 # cf caches the account in .cloudflare where it runs, so it runs in fleet's
 # cache rather than wherever fleet was. Quiet, as on a terminal it prints a
@@ -641,7 +644,7 @@ update_group() {
 # One fleet update or restart at a time, as two would take servers down at
 # once: another stops with status 3, which fleet auto takes as its hour
 # skipped. A lock left by a run that died is taken over.
-LOCK="$HOME/Library/Caches/dots/fleet.lock"
+LOCK="$STATE_DIR/fleet.lock"
 lock() {
     mkdir -p "$(dirname "$LOCK")"
     if ! mkdir "$LOCK" 2>/dev/null; then
@@ -961,20 +964,19 @@ init() {
 # meanwhile, logs why it skips an hour, and notifies once when runs start
 # failing, or none has run for a day; ship status says when none succeeded for
 # over 3 days.
-AUTO_DIR="$HOME/Library/Application Support/dots"
 
 # Notify with TITLE, once until a run succeeds again.
 alert() {
-    [ ! -e "$AUTO_DIR/fleet-auto-failed" ] || return 0
-    mkdir -p "$AUTO_DIR"
-    touch "$AUTO_DIR/fleet-auto-failed"
+    [ ! -e "$STATE_DIR/fleet-auto-failed" ] || return 0
+    mkdir -p "$STATE_DIR"
+    touch "$STATE_DIR/fleet-auto-failed"
     osascript -e "display notification \"See ~/Library/Logs/fleet-auto.log.\" with title \"$1\"" || true
 }
 
 # Skip this hour for REASON, and notify once no run has succeeded for a day.
 overdue() {
     echo "$(date '+%Y-%m-%d %H:%M') skipped: $1"
-    if [ $(($(date +%s) - $(cat "$AUTO_DIR/fleet-auto" 2>/dev/null || echo 0))) -ge 86400 ]; then
+    if [ $(($(date +%s) - $(cat "$STATE_DIR/fleet-auto" 2>/dev/null || echo 0))) -ge 86400 ]; then
         alert "fleet update has not run for a day"
     fi
 }
@@ -1023,9 +1025,9 @@ auto() {
     FLEET_AUTO=1 caffeinate -i "$0" update </dev/null || status=$?
     case "$status" in
         0)
-            mkdir -p "$AUTO_DIR"
-            date +%s > "$AUTO_DIR/fleet-auto"
-            rm -f "$AUTO_DIR/fleet-auto-failed"
+            mkdir -p "$STATE_DIR"
+            date +%s > "$STATE_DIR/fleet-auto"
+            rm -f "$STATE_DIR/fleet-auto-failed"
             ;;
         # Another run holds the lock: this hour's turn, unless that one hangs,
         # which a day without a run says.

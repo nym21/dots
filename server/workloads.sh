@@ -204,8 +204,9 @@ start_one() {
 # One start at a time: after a Rex restart, its boot starts the workloads while
 # ship apply would too, and of each workload started twice, the second fails
 # on the first's data. A later start waits, then finds them running. A start
-# that died leaves its lock to the next.
-START_LOCK="$HOME/Library/Caches/dots/workloads-start.lock"
+# that died leaves its lock to the next. Kept out of the caches, which a
+# cleaner may empty while a start holds it.
+START_LOCK="$HOME/Library/Application Support/dots/workloads-start.lock"
 lock_start() {
     local waiting=''
     mkdir -p "$(dirname "$START_LOCK")"
