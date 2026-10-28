@@ -49,6 +49,8 @@ PASSWORD='~/.config/dots/password'
 JOB='~/Developer/dots/server/job.sh'
 # shellcheck disable=SC2088
 TAILSCALE_SH='~/Developer/dots/server/tailscale.sh'
+# shellcheck disable=SC2088
+TUNNELS_SH='~/Developer/dots/server/tunnels.sh'
 server_user=mini
 tssh="$(command -v tssh)"
 # How long a server may take to serve again: a macOS upgrade, or Bitview
@@ -289,12 +291,59 @@ set_tokens() {
 }
 
 # Give SERVER the tokens of TUNNEL..., only those, and when that changes
-# them, restart its tunnels on them and wait until it serves again.
+# them, have its tunnels take them, those it keeps staying connected, and wait
+# until it serves again.
 give_tunnels() {
     set_tokens "$@" || return 0
-    detach "$1" "$SHIP stop tunnels && $SHIP start"
-    follow_job "$1"
+    on "$1" "$TUNNELS_SH reload --wait" || true
     wait_serving "$1"
+}
+
+# Hand the shared tunnels HELD from LAST, the one server of SERVER... still on
+# the old version, to the others, on the run's, so the tunnels go from one
+# version to the other in about a second, never without a server: each other
+# joins them, and as soon as all say they are connected, LAST leaves them, the
+# word going over a connection opened beforehand. LAST's token file goes
+# first, which its tunnels take only on the word. Then the tunnels' cache is
+# purged, once LAST's last requests on them have ended.
+hand_over() {
+    local last="$1" held="$2" other fifo pid status=0 tries
+    shift 2
+    # shellcheck disable=SC2046
+    set_tokens "$last" $(unheld "$last" "$held") || true
+    fifo="$work/leave.$last"
+    mkfifo "$fifo"
+    ssh_to "$last" "bash -c 'read -r word && [ \"\$word\" = go ] && exec $TUNNELS_SH reload'" <"$fifo" &
+    pid=$!
+    exec 4>"$fifo"
+    for other; do
+        [ "$other" != "$last" ] || continue
+        echo "$other: joining $held"
+        # shellcheck disable=SC2046
+        set_tokens "$other" $(tunnels_of "$other") || true
+        # Not known connected, so it serves before LAST leaves.
+        on "$other" "$TUNNELS_SH reload --wait" || wait_serving "$other"
+    done
+    echo "$last: leaving $held"
+    trap '' PIPE
+    echo go >&4 || true
+    exec 4>&-
+    trap - PIPE
+    wait "$pid" || status=$?
+    # 1 is a word taken, its last requests running long; another, no answer,
+    # as of a connection lost, so the word goes again.
+    tries=0
+    while [ "$status" -gt 1 ] && [ "$tries" -lt 3 ]; do
+        tries=$((tries + 1))
+        status=0
+        on "$last" "$TUNNELS_SH reload" || status=$?
+    done
+    if [ "$status" -gt 1 ]; then
+        echo "$last does not answer, so it may not have left $held, which then serve two versions until it does; stopping here." >&2
+        exit 1
+    fi
+    # shellcheck disable=SC2086
+    purge_for "$last" $held
 }
 
 # Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when the
@@ -728,7 +777,7 @@ purge_for() {
 }
 
 # Update a group of servers sharing tunnels, so each tunnel serves one
-# version at a time, but for a few seconds while the last server hands its
+# version at a time, but for about a second while the last server hands its
 # shared tunnels to the updated ones. Each tunnel's cache is purged once only
 # servers at the run's versions serve it, before any macOS update: a server's
 # own once it serves again, and the shared ones once the last server has left
@@ -749,21 +798,13 @@ update_group() {
         fi
     done
     for server; do
-        if [ -n "$held" ] && [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
-            for other; do
-                [ "$other" != "$last" ] || continue
-                # shellcheck disable=SC2046
-                give_tunnels "$other" $(tunnels_of "$other")
-            done
-        fi
         if connected "$server"; then
             others_serve "$server" "$@" || exit 1
         fi
-        update_server "$server" "$held"
-        if [ -n "$changed" ] && [ "$server" = "$last" ]; then
-            # shellcheck disable=SC2086
-            purge_for "$server" $held
+        if [ -n "$held" ] && [ "$server" = "$last" ] && [ "$#" -gt 1 ]; then
+            hand_over "$last" "$held" "$@"
         fi
+        update_server "$server" "$held"
         wait_updated "$server"
         if [ -n "$changed" ]; then
             # shellcheck disable=SC2046

@@ -272,7 +272,12 @@ completion. Run `ship start` afterwards to start Bitview again.
 Cloudflare holds the tunnel tokens, and the workstation keeps them at hand in
 the Git-ignored `pc/.tunnels`. `fleet update` writes to each mini's Git-ignored
 `server/.tokens` only the tunnels that are the mini's, so a mini holds no other
-mini's tokens, and restarts its tunnels when they changed.
+mini's tokens, and has its tunnels take them when they changed:
+`server/tunnels.sh reload` makes the running tunnels start those the token
+file gained and stop those it dropped, keeping the others connected, and
+returns once the dropped ones have ended their last requests; with `--wait`,
+once every tunnel is connected. A `tunnels.sh` from before reloads were
+possible is restarted instead.
 
 `tunnels.sh` starts this mini's tunnels once Bitcoin Core, Bitview, and the MCP
 server run, both servers answer, and Bitview has reached Bitcoin Core's tip

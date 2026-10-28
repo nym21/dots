@@ -225,8 +225,12 @@ newest version of their mode:
 3. Then it updates them in turn, those sharing a tunnel together, so a tunnel
    never serves two versions: each leaves the shared tunnels while it updates,
    the others still serving them, and the updated ones take them back before
-   the last one leaves, which overlaps two versions for a few seconds rather
-   than leaving the tunnel without a server.
+   the last one leaves, which overlaps two versions for about a second rather
+   than leaving the tunnel without a server: once the last one's token file
+   drops them, each updated one joins them, and the moment all say they are
+   connected, the word to leave goes to the last one over a connection opened
+   beforehand, where its tunnels drop them and keep its own connected. Their
+   cache is purged once its last requests on them end.
 4. For each server it gives it its tunnels and runs `ship apply` there, which
    restarts only what runs another build than the one installed: the Rex
    server, Bitview and the MCP server, the tunnels, for a new cloudflared or
