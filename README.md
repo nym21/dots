@@ -305,7 +305,9 @@ Being this Mac's one hourly job, `fleet auto` also runs `pc/split-tunnel.sh`
 every hour, even one it skips, as `ship update` does after upgrading: Mullvad's
 split tunneling excludes cloudflared by its versioned Cellar path, which an
 upgrade replaces, and Cloudflare's tunnel servers are unreachable through
-Mullvad, so it moves an existing exclusion to the current binary.
+Mullvad, so it moves an existing exclusion to the current binary, keeping the
+old one's while a tunnel started before the upgrade still runs it, as dropping
+it would cut that tunnel off until it restarts.
 
 ### Status and alerts
 
