@@ -46,7 +46,9 @@ if [ ! -x "$tailscale_bin" ] || [ ! -x "$tailscaled_bin" ]; then
 fi
 
 state_dir="$HOME/Library/Application Support/tailscale-userspace-ssh"
-runtime_dir="$HOME/.cache/tailscale-userspace-ssh"
+# Beside the state rather than in a cache, which a cleaner may empty while the
+# daemon runs, leaving it orphaned.
+runtime_dir="$state_dir/run"
 socket="$runtime_dir/tailscaled.sock"
 state="$state_dir/tailscaled.state"
 log="$state_dir/tailscaled.log"
@@ -122,10 +124,11 @@ session="$(mktemp "$sessions_dir/session.XXXXXX")"
 exec 8>"$session"
 /usr/bin/lockf 8
 
-# A daemon left running when the runtime files went missing, as when ~/.cache
-# is cleared, logs in as this same node and keeps its relay connection, so the
-# peers' replies never reach a new daemon. Stop it first: on exit it removes
-# the socket path, which would be the new daemon's.
+# A daemon left running when the runtime files went missing, as when a cache
+# they lived in was emptied, or when they moved, logs in as this same node and
+# keeps its relay connection, so the peers' replies never reach a new daemon.
+# Stop it first: on exit it removes the socket path, which would be the new
+# daemon's.
 stop_orphans() {
     for orphan in $(pgrep -x tailscaled); do
         case " $(ps -ww -p "$orphan" -o command=) " in
@@ -199,7 +202,9 @@ if [ "$mode" = tailscale ]; then
     exit "$tailscale_status"
 fi
 
-proxy_command="$tailscale_bin --socket=$socket nc %h %p"
+# A shell runs it, splitting it at spaces, so the paths are quoted, the socket's
+# having one.
+proxy_command="\"$tailscale_bin\" \"--socket=$socket\" nc %h %p"
 
 set +e
 /usr/bin/ssh -o "ProxyCommand=$proxy_command" "$@"

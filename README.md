@@ -138,7 +138,9 @@ password on each server, trying the one just typed before asking for another,
 checks it there, and keeps it in this Mac's login keychain; run again, it asks
 only for one missing or no longer right, as after a change. `fleet update`
 never asks: it checks each server's first, and one missing or no longer right
-goes without those two jobs, saying to run `fleet init`, and the run ends
+goes without those two jobs, saying to run `fleet init`, a refused one not
+tried again until `fleet init` keeps another, so a changed password costs the
+server one failed attempt rather than one an hour, and the run ends
 failing, which `fleet auto` notifies; `ship status` lists `fleet init` while
 one is not kept. Just before such a job, `fleet` writes the password to the
 server's `~/.config/dots/password`, readable by `mini` alone, and the job,
@@ -249,7 +251,9 @@ checks that the others of its group serve, stopping otherwise, so it never
 leaves a shared tunnel without a server it found serving; a macOS update
 checks again just before its restart, and waits for a later run otherwise.
 Every connection to a server has keepalives, so one that goes away mid-step
-ends rather than waits. It stops if `ship apply` fails, if a server does not
+ends rather than waits, and one that stops answering while it readies, which
+restarts nothing, is left out after an hour, its group with it, rather than
+holding the others' update. It stops if `ship apply` fails, if a server does not
 answer or serve again within 12 hours, or at once
 when a workload of the server crashed, as it stays down until looked at, and if
 it serves another version than the run's: the later servers, prod among them,
@@ -360,6 +364,8 @@ can use the ports to act as the servers' users.
 Concurrent sessions share one local Tailscale daemon. It stops when the last
 session closes, while authentication is retained for the next connection.
 Without a terminal, as for `fleet auto`, it waits a minute at most for a login
-no one can give, rather than forever once it expires. A
-daemon left running without its files in `~/.cache`, which would take the
-node's connection from a new one, is stopped before the new one starts.
+no one can give, rather than forever once it expires. Its socket and lock
+live beside its login, in `~/Library/Application Support/tailscale-userspace-ssh`,
+rather than in a cache a cleaner may empty, and a daemon left running without
+them, which would take the node's connection from a new one, is stopped
+before the new one starts.

@@ -54,6 +54,10 @@ tssh="$(command -v tssh)"
 # How long a server may take to serve again: a macOS upgrade, or Bitview
 # recomputing what a new version changed, which can take hours.
 ready_timeout=$((12 * 3600))
+# How long a server may go unanswered while it readies, which restarts
+# nothing, so one that stops answering is left out within the hour, rather
+# than holding every group's update for 12.
+fetch_timeout=3600
 # Where a server's own tunnel reaches its site: SERVER.$DOMAIN.
 DOMAIN=bitview.space
 SITE=http://localhost:3110
@@ -228,15 +232,19 @@ detach() {
 
 # Show the output of the job detach started on SERVER as it comes, through lost
 # connections, until it ends, and return its status: a failure when it ended
-# without one, as in a restart, or when SERVER stops answering for as long as
-# it may take to serve again.
+# without one, as in a restart, or when SERVER stops answering for TIMEOUT
+# seconds, by default as long as it may take to serve again.
 follow_job() {
-    local server="$1" shown=0 lines status='' answered="$SECONDS"
+    local server="$1" timeout="${2:-$ready_timeout}" shown=0 lines status='' answered="$SECONDS"
     while [ -z "$status" ]; do
         sleep 2
         if ! lines="$(on "$server" "tail -n +$((shown + 1)) ~/Library/Logs/dots/fleet.log" 2>/dev/null)"; then
-            if [ $((SECONDS - answered)) -ge "$ready_timeout" ]; then
-                echo "$server has not answered for $((ready_timeout / 3600)) hours." >&2
+            if [ $((SECONDS - answered)) -ge "$timeout" ]; then
+                if [ "$timeout" -ge 7200 ]; then
+                    echo "$server has not answered for $((timeout / 3600)) hours." >&2
+                else
+                    echo "$server has not answered for $((timeout / 60)) minutes." >&2
+                fi
                 return 1
             fi
             continue
@@ -320,9 +328,19 @@ keychain_password() {
 # is missing or no longer right, as after a change, and 2 when SERVER does
 # not answer.
 kept_password() {
+    local status=0
     password="$(keychain_password "dots fleet $1")"
     [ -n "$password" ] || return 1
-    check_password "$1" "$password"
+    check_password "$1" "$password" || status=$?
+    [ "$status" -ne 0 ] || rm -f "$STATE_DIR/refused.$1"
+    return "$status"
+}
+
+# When the login keychain last changed ITEM, from its attributes, never its
+# password: a password a server refused is the one kept still while this
+# says the same.
+keychain_changed() {
+    security find-generic-password -s "$1" 2>/dev/null | sed -n 's/^ *"mdat"<timedate>=\(0x[0-9A-F]*\).*/\1/p'
 }
 
 # Give fleet server_user's password on each SERVER..., or all, from the
@@ -359,16 +377,28 @@ init_passwords() {
 # need root there: macOS's updates, which ask for it even to download, and
 # the Tailscale daemon's. A server whose password is missing or no longer
 # right goes without them, and the run ends failing. Those checked are in
-# $work/checked. A password lent before that no job read, as when a restart
-# came first, goes too.
+# $work/checked. One the server refused is not tried again until fleet init
+# keeps another, so a changed password costs it one failed attempt, not one
+# an hour. A password lent before that no job read, as when a restart came
+# first, goes too.
 check_passwords() {
-    local server password status
+    local server password status refused changed
     for server; do
+        refused="$STATE_DIR/refused.$server"
+        changed="$(keychain_changed "dots fleet $server")"
         status=0
-        kept_password "$server" || status=$?
+        if [ -n "$changed" ] && [ "$(cat "$refused" 2>/dev/null)" = "$changed" ]; then
+            status=1
+        else
+            kept_password "$server" || status=$?
+        fi
         case "$status" in
             0) echo "$server" >> "$work/checked" ;;
             1)
+                if [ -n "$changed" ]; then
+                    mkdir -p "$STATE_DIR"
+                    echo "$changed" > "$refused"
+                fi
                 echo "$server: fleet has no password for $server_user there, or no longer the right one; run fleet init." >&2
                 incomplete=1
                 ;;
@@ -472,7 +502,7 @@ download_macos() {
     grep -q '^Could not download macOS .* without the password' "$work/fetch.$1" || return 0
     grep -qx "$1" "$work/checked" 2>/dev/null || return 0
     if lend_password "$1" && detach "$1" "$MACOS_UPDATE --download$MACOS_ARGS"; then
-        follow_job "$1" || true
+        follow_job "$1" "$fetch_timeout" || true
     fi
 }
 
@@ -497,7 +527,7 @@ fetch() {
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
                 fi &&
                 detach "$server" "nice -n 10 $SHIP fetch" &&
-                follow_job "$server" &&
+                follow_job "$server" "$fetch_timeout" &&
                 download_macos "$server"
         } >"$work/fetch.$server" 2>&1 &
         pids+=("$!")
