@@ -68,6 +68,11 @@ IPv6 off, and keeps Time Machine's automatic backups off (see
 - `shared/`: what both roles use: packages, shell and editor dotfiles, setup internals, and `ship`.
 - `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
 - `server/`: headless setup, profile, and the workloads.
+- `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
+  each run on this Mac alone with fakes for whatever it would change or reach:
+  `tests/run.sh` runs them all, in about 20 seconds, and fails when any check
+  does. `tests/tunnels.sh` builds a stand-in `cloudflared`, so it needs Xcode's
+  Command Line Tools.
 
 Each role's `setup.sh` sources `shared/setup.sh` for what both share. Servers
 stay lean: development happens on the workstation.
