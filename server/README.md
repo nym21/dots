@@ -167,8 +167,10 @@ the workstation's `~/Developer/mono`, which `fleet` copies to the mini
 that runs another build than the one installed, and starts whatever is not
 running, so a run with nothing new leaves a running mini alone. Each start of
 Bitview or the MCP server records the build it runs in `~/.config/dots/running`;
-its version and commit decide a restart, so a rebuild after a Rust update needs
-none. `ship update` runs it, taking prod's newest crates.io release and a
+its version and commit decide a restart, so a rebuild of the same one needs
+none, and cargo builds a version only once, the crate's own binary alone, as
+one behind a feature, such as bitviewd 0.12.2's `bitview-bindgen`, would have
+it build the package again on every install. `ship update` runs it, taking prod's newest crates.io release and a
 branch's newest commit, unless `fleet update` pinned a version, as it does so
 that servers sharing a tunnel run the same one. Given a mode, as in
 `ship install next`, it switches the mini to it until `fleet update` sets it

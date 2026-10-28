@@ -53,12 +53,16 @@ bitview_mode() {
         }'
 }
 
-# install_crate CRATE MODE [PIN] installs the PIN version, or the newest.
+# install_crate CRATE MODE [PIN] installs the PIN version, or the newest, and
+# leaves one already installed. Only the binary named after CRATE: cargo takes
+# an install as current only when it has every binary the package declares,
+# so one behind a feature, as bitviewd 0.12.2's bitview-bindgen, would have
+# it build the package again on every install.
 install_crate() {
     local crate="$1" mode="$2" pin="${3:-}"
     case "$mode" in
         prod)
-            cargo install --locked "$crate" ${pin:+--version "$pin"}
+            cargo install --locked "$crate" --bin "$crate" ${pin:+--version "$pin"}
             ;;
         local)
             # Build apart from the checkout's own target directory, so an
@@ -69,9 +73,9 @@ install_crate() {
             ;;
         *)
             if [ -n "$pin" ]; then
-                cargo install --locked --git https://github.com/bitcoinresearchkit/mono --rev "$pin" "$crate"
+                cargo install --locked --git https://github.com/bitcoinresearchkit/mono --rev "$pin" "$crate" --bin "$crate"
             else
-                cargo install --locked --git https://github.com/bitcoinresearchkit/mono --branch "$mode" "$crate"
+                cargo install --locked --git https://github.com/bitcoinresearchkit/mono --branch "$mode" "$crate" --bin "$crate"
             fi
             ;;
     esac
