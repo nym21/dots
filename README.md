@@ -301,13 +301,21 @@ when runs start failing, when one has run for a day, as when it hangs, or
 when none has run for a day; `ship status` says
 when none succeeded for over 3 days.
 
-Being this Mac's one hourly job, `fleet auto` also runs `pc/split-tunnel.sh`
-every hour, even one it skips, as `ship update` does after upgrading: Mullvad's
-split tunneling excludes cloudflared by its versioned Cellar path, which an
-upgrade replaces, and Cloudflare's tunnel servers are unreachable through
-Mullvad, so it moves an existing exclusion to the current binary, keeping the
-old one's while a tunnel started before the upgrade still runs it, as dropping
-it would cut that tunnel off until it restarts.
+Being this Mac's one hourly job, `fleet auto` also runs `pc/tunnel.sh` every
+hour, even one it skips, as `ship update` does after upgrading. It keeps this
+Mac's own tunnel, `local`, which serves its Bitview at `local.bitview.space`,
+as a LaunchAgent that starts it at login and again whenever it exits, logging
+to `~/Library/Logs/local-tunnel.log`, and moves it onto a new cloudflared on
+its own. First `pc/split-tunnel.sh`: Mullvad's split tunneling excludes
+cloudflared by its versioned Cellar path, which an upgrade replaces, and
+Cloudflare's tunnel servers are unreachable through Mullvad, so it moves an
+existing exclusion to the current binary, keeping the old one's while a tunnel
+started before the upgrade still runs it, as dropping it would cut that tunnel
+off until it restarts. Then the tunnel restarts onto the new binary, and its
+start, as every start of it, moves the exclusion again, dropping the old one's.
+The tunnel stops when `pc/.tunnels` lacks its token, which `fleet init`
+fetches, or when `fleet.conf` gives `local` to a server, as two machines on
+one tunnel would serve two versions.
 
 ### Status and alerts
 

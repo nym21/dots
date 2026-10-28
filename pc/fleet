@@ -1024,12 +1024,13 @@ cf_logged_in() {
     fi
 }
 
-# Save in pc/.tunnels each token it lacks of a tunnel fleet.conf names, or
-# named after a server, from Cloudflare, which holds them all: pc/.tunnels only
-# keeps them at hand, so a new workstation needs no more than cf's login.
+# Save in pc/.tunnels each token it lacks of a tunnel fleet.conf names, named
+# after a server, or this Mac's own, local, from Cloudflare, which holds them
+# all: pc/.tunnels only keeps them at hand, so a new workstation needs no more
+# than cf's login.
 fetch_tokens() {
     local list='' name id token
-    for name in $(awk '!/^#/ && NF >= 2 { for (i = 1; i <= NF; i++) if (i != 2) print $i }' "$CONF" | sort -u); do
+    for name in $({ awk '!/^#/ && NF >= 2 { for (i = 1; i <= NF; i++) if (i != 2) print $i }' "$CONF"; echo local; } | sort -u); do
         [ -z "$(tunnel_id "$name")" ] || continue
         # Only when a token is missing, so a run with all of them at hand does
         # without Cloudflare's API.
@@ -1196,10 +1197,10 @@ auto() {
         tail -c 5242880 "$log" > "$log.new" && cat "$log.new" > "$log"
         rm -f "$log.new"
     fi
-    # Every hour, even one it skips: Mullvad's exclusion of cloudflared, onto
-    # a version upgraded without ship update.
-    "$PC_DIR/split-tunnel.sh" ||
-        echo "$(date '+%Y-%m-%d %H:%M') Mullvad's exclusion of cloudflared was not moved"
+    # Every hour, even one it skips: Mullvad's exclusion of cloudflared, and
+    # this Mac's tunnel, onto a version upgraded without ship update.
+    "$PC_DIR/tunnel.sh" ||
+        echo "$(date '+%Y-%m-%d %H:%M') this Mac's tunnel was not moved onto the cloudflared installed"
     if ! pmset -g batt | grep -q "'AC Power'"; then
         echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"
         return 0

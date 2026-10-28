@@ -4,8 +4,8 @@ set -euo pipefail
 # Mullvad's split tunneling excludes cloudflared by its versioned Cellar path,
 # which an upgrade replaces. Through Mullvad, Cloudflare's tunnel servers are
 # unreachable, so this moves an existing exclusion to the current binary:
-# ship update runs it after upgrading, and fleet auto hourly, for an upgrade
-# made otherwise. A tunnel running still runs the binary it started from,
+# pc/tunnel.sh runs it, as ship update and fleet auto do that, and before this
+# Mac's tunnel starts. A tunnel running still runs the binary it started from,
 # whose path stays excluded until no cloudflared runs it, as removing it would
 # cut that tunnel off until it restarts.
 

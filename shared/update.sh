@@ -128,8 +128,9 @@ case "$ROLE" in
         "$DOTS_DIR/pc/sparrow.sh" || echo "Sparrow was not updated; see above." >&2
         install_cf
 
-        # Mullvad's exclusion of cloudflared, onto the version just upgraded to.
-        "$DOTS_DIR/pc/split-tunnel.sh" || echo "Mullvad's exclusion of cloudflared was not moved; see above." >&2
+        # Mullvad's exclusion of cloudflared, and this Mac's tunnel, onto the
+        # version just upgraded to.
+        "$DOTS_DIR/pc/tunnel.sh" || echo "This Mac's tunnel was not moved onto the cloudflared installed; see above." >&2
         # The Rex forwards keep tssh's Tailscale daemon, and its old binary,
         # running until they restart.
         if [ "$(binary tailscaled)" != "$tailscaled_before" ] && command -v trex >/dev/null 2>&1; then
