@@ -39,6 +39,9 @@ TUNNELS="$PC_DIR/.tunnels"
 SHIP='~/Developer/dots/shared/ship'
 # shellcheck disable=SC2088
 MACOS_UPDATE='~/Developer/dots/shared/macos-update.sh'
+# Where a server keeps the password fleet lends it for a run.
+# shellcheck disable=SC2088
+PASSWORD='~/.config/dots/password'
 server_user=mini
 tssh="$(command -v tssh)"
 # How long a server may take to serve again: a macOS upgrade, or Bitview
@@ -248,6 +251,68 @@ give_tunnels() {
     wait_serving "$1"
 }
 
+# Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when it
+# is not, and another when SERVER does not answer.
+check_password() {
+    printf '%s\n' "$2" | "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$1" \
+        'sudo -S -k -v -p "" 2>/dev/null' 2>/dev/null
+}
+
+# Lend each SERVER... server_user's password for this run, for whatever needs
+# it there without a terminal: sudo, and macOS's updates, which ask for it
+# even to download. This Mac's login keychain keeps it, checked on the server
+# first. A terminal asks for one missing or no longer right, as after a
+# change, trying the one just typed before asking again; without one, the
+# server goes without, and the run ends failing. The servers lent it are in
+# $work/lent, and take_passwords takes it back once the run ends.
+lend_passwords() {
+    local server item password typed='' status
+    for server; do
+        item="dots fleet $server"
+        password="$(security find-generic-password -s "$item" -w 2>/dev/null || true)"
+        status=0
+        check_password "$server" "$password" || status=$?
+        if [ "$status" -eq 1 ] && [ -t 0 ]; then
+            [ -z "$password" ] || echo "The password kept for $server_user on $server no longer works there."
+            password="$typed"
+            if [ -z "$password" ] || ! check_password "$server" "$password"; then
+                read -r -s -p "Password of $server_user on $server: " password </dev/tty
+                echo
+                if ! check_password "$server" "$password"; then
+                    echo "That is not $server_user's password on $server." >&2
+                    exit 1
+                fi
+                typed="$password"
+            fi
+            security add-generic-password -U -s "$item" -a "$server_user" -w "$password"
+            echo "Kept $server_user's password on $server in the login keychain."
+            status=0
+        fi
+        case "$status" in
+            0)
+                printf '%s\n' "$password" | "$tssh" -o BatchMode=yes "$server_user@$server" \
+                    "bash -c 'umask 077; mkdir -p ~/.config/dots && cat > $PASSWORD'" &&
+                    echo "$server" >> "$work/lent"
+                ;;
+            1)
+                echo "$server: fleet has no password for $server_user there, or no longer the right one; run fleet update in a terminal to give it." >&2
+                incomplete=1
+                ;;
+        esac
+    done
+    unset password typed
+}
+
+# Take back the password lent to this run's servers; one that does not answer
+# keeps it until the next run takes it back.
+take_passwords() {
+    local server
+    [ -e "$work/lent" ] || return 0
+    while read -r server; do
+        on "$server" "rm -f $PASSWORD" 2>/dev/null || echo "$server: could not take back its password." >&2
+    done < "$work/lent"
+}
+
 # The versions to install in MODE, bitviewd's and bitview_mcp's, resolved
 # once per run: the newest crates.io releases in prod, the branch's commit
 # otherwise. None for local, which fleet copies.
@@ -356,18 +421,22 @@ wait_updated() {
     fi
 }
 
-# Install on SERVER a macOS update that fetch downloaded, from a terminal only,
-# as it asks for the password, and wait until the server, which it restarts,
-# serves again.
+# Install on SERVER, lent its password, the macOS update fetch found, and wait
+# until the server, which it restarts, serves again on it: the run ends
+# failing when it did not update.
 update_macos() {
-    local server="$1"
-    if [ -t 0 ] && grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server"; then
-        "$tssh" -t "$server_user@$server" "$MACOS_UPDATE" || true
-        until on "$server" true 2>/dev/null; do
-            sleep 15
-        done
-        echo "$server: waiting until it serves again..."
-        wait_serving "$server"
+    local server="$1" before
+    grep -qx "$server" "$work/lent" 2>/dev/null || return 0
+    grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server" || return 0
+    before="$(on "$server" 'sw_vers -productVersion' || true)"
+    # Its restart may drop the connection without closing it.
+    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+        "$server_user@$server" "$MACOS_UPDATE" </dev/null || true
+    echo "$server: waiting until it serves again..."
+    wait_serving "$server"
+    if [ "$(on "$server" 'sw_vers -productVersion' || true)" = "$before" ]; then
+        echo "$server: macOS did not update; see above." >&2
+        incomplete=1
     fi
 }
 
@@ -548,7 +617,7 @@ update() {
     check_names "$@" || exit 1
 
     work="$(mktemp -d)"
-    trap 'rm -rf "$work" "$LOCK"' EXIT
+    trap 'take_passwords; rm -rf "$work" "$LOCK"' EXIT
     for mode in $(entries | awk '{ print $2 }' | sort -u); do
         if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
             echo "Could not find the newest version of $mode." >&2
@@ -579,10 +648,11 @@ update() {
     done < <(groups "$@")
     if [ -n "$servers" ]; then
         # shellcheck disable=SC2086
+        lend_passwords $servers
+        # shellcheck disable=SC2086
         fetch $servers
     fi
-    # On another descriptor, as ssh reads its input: the update's own needs
-    # the terminal, for a password.
+    # On another descriptor, as ssh reads its input.
     while read -r group <&3; do
         [ -n "$group" ] || continue
         down=''
@@ -645,7 +715,7 @@ status() {
         esac
         waiting="$(sed -nE 's/.*, macOS [^ ]+ \(([^ ]+) downloaded\).*/\1/p' <<< "$line")"
         if [ -n "$waiting" ]; then
-            printf '%-6s has macOS %s downloaded; run fleet update in a terminal to install it\n' '' "$waiting"
+            printf '%-6s has macOS %s downloaded; fleet update installs it\n' '' "$waiting"
         fi
     done < <(entries "$@")
     check_names "$@" || true
@@ -779,7 +849,7 @@ tunnels() {
 
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
 # the servers the newest release or commit of their mode, and Homebrew, Rust,
-# Rex, cloudflared, and macOS's downloads; a run with nothing new restarts
+# Rex, cloudflared, and macOS's updates; a run with nothing new restarts
 # nothing. It is this Mac's one hourly job, so it keeps Mullvad excluding
 # cloudflared too, whatever it skips. Only on power, with this Mac's dots exactly origin's main, which the
 # servers pull, and with a server in reach, so a closed or travelling Mac skips its

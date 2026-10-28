@@ -117,9 +117,20 @@ updates, such as the Command Line Tools.
 `/etc/sudoers.d/dots`, which setup installs, it installs Apple's updates and,
 on a server, restarts the Rex and Tailscale daemons without one; when that file
 lacks a rule, the first such step asks once to add it, and that step and later
-runs need none. Installing a daemon still asks, and a macOS update always asks
-for the Mac owner's password, so without a terminal `ship update` only
-downloads it.
+runs need none. Installing a daemon still asks, and macOS asks for its owner's
+password to download an update as well as to install it, so without a
+terminal `ship update` leaves it.
+
+`fleet` holds the servers' password instead, so nothing on them waits for a
+terminal. This Mac's login keychain keeps `mini`'s password for each server,
+asked once in a terminal. Each `fleet update` checks it on each server first:
+one missing or no longer right, as after a change, is asked again in a
+terminal, trying the one just typed before asking for another, while without
+a terminal the server goes without it and the run ends failing, which
+`fleet auto` notifies. `fleet` then lends it to the server for the run, in
+`~/.config/dots/password`, and takes it back at the end: there, `sudo`
+takes it through `shared/askpass.sh`, as `ship` names it in `SUDO_ASKPASS`,
+and `softwareupdate` as the Mac's owner.
 
 ### Backups
 
@@ -174,7 +185,8 @@ newest version of their mode:
    to it, and runs `ship fetch` there at a low priority, which does all of
    `ship update` that restarts nothing: Homebrew, Rust, Cargo, Rex's newest
    build, Bitview and the MCP server, the cleanup, Apple's other updates, and
-   macOS's download. Each is a job of the server's own, which finishes however
+   macOS's download, with the password `fleet` lends it (see
+   [Passwords](#passwords)). Each is a job of the server's own, which finishes however
    this Mac or the connection fares. A group whose version cannot be found or
    whose servers fail to get ready is left as it is while the others update,
    and the run ends failing.
@@ -216,16 +228,17 @@ Whatever moment it stops at, as when this Mac sleeps, every shared tunnel keeps
 a server, as a server takes a tunnel back before another leaves it. A step that
 stops and starts what a server runs is a job of the server's own, started with
 `nohup`, which finishes there however the connection fares, while `fleet`
-follows its output and, after a lost connection, takes it up again. From a
-terminal, a macOS update that `ship fetch` downloaded then installs in it, to
-ask for the password, and restarts the server; without one, it waits.
+follows its output and, after a lost connection, takes it up again. Last for
+each server, a macOS update that `ship fetch` found installs, with the lent
+password, and restarts the server, which must then serve again on the new
+macOS before the next goes; the run ends failing when it did not update.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
 hourly, runs `fleet update` without a terminal, when this Mac is on power, its
 dots is exactly origin's `main`, which the servers pull (not another branch, nor
 changes left to commit, push or pull), and a server answers. That one check brings the servers a new crates.io release or
 `next` commit within the hour, prod included, and Homebrew, Rust, Rex,
-cloudflared, Bitcoin Core, and macOS's downloads; a run with nothing new
+cloudflared, Bitcoin Core, and macOS's updates; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one
 it is open for catches up. It leaves alone a group of which a server does not
 serve, as one stopped on purpose or after a crash, to be looked at, while the
@@ -246,8 +259,8 @@ Mullvad, so it moves an existing exclusion to the current binary.
 
 `fleet status` prints a line per server and flags a server that differs from
 `fleet.conf`, a tunnel that serves more than one version, a mode with a newer
-version than its servers have, when an update is due, and a macOS update that
-waits for `fleet update` in a terminal to install it.
+version than its servers have, when an update is due, and a macOS update
+downloaded for `fleet update` to install.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, and each
 server's own tunnel says which server: a deliberate restart, a crash, a server

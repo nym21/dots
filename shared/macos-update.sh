@@ -8,11 +8,20 @@ set -euo pipefail
 # as Safari or the Command Line Tools, the newest of each. With --download, for
 # ship fetch, it restarts nothing: it installs those, or downloads a macOS
 # update.
+#
+# macOS asks for its owner's password to download an update as well as to
+# install it, even as root: a terminal's, or without one the password fleet
+# lends a server for a run, which needs no countdown.
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
-# The macOS update --download readied, which a terminal must install, as it
-# asks for the password; ship status shows it until then.
+# The macOS update --download readied, which fleet update installs; ship
+# status shows it until then.
 WAITING="$HOME/.config/dots/macos-downloaded"
+lent=0
+if [ ! -t 0 ] && [ -s "$HOME/.config/dots/password" ]; then
+    lent=1
+    export SUDO_ASKPASS="$DOTS_DIR/shared/askpass.sh"
+fi
 download=0
 case "$*" in
     '') ;;
@@ -68,6 +77,16 @@ install_others() {
     done < <(cut -d '|' -f 1 <<< "$UPDATES" | sort -u)
 }
 
+# softwareupdate ARGS... as root, as the Mac's owner: with the lent password,
+# or asking on the terminal.
+as_owner() {
+    if [ "$lent" -eq 1 ]; then
+        "$SUDO_ASKPASS" | sudo softwareupdate "$@" --user "$(id -un)" --stdinpass
+    else
+        sudo softwareupdate "$@"
+    fi
+}
+
 macos="$(newest macOS)"
 if [ "$download" -eq 1 ]; then
     if [ -z "$macos" ]; then
@@ -77,14 +96,19 @@ if [ "$download" -eq 1 ]; then
         exit 0
     fi
     IFS='|' read -r _ version label <<< "$macos"
-    mkdir -p "$(dirname "$WAITING")"
-    echo "$version" > "$WAITING"
+    # Without the lent password, macOS downloads it in the background once
+    # Apple offers it to this Mac, and fleet update before installing it.
+    if [ "$lent" -eq 0 ]; then
+        echo "Could not download macOS $version without the password; fleet update will."
+        exit 0
+    fi
     echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
-    # Without a password, which /etc/sudoers.d/dots allows for softwareupdate.
-    if sudo -n softwareupdate --download "$label" </dev/null; then
+    if as_owner --download "$label"; then
+        mkdir -p "$(dirname "$WAITING")"
+        echo "$version" > "$WAITING"
         echo "macOS $version is downloaded."
     else
-        echo "Could not download macOS $version without a password; ship update will."
+        echo "Could not download macOS $version; fleet update will."
     fi
     exit 0
 fi
@@ -96,22 +120,23 @@ if [ -z "$macos" ]; then
 fi
 
 IFS='|' read -r _ version label <<< "$macos"
-echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
-sudo softwareupdate --download "$label"
-# Installing macOS asks for the Mac owner's password, even as root.
-if [ ! -t 0 ]; then
-    echo "macOS $version is downloaded; run ship update in a terminal to install it."
+if [ "$lent" -eq 0 ] && [ ! -t 0 ]; then
+    echo "macOS $version is out; run ship update in a terminal to install it."
     exit 0
 fi
-echo "Installing macOS $version and restarting in 30 seconds; Ctrl-C to skip."
-sleep 30
+echo "Downloading macOS $version, from $(sw_vers -productVersion)..."
+as_owner --download "$label"
+if [ "$lent" -eq 0 ]; then
+    echo "Installing macOS $version and restarting in 30 seconds; Ctrl-C to skip."
+    sleep 30
+fi
 
 # The restart would end the workloads abruptly; the boot daemon starts them.
 role="$(cat "$HOME/.config/dots/role" 2>/dev/null || true)"
 if [ "$role" = server ]; then
     "$DOTS_DIR/server/workloads.sh" stop
 fi
-if ! sudo softwareupdate --install "$label" --restart --agree-to-license; then
+if ! as_owner --install "$label" --restart --agree-to-license; then
     [ "$role" != server ] || "$DOTS_DIR/server/workloads.sh" start
     exit 1
 fi

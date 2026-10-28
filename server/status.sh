@@ -76,7 +76,7 @@ crashed=''
 if [ -n "$crashes" ]; then
     crashed="$(awk 'END { sub(/T/, " ", $1); print NR " this week, last " $2 " at " substr($1, 6, 11) ", status " $NF }' <<< "$crashes")"
 fi
-# A macOS update ship fetch downloaded, which a terminal must install.
+# A macOS update ship fetch downloaded, which fleet update installs.
 macos="$(sw_vers -productVersion)"
 waiting="$(cat "$HOME/.config/dots/macos-downloaded" 2>/dev/null || true)"
 [ "$waiting" != "$macos" ] || waiting=''
