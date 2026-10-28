@@ -76,13 +76,20 @@ if [ -n "$user" ]; then
     }
     password="$(security find-generic-password -s "$item" -w 2>/dev/null || true)"
     if [ -z "$password" ] || ! valid "$password"; then
-        read -r -s -p "Password of the backup disk $name: " password </dev/tty
+        IFS= read -r -s -p "Password of the backup disk $name: " password </dev/tty
         echo
+        if [ -z "$password" ]; then
+            echo "No password reached ship backup; if you typed one, this terminal did not pass it on." >&2
+            exit 1
+        fi
         if ! valid "$password"; then
             echo "That is not $name's password." >&2
             exit 1
         fi
-        security add-generic-password -U -s "$item" -a "$USER" -w "$password"
+        # Given to security on its input, as hex, rather than in its
+        # arguments, which any process can read.
+        printf 'add-generic-password -U -s "%s" -a %s -X %s\n' "$item" "$USER" \
+            "$(printf '%s' "$password" | xxd -p | tr -d '\n')" | security -i
         echo "Kept $name's password in the login keychain."
     fi
 fi
