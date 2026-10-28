@@ -677,12 +677,21 @@ serving() {
     on "$1" "$SHIP status --check" 2>/dev/null
 }
 
-# SERVER..., those not serving first, as updating or restarting them costs no
-# service, each part in the order given.
+# Whether SERVER's tunnels are connected and serve: at the tip, or some blocks
+# short of it, as while Bitview catches up or recomputes. Taking it down would
+# leave its shared tunnels to the others, even while it is short.
+connected() {
+    local status=0
+    on "$1" "$SHIP status --check" 2>/dev/null || status=$?
+    [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
+}
+
+# SERVER..., those whose tunnels serve nothing first, as updating or
+# restarting them costs no service, each part in the order given.
 needing_first() {
     local server up=''
     for server; do
-        if serving "$server"; then
+        if connected "$server"; then
             up="$up $server"
         else
             echo "$server"
@@ -747,7 +756,7 @@ update_group() {
                 give_tunnels "$other" $(tunnels_of "$other")
             done
         fi
-        if serving "$server"; then
+        if connected "$server"; then
             others_serve "$server" "$@" || exit 1
         fi
         update_server "$server" "$held"
@@ -898,7 +907,7 @@ restart() {
         # shellcheck disable=SC2086
         for server in $(needing_first $group); do
             echo "== $server"
-            if serving "$server"; then
+            if connected "$server"; then
                 # shellcheck disable=SC2086
                 others_serve "$server" $group || exit 1
             fi

@@ -6,7 +6,9 @@ set -euo pipefail
 # serves: every workload runs, every tunnel is connected, and Bitview is at
 # Bitcoin Core's tip. fleet update waits for that, as long as Bitview takes,
 # but not for a workload that crashed since this Mac started, with nothing to
-# start it again: that exits 2.
+# start it again: that exits 2. Every workload running and every tunnel
+# connected, but Bitview some blocks short of the tip, as while it catches up
+# or recomputes, exits 3: its tunnels serve, if not yet the newest blocks.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -53,8 +55,13 @@ crashes="$(awk -v since="$(date -v-7d +%Y-%m-%dT%H:%M:%S)" '$1 >= since' "$CRASH
 
 if [ "$check" -eq 1 ]; then
     if [ "$workloads" -eq "$expected" ] && [ "$ready" -eq "$(wc -w <<< "$names")" ] &&
-        [ "$ready" -eq "$tunnels" ] && [ "${behind:-1}" = 0 ]; then
-        exit 0
+        [ "$ready" -eq "$tunnels" ]; then
+        [ "${behind:-1}" != 0 ] || exit 0
+        # A count of blocks, not a Bitview that does not answer, whose tunnels
+        # would only serve errors.
+        if [ "$behind" -gt 0 ] 2>/dev/null; then
+            exit 3
+        fi
     fi
     # A crashed workload's supervisor ends, and it stays down until ship start.
     booted="$(date -r "$(sysctl -n kern.boottime | sed -E 's/^[{] sec = ([0-9]+),.*/\1/')" +%Y-%m-%dT%H:%M:%S)"
