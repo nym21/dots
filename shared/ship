@@ -41,11 +41,6 @@ case "$ROLE" in
         ;;
 esac
 
-# Without a terminal, sudo takes the password fleet lends a server for a run.
-if [ "$ROLE" = server ] && [ -s "$HOME/.config/dots/password" ]; then
-    export SUDO_ASKPASS="$DOTS_DIR/shared/askpass.sh"
-fi
-
 command="${1:-}"
 [ "$#" -eq 0 ] || shift
 case "$ROLE:$command" in

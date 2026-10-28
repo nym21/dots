@@ -136,8 +136,10 @@ stop_orphans() {
         attempt=0
         while kill -0 "$orphan" 2>/dev/null; do
             attempt=$((attempt + 1))
-            if [ "$attempt" -ge 100 ]; then
-                echo "error: an earlier tailscaled ($orphan) is still stopping" >&2
+            # Killed outright once it has had 10 seconds to stop.
+            [ "$attempt" -ne 100 ] || kill -9 "$orphan" 2>/dev/null || true
+            if [ "$attempt" -ge 150 ]; then
+                echo "error: an earlier tailscaled ($orphan) does not stop" >&2
                 exit 1
             fi
             sleep 0.1
@@ -180,7 +182,13 @@ done
 
 # First use prints an authorization URL and waits. Repeating up with the same
 # settings reuses the connection, and retries setup if a previous login failed.
-"$tailscale_bin" --socket="$socket" up --accept-dns=false
+# Without a terminal, as for fleet auto, nobody can open the URL, so it waits a
+# minute at most, rather than forever once the login expires.
+if [ -t 0 ]; then
+    "$tailscale_bin" --socket="$socket" up --accept-dns=false
+else
+    "$tailscale_bin" --socket="$socket" up --accept-dns=false --timeout=60s
+fi
 exec 9>&-
 
 if [ "$mode" = tailscale ]; then

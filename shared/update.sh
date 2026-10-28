@@ -44,17 +44,19 @@ apply() {
 }
 
 # Last, since a restart drops the connections over it, this update's own when
-# it runs over SSH. The daemon runs the version it started with.
-restart_tailscale() {
-    if [ "$(tailscale version | head -1)" != "$(tailscale version --daemon | sed -n 's/^Daemon: //p' | cut -d - -f 1)" ]; then
-        "$DOTS_DIR/shared/sudoers.sh"
-        sudo launchctl kickstart -k system/com.local.tailscaled
+# it runs over SSH: the Tailscale daemon onto Homebrew's tailscaled, as root's
+# copy, which needs root, so a terminal; fleet update does it otherwise.
+update_tailscaled() {
+    "$SERVER_DIR/tailscale.sh" --check && return 0
+    if [ -t 0 ]; then
+        "$SERVER_DIR/tailscale.sh" --update
+    else
+        echo "Tailscale's daemon is not on Homebrew's tailscaled; fleet update moves it."
     fi
 }
 
 if [ "$step" = apply ]; then
     apply
-    restart_tailscale
     echo "Applied."
     exit 0
 fi
@@ -154,5 +156,5 @@ if [ "$step" = fetch ]; then
 fi
 [ "$ROLE" != server ] || apply
 "$DOTS_DIR/shared/macos-update.sh"
-[ "$ROLE" != server ] || restart_tailscale
+[ "$ROLE" != server ] || update_tailscaled
 echo "Up to date."

@@ -74,7 +74,17 @@ if [ -n "$user" ]; then
     valid() {
         printf '%s' "$1" | diskutil apfs unlockVolume "$volume" -user "$user" -verify -stdinpassphrase >/dev/null 2>&1
     }
-    password="$(security find-generic-password -s "$item" -w 2>/dev/null || true)"
+    # Exactly: security -w gives one that is not plain text, as with an
+    # accent, as hex, which -g gives too, quoted text otherwise.
+    kept() {
+        local found
+        found="$(security find-generic-password -s "$item" -g 2>&1 >/dev/null)" || return 0
+        case "$found" in
+            'password: 0x'*) found="${found#password: 0x}"; printf '%s' "${found%% *}" | xxd -r -p ;;
+            'password: "'*) found="${found#password: \"}"; printf '%s' "${found%\"}" ;;
+        esac
+    }
+    password="$(kept)"
     if [ -z "$password" ] || ! valid "$password"; then
         IFS= read -r -s -p "Password of the backup disk $name: " password </dev/tty
         echo

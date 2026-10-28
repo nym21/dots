@@ -41,9 +41,14 @@ TUNNELS="$PC_DIR/.tunnels"
 SHIP='~/Developer/dots/shared/ship'
 # shellcheck disable=SC2088
 MACOS_UPDATE='~/Developer/dots/shared/macos-update.sh'
-# Where a server keeps the password fleet lends it for a run.
+# Where fleet lends a server its password for the one job it starts next,
+# which reads and deletes it at once.
 # shellcheck disable=SC2088
 PASSWORD='~/.config/dots/password'
+# shellcheck disable=SC2088
+JOB='~/Developer/dots/server/job.sh'
+# shellcheck disable=SC2088
+TAILSCALE_SH='~/Developer/dots/server/tailscale.sh'
 server_user=mini
 tssh="$(command -v tssh)"
 # How long a server may take to serve again: a macOS upgrade, or Bitview
@@ -201,18 +206,24 @@ wait_serving() {
     echo "$server: $(on "$server" "$SHIP status")"
 }
 
-# Run COMMAND on SERVER as a job of its own, which finishes there whatever
-# happens to this Mac or the connection, as when it sleeps: its output goes to
-# ~/Library/Logs/dots/fleet.log and, once it ends, its status beside it, its
-# process meanwhile in fleet.pid. A subshell keeps an exit in COMMAND from
-# skipping the status.
+# Run COMMAND on SERVER as a job of its own, with server/job.sh, which
+# finishes there whatever happens to this Mac or the connection, as when it
+# sleeps. One at a time: an earlier job still running, as of a run cut short
+# here, ends first.
 detach() {
-    printf '%s\n' \
-        'mkdir -p ~/Library/Logs/dots' \
-        'rm -f ~/Library/Logs/dots/fleet.status' \
-        "nohup bash -c '( $2 ); echo \$? > ~/Library/Logs/dots/fleet.status' > ~/Library/Logs/dots/fleet.log 2>&1 &" \
-        'echo $! > ~/Library/Logs/dots/fleet.pid' |
-        ssh_to "$1" 'bash -s'
+    local start="$SECONDS" status waiting=''
+    while :; do
+        status=0
+        on "$1" "$JOB start '$2'" || status=$?
+        [ "$status" -eq 3 ] || return "$status"
+        [ -n "$waiting" ] || echo "$1: an earlier job of fleet's still runs there; waiting for it to end..."
+        waiting=1
+        if [ $((SECONDS - start)) -ge "$ready_timeout" ]; then
+            echo "$1: an earlier job of fleet's still runs there after $((ready_timeout / 3600)) hours." >&2
+            return 1
+        fi
+        sleep 10
+    done
 }
 
 # Show the output of the job detach started on SERVER as it comes, through lost
@@ -231,8 +242,7 @@ follow_job() {
             continue
         fi
         answered="$SECONDS"
-        status="$(on "$server" "bash -c 'cat ~/Library/Logs/dots/fleet.status 2>/dev/null ||
-            kill -0 \$(cat ~/Library/Logs/dots/fleet.pid) 2>/dev/null || echo gone'" 2>/dev/null)" || status=''
+        status="$(on "$server" "$JOB status" 2>/dev/null)" || status=''
         if [ "$status" = gone ]; then
             echo "$server: the job ended without a status." >&2
             status=1
@@ -250,7 +260,10 @@ follow_job() {
 }
 
 # Give SERVER the tokens of TUNNEL..., only those, failing when it has them
-# already. Its tunnels run on the ones they started on until they restart.
+# already. Its tunnels run on the ones they started on until they restart. A
+# write that fails stops the run, as going on would hand the shared tunnels
+# over as if it had not, leaving one without a server, or serving two
+# versions. A new file each time, so the umask sets its mode.
 set_tokens() {
     local server="$1" tokens tunnel
     shift
@@ -260,8 +273,11 @@ set_tokens() {
         return 1
     fi
     echo "$server: serving tunnels ${*:-none}"
-    printf '%s\n' "$tokens" | ssh_to "$server" \
-        'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
+    if ! printf '%s\n' "$tokens" | ssh_to "$server" \
+        'bash -c "umask 077; rm -f ~/Developer/dots/server/.tokens.new && cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'; then
+        echo "$server: could not give it the tokens of ${*:-no tunnel}; stopping here, before a shared tunnel is left without a server or serves two versions." >&2
+        exit 1
+    fi
 }
 
 # Give SERVER the tokens of TUNNEL..., only those, and when that changes
@@ -273,18 +289,38 @@ give_tunnels() {
     wait_serving "$1"
 }
 
-# Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when it
-# is not, and another when SERVER does not answer.
+# Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when the
+# server refuses it, and 2 when it does not answer, or tssh fails, which says
+# nothing of the password.
 check_password() {
-    printf '%s\n' "$2" | ssh_to "$1" 'sudo -S -k -v -p "" 2>/dev/null' 2>/dev/null
+    local status=0
+    printf '%s\n' "$2" | ssh_to "$1" "bash -c 'sudo -S -k -v -p \"\" 2>/dev/null || exit 9'" 2>/dev/null ||
+        status=$?
+    case "$status" in
+        0) return 0 ;;
+        9) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+# The password this Mac's login keychain keeps as ITEM, exactly: security -w
+# gives one that is not plain text, as with an accent, as hex, which -g gives
+# too, quoted text otherwise. Nothing without one.
+keychain_password() {
+    local found
+    found="$(security find-generic-password -s "$1" -g 2>&1 >/dev/null)" || return 0
+    case "$found" in
+        'password: 0x'*) found="${found#password: 0x}"; printf '%s' "${found%% *}" | xxd -r -p ;;
+        'password: "'*) found="${found#password: \"}"; printf '%s' "${found%\"}" ;;
+    esac
 }
 
 # Into the caller's $password, the password this Mac's login keychain keeps
 # for server_user on SERVER, checked there: status 0 when it works, 1 when it
-# is missing or no longer right, as after a change, and another when SERVER
-# does not answer.
+# is missing or no longer right, as after a change, and 2 when SERVER does
+# not answer.
 kept_password() {
-    password="$(security find-generic-password -s "dots fleet $1" -w 2>/dev/null || true)"
+    password="$(keychain_password "dots fleet $1")"
     [ -n "$password" ] || return 1
     check_password "$1" "$password"
 }
@@ -319,34 +355,43 @@ init_passwords() {
     unset password typed
 }
 
-# Lend each SERVER... server_user's password for this run, for whatever needs
-# it there without a terminal: sudo, and macOS's updates, which ask for it
-# even to download. A server whose password fleet init has not given, or no
-# longer right, goes without, and the run ends failing. The servers lent it
-# are in $work/lent, and take_passwords takes it back once the run ends.
-lend_passwords() {
+# Check each SERVER...'s password, which fleet init gives, for the jobs that
+# need root there: macOS's updates, which ask for it even to download, and
+# the Tailscale daemon's. A server whose password is missing or no longer
+# right goes without them, and the run ends failing. Those checked are in
+# $work/checked. A password lent before that no job read, as when a restart
+# came first, goes too.
+check_passwords() {
     local server password status
     for server; do
         status=0
         kept_password "$server" || status=$?
         case "$status" in
-            0)
-                if printf '%s\n' "$password" |
-                    ssh_to "$server" "bash -c 'umask 077; mkdir -p ~/.config/dots && cat > $PASSWORD'"; then
-                    echo "$server" >> "$work/lent"
-                else
-                    echo "$server: could not lend it its password, so it goes without." >&2
-                    incomplete=1
-                fi
-                ;;
+            0) echo "$server" >> "$work/checked" ;;
             1)
                 echo "$server: fleet has no password for $server_user there, or no longer the right one; run fleet init." >&2
                 incomplete=1
                 ;;
-            *) echo "$server does not answer, so its password was not checked." >&2 ;;
+            *)
+                echo "$server does not answer, so its password was not checked." >&2
+                incomplete=1
+                ;;
         esac
+        on "$server" "rm -f $PASSWORD" 2>/dev/null || true
     done
     unset password
+}
+
+# Lend SERVER its password for the job started next, which reads and deletes
+# it at once. A new file each time, so the umask sets its mode; the servers
+# lent it are in $work/lent, for clear_passwords.
+lend_password() {
+    local password
+    password="$(keychain_password "dots fleet $1")"
+    [ -n "$password" ] || return 1
+    echo "$1" >> "$work/lent"
+    printf '%s\n' "$password" |
+        ssh_to "$1" "bash -c 'umask 077; mkdir -p ~/.config/dots && rm -f $PASSWORD && cat > $PASSWORD'"
 }
 
 # Ask the terminal for server_user's password on SERVER, unechoed, into the
@@ -377,14 +422,15 @@ keep_password() {
         "$(printf '%s' "$2" | xxd -p | tr -d '\n')" | security -i
 }
 
-# Take back the password lent to this run's servers; one that does not answer
-# keeps it until the next run takes it back.
-take_passwords() {
+# Remove the password lent to this run's servers where no job read it, as
+# when one failed before; one that does not answer keeps it until its next
+# run's check, or its boot.
+clear_passwords() {
     local server
     [ -e "$work/lent" ] || return 0
-    while read -r server; do
-        on "$server" "rm -f $PASSWORD" 2>/dev/null || echo "$server: could not take back its password." >&2
-    done < "$work/lent"
+    sort -u "$work/lent" | while read -r server; do
+        on "$server" "rm -f $PASSWORD" 2>/dev/null || echo "$server: could not remove the password lent it." >&2
+    done
 }
 
 # The versions to install in MODE, bitviewd's and bitview_mcp's, resolved
@@ -412,12 +458,31 @@ resolve() {
     esac
 }
 
+# The last of what SERVER's fetch said of macOS: downloaded, not downloaded,
+# or a major upgrade waiting for a run by hand.
+macos_note() {
+    grep -E '^(macOS .* is downloaded|Could not download macOS .*|macOS .*, a major upgrade, waits .*)\.$' \
+        "$work/fetch.$1" | tail -1 || true
+}
+
+# Download on SERVER the macOS update ship fetch found but could not get
+# without the password, lent it, as a job of its own. It never fails the
+# fetch: the install downloads it too.
+download_macos() {
+    grep -q '^Could not download macOS .* without the password' "$work/fetch.$1" || return 0
+    grep -qx "$1" "$work/checked" 2>/dev/null || return 0
+    if lend_password "$1" && detach "$1" "$MACOS_UPDATE --download$MACOS_ARGS"; then
+        follow_job "$1" || true
+    fi
+}
+
 # Ready SERVER... at once, while each still serves: give each its mode and
 # the run's versions, in local mode its copy of ~/Developer/mono, and run ship
-# fetch there, which builds them, updates Homebrew, Rust, and Rex, and
-# downloads a macOS update, restarting nothing. It is a job of each server's
-# own, which finishes there whatever happens to this Mac or the connection, as
-# when it sleeps. The servers that fail are listed in $work/unready.
+# fetch there, which builds them, updates Homebrew, Rust, and Rex, restarting
+# nothing, then download a macOS update with its password. Each is a job of
+# the server's own, which finishes there whatever happens to this Mac or the
+# connection, as when it sleeps. The servers that fail are listed in
+# $work/unready.
 fetch() {
     local server mode pins note pids=() i
     echo "== Readying $* at once, while they serve..."
@@ -432,14 +497,15 @@ fetch() {
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
                 fi &&
                 detach "$server" "nice -n 10 $SHIP fetch" &&
-                follow_job "$server"
+                follow_job "$server" &&
+                download_macos "$server"
         } >"$work/fetch.$server" 2>&1 &
         pids+=("$!")
     done
     i=0
     for server; do
         if wait "${pids[$i]}"; then
-            note="$(grep -E '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server" | tail -1 || true)"
+            note="$(macos_note "$server")"
             echo "$server: ready${note:+; $note}"
         else
             echo "$server: failed to get ready:" >&2
@@ -465,8 +531,8 @@ unheld() {
 # still serve them: give it its tokens, then have ship apply restart what runs
 # an older build than fetch installed, and the tunnels on their new tokens, at
 # once; with nothing new, nothing stops. It is a job of the server's own,
-# which finishes there whatever happens to this Mac or the connection, which a
-# Tailscale update ends. Its tunnels have left HELD once it returns.
+# which finishes there whatever happens to this Mac or the connection. Its
+# tunnels have left HELD once it returns.
 update_server() {
     local server="$1" held="$2" mode pins
     read -r _ mode _ < <(entries "$server")
@@ -495,21 +561,50 @@ wait_updated() {
     fi
 }
 
-# Install on SERVER, lent its password, the macOS update fetch found, and wait
-# until the server, which it restarts, serves again on it: the run ends
-# failing when it did not update. Only while the others of SERVER... serve, as
-# its restart leaves their shared tunnels to them.
+# Bring SERVER's Tailscale daemon onto the tailscaled Homebrew installed, as
+# root's copy, when that changes it: with its password lent it, as a job of
+# its own, as the restart drops the connection over it, and the job puts back
+# what the daemon ran should it not come back. A failure stops the run, as
+# the next server could fail the same way.
+update_tailscaled() {
+    local server="$1" status=0
+    on "$server" "$TAILSCALE_SH --check" 2>/dev/null || status=$?
+    [ "$status" -eq 1 ] || return 0
+    if ! grep -qx "$server" "$work/checked" 2>/dev/null; then
+        echo "$server: its Tailscale daemon waits for its password, which fleet init gives." >&2
+        incomplete=1
+        return 0
+    fi
+    echo "== $server: Tailscale's daemon"
+    if ! lend_password "$server" || ! detach "$server" "$TAILSCALE_SH --update" || ! follow_job "$server"; then
+        echo "$server: its Tailscale daemon did not update; see above. Stopping here, as the next server could fail the same way." >&2
+        exit 1
+    fi
+    wait_serving "$server"
+}
+
+# Install on SERVER, with its password lent it, the macOS update fetch found,
+# as a job of its own, which ends with the restart, and wait until the server
+# serves again on it: the run ends failing when it did not update. Only while
+# the others of SERVER... serve, as its restart leaves their shared tunnels to
+# them.
 update_macos() {
     local server="$1" before
     shift
-    grep -qx "$server" "$work/lent" 2>/dev/null || return 0
-    grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server" || return 0
+    grep -qx "$server" "$work/checked" 2>/dev/null || return 0
+    macos_note "$server" | grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' || return 0
     if ! others_serve "$server" "$@"; then
         incomplete=1
         return 0
     fi
     before="$(on "$server" 'sw_vers -productVersion' || true)"
-    on "$server" "$MACOS_UPDATE" || true
+    if ! lend_password "$server" || ! detach "$server" "$MACOS_UPDATE$MACOS_ARGS"; then
+        echo "$server: could not start its macOS update." >&2
+        incomplete=1
+        return 0
+    fi
+    # The restart ends the job without a status, so that says nothing.
+    follow_job "$server" 2>/dev/null || true
     echo "$server: waiting until it serves again..."
     wait_serving "$server"
     if [ "$(on "$server" 'sw_vers -productVersion' || true)" = "$before" ]; then
@@ -635,6 +730,7 @@ update_group() {
             # shellcheck disable=SC2046
             purge_for "$server" $(unheld "$server" "$held")
         fi
+        update_tailscaled "$server"
         update_macos "$server" "$@"
     done
     # shellcheck disable=SC2046
@@ -643,13 +739,19 @@ update_group() {
 
 # One fleet update or restart at a time, as two would take servers down at
 # once: another stops with status 3, which fleet auto takes as its hour
-# skipped. A lock left by a run that died is taken over.
+# skipped. A lock is held while its process lives, since this Mac last
+# started, as a later boot's process may have its number, or for its first
+# minute, before the process writes itself in; another is taken over.
 LOCK="$STATE_DIR/fleet.lock"
 lock() {
+    local booted taken
     mkdir -p "$(dirname "$LOCK")"
     if ! mkdir "$LOCK" 2>/dev/null; then
-        if kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then
-            echo "Another fleet update or restart runs, as process $(cat "$LOCK/pid"); try again once it ends." >&2
+        booted="$(sysctl -n kern.boottime | sed -E 's/^[{] sec = ([0-9]+),.*/\1/')"
+        taken="$(stat -f %m "$LOCK" 2>/dev/null || echo 0)"
+        if [ "$taken" -ge "$booted" ] && { kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null ||
+            { [ ! -s "$LOCK/pid" ] && [ $(($(date +%s) - taken)) -lt 60 ]; }; }; then
+            echo "Another fleet update or restart runs, as process $(cat "$LOCK/pid" 2>/dev/null); try again once it ends." >&2
             exit 3
         fi
         rm -rf "$LOCK"
@@ -667,8 +769,14 @@ leave() {
 }
 
 update() {
-    local server mode tunnels tunnel group down servers='' kept=''
+    local server mode tunnels tunnel group down servers='' kept='' selected
     lock
+    # The servers given and those sharing a tunnel with them, all by default,
+    # which the run updates, so checks before it cover them all.
+    selected="$(groups "$@" | tr '\n' ' ')"
+    # fleet auto leaves a major macOS upgrade to a run by hand.
+    MACOS_ARGS=''
+    [ -z "${FLEET_AUTO:-}" ] || MACOS_ARGS=' --same-major'
     if ! awk '!/^#/ && NF >= 2 {
             for (i = 3; i <= NF; i++) {
                 if (($i in m) && m[$i] != $2) {
@@ -683,6 +791,7 @@ update() {
     fi
     cf_logged_in
     fetch_tokens
+    # shellcheck disable=SC2086
     while read -r server _ tunnels; do
         for tunnel in $tunnels; do
             if [ -z "$(tunnel_id "$tunnel")" ]; then
@@ -690,13 +799,15 @@ update() {
                 exit 1
             fi
         done
-    done < <(entries "$@")
+    done < <(entries $selected)
 
-    check_names "$@" || exit 1
+    # shellcheck disable=SC2086
+    check_names $selected || exit 1
 
     work="$(mktemp -d)"
-    trap 'take_passwords; rm -rf "$work" "$LOCK"' EXIT
-    for mode in $(entries | awk '{ print $2 }' | sort -u); do
+    trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
+    # shellcheck disable=SC2086
+    for mode in $(entries $selected | awk '{ print $2 }' | sort -u); do
         if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
             echo "Could not find the newest version of $mode." >&2
             rm -f "$work/pins.$mode"
@@ -726,7 +837,7 @@ update() {
     done < <(groups "$@")
     if [ -n "$servers" ]; then
         # shellcheck disable=SC2086
-        lend_passwords $servers
+        check_passwords $servers
         # shellcheck disable=SC2086
         fetch $servers
     fi
@@ -799,7 +910,7 @@ status() {
     check_names "$@" || true
     for tunnel in $(shared "$@"); do
         versions="$(entries "$@" | awk -v tunnel="$tunnel" '{ for (i = 3; i <= NF; i++) if ($i == tunnel) print $1 }' |
-            while read -r server; do awk '{ print $2 }' "$work/$server"; done | tr -d ',' | sort -u)"
+            while read -r server; do awk '$1 != "unreachable" { print $2 }' "$work/$server"; done | tr -d ',' | sort -u)"
         if [ "$(wc -l <<< "$versions")" -gt 1 ]; then
             echo "$tunnel serves more than one version: $(echo $versions); run fleet update"
         fi
@@ -811,8 +922,8 @@ status() {
         [ -n "$newest" ] || continue
         behind=''
         while read -r server; do
+            [ "$(cat "$work/$server")" != unreachable ] || continue
             version="$(awk '{ print $2 }' "$work/$server" | tr -d ',')"
-            [ "$version" != unreachable ] || continue
             case "$mode" in
                 prod) [ "$version" = "v$newest" ] ;;
                 *) [ "${version#*#}" = "${newest:0:8}" ] ;;
@@ -997,11 +1108,13 @@ dots_differs() {
 }
 
 auto() {
-    local log="$HOME/Library/Logs/fleet-auto.log" dots differs first status=0
+    local log="$HOME/Library/Logs/fleet-auto.log" dots differs server reachable='' pid long='' status=0
     dots="$(dirname "$PC_DIR")"
-    # Its log keeps the last 5 to 10 MB.
+    # Its log keeps the last 5 to 10 MB, cut in place, as launchd writes this
+    # run's output to the file it opened.
     if [ "$(stat -f %z "$log" 2>/dev/null || echo 0)" -gt 10485760 ]; then
-        tail -c 5242880 "$log" > "$log.new" && mv "$log.new" "$log"
+        tail -c 5242880 "$log" > "$log.new" && cat "$log.new" > "$log"
+        rm -f "$log.new"
     fi
     # Every hour, even one it skips: Mullvad's exclusion of cloudflared, onto
     # a version upgraded without ship update.
@@ -1016,21 +1129,38 @@ auto() {
         overdue "$differs"
         return 0
     fi
-    first="$(entries | awk '{ print $1; exit }')"
-    if ! on "$first" true 2>/dev/null; then
-        overdue "$first does not answer"
+    # Any server in reach, as one down leaves only its group alone.
+    for server in $(entries | awk '{ print $1 }'); do
+        if on "$server" true 2>/dev/null; then
+            reachable="$server"
+            break
+        fi
+    done
+    if [ -z "$reachable" ]; then
+        overdue "no server answers"
         return 0
     fi
     echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
-    FLEET_AUTO=1 caffeinate -i "$0" update </dev/null || status=$?
+    # Watched from here, as launchd starts no other hour's run while this one
+    # runs: one that hangs notifies once it has run for a day.
+    FLEET_AUTO=1 caffeinate -i "$0" update </dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ -z "$long" ] && [ "$SECONDS" -ge 86400 ]; then
+            alert "fleet update has run for a day"
+            long=1
+        fi
+        sleep 60
+    done
+    wait "$pid" || status=$?
     case "$status" in
         0)
             mkdir -p "$STATE_DIR"
             date +%s > "$STATE_DIR/fleet-auto"
             rm -f "$STATE_DIR/fleet-auto-failed"
             ;;
-        # Another run holds the lock: this hour's turn, unless that one hangs,
-        # which a day without a run says.
+        # Another run holds the lock, as one by hand: this hour's turn, unless
+        # that one hangs, which a day without a run says.
         3) overdue "another fleet update or restart runs" ;;
         *)
             alert "fleet update failed"

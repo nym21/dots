@@ -108,31 +108,45 @@ default and those a project pins, Cargo's caches, builds unused for 30 days,
 old releases of Codex's packages, and simulator runtimes but the newest stable
 iOS. Last, if macOS has an update, it downloads it, waits 30 seconds for
 Ctrl-C, stops a server's workloads cleanly, installs it, and restarts, the
-workloads coming back at boot; without one, it installs the newest of the other
-updates, such as the Command Line Tools.
+workloads coming back at boot, or at once if the install fails or does not
+restart the Mac within 10 minutes; without one, it installs the newest of the
+other updates, such as the Command Line Tools. On a server, `ship update` in a
+terminal then moves the Tailscale daemon onto Homebrew's newest tailscaled
+(see [Passwords](#passwords)).
 
 ### Passwords
 
 `ship update` asks for a password only when a step needs root. With
 `/etc/sudoers.d/dots`, which setup installs, it installs Apple's updates and,
-on a server, restarts the Rex and Tailscale daemons without one; when that file
-lacks a rule, the first such step asks once to add it, and that step and later
-runs need none. Installing a daemon still asks, and macOS asks for its owner's
-password to download an update as well as to install it, so without a
-terminal `ship update` leaves it.
+on a server, restarts the Rex server without one; when that file lacks a rule,
+the first such step asks once to add it, and that step and later runs need
+none, and a rule dots no longer makes goes once a password is at hand.
+Installing a daemon still asks, and macOS asks for its owner's password to
+download an update as well as to install it, so without a terminal
+`ship update` leaves it.
 
-`fleet` holds the servers' password instead, so nothing on them waits for a
-terminal. `fleet init` asks for `mini`'s password on each server, trying the
-one just typed before asking for another, checks it there, and keeps it in
-this Mac's login keychain; run again, it asks only for one missing or no
-longer right, as after a change. `fleet update` never asks: it checks each
-server's first, and one missing or no longer right goes without it, saying to
-run `fleet init`, and the run ends failing, which `fleet auto` notifies;
-`ship status` lists `fleet init` while one is not kept. `fleet` lends
-it to the server for the run, in
-`~/.config/dots/password`, and takes it back at the end: there, `sudo`
-takes it through `shared/askpass.sh`, as `ship` names it in `SUDO_ASKPASS`,
-and `softwareupdate` as the Mac's owner.
+On a server, Tailscale's daemon runs as root from `/usr/local/libexec/tailscaled`,
+a copy of Homebrew's that only root can change: Homebrew's own belongs to
+`mini`, so root running it would let anything running as `mini` become root.
+`server/tailscale.sh --update` brings the copy and the daemon onto Homebrew's
+newest, which needs root, restarting the daemon only when that changes it,
+and puts back what it ran should the daemon not come back within two minutes.
+
+`fleet` holds the servers' password for the two jobs that need it there,
+macOS's updates and the Tailscale daemon's. `fleet init` asks for `mini`'s
+password on each server, trying the one just typed before asking for another,
+checks it there, and keeps it in this Mac's login keychain; run again, it asks
+only for one missing or no longer right, as after a change. `fleet update`
+never asks: it checks each server's first, and one missing or no longer right
+goes without those two jobs, saying to run `fleet init`, and the run ends
+failing, which `fleet auto` notifies; `ship status` lists `fleet init` while
+one is not kept. Just before such a job, `fleet` writes the password to the
+server's `~/.config/dots/password`, readable by `mini` alone, and the job,
+through `shared/lent.sh`, reads it and deletes it at once, so it is on disk for
+seconds, then only in that script's memory, never its environment; `sudo` and
+`softwareupdate` get it on their input. One no job read, as when a restart
+came first, goes at the server's next boot, at the next run's check, or at the
+end of the run.
 
 ### Backups
 
@@ -199,9 +213,10 @@ newest version of their mode:
    one's mode and the run's versions, in local mode copies `~/Developer/mono`
    to it, and runs `ship fetch` there at a low priority, which does all of
    `ship update` that restarts nothing: Homebrew, Rust, Cargo, Rex's newest
-   build, Bitview and the MCP server, the cleanup, Apple's other updates, and
-   macOS's download, with the password `fleet` lends it (see
-   [Passwords](#passwords)). Each is a job of the server's own, which finishes however
+   build, Bitview and the MCP server, the cleanup, and Apple's other updates
+   while no macOS update waits; then macOS's download, as a job of its own,
+   with the password `fleet` lends it (see [Passwords](#passwords)). Each is a
+   job of the server's own, which finishes however
    this Mac or the connection fares. A group whose version cannot be found or
    whose servers fail to get ready is left as it is while the others update,
    and the run ends failing.
@@ -246,9 +261,12 @@ Whatever moment it stops at, as when this Mac sleeps, every shared tunnel keeps
 a server, as a server takes a tunnel back before another leaves it. A step that
 stops and starts what a server runs is a job of the server's own, started with
 `nohup`, which finishes there however the connection fares, while `fleet`
-follows its output and, after a lost connection, takes it up again. Last for
-each server, a macOS update that `ship fetch` found installs, with the lent
-password, and restarts the server, which must then serve again on the new
+follows its output and, after a lost connection, takes it up again, one job
+at a time on each server, a later one waiting for an earlier one, as of a run
+cut short. Last for each server, its Tailscale daemon moves onto Homebrew's
+newest tailscaled, when that changes it, a failure stopping the run; then a
+macOS update that the fetch found installs, with the lent password, as a job
+of its own, and restarts the server, which must then serve again on the new
 macOS before the next goes; the run ends failing when it did not update.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
@@ -256,7 +274,8 @@ hourly, runs `fleet update` without a terminal, when this Mac is on power, its
 dots is exactly origin's `main`, which the servers pull (not another branch, nor
 changes left to commit, push or pull), and a server answers. That one check brings the servers a new crates.io release or
 `next` commit within the hour, prod included, and Homebrew, Rust, Rex,
-cloudflared, Bitcoin Core, and macOS's updates; a run with nothing new
+cloudflared, Bitcoin Core, Tailscale, and macOS's updates within its major
+version, a major upgrade waiting for `fleet update` by hand; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one
 it is open for catches up. It leaves alone a group of which a server does not
 serve, as one stopped on purpose or after a crash, to be looked at, while the
@@ -265,7 +284,8 @@ One `fleet update` or `fleet restart` runs at a time: another stops at once,
 and an hourly run skips its turn, which a day without a completed run
 notifies, as when one hangs. It keeps the Mac awake meanwhile, logs to
 `~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and notifies once
-when runs start failing, or when none has run for a day; `ship status` says
+when runs start failing, when one has run for a day, as when it hangs, or
+when none has run for a day; `ship status` says
 when none succeeded for over 3 days.
 
 Being this Mac's one hourly job, `fleet auto` also runs `pc/split-tunnel.sh`
@@ -338,6 +358,8 @@ accepts http(s) hosts and Rex has no login on them, so any process on this Mac
 can use the ports to act as the servers' users.
 
 Concurrent sessions share one local Tailscale daemon. It stops when the last
-session closes, while authentication is retained for the next connection. A
+session closes, while authentication is retained for the next connection.
+Without a terminal, as for `fleet auto`, it waits a minute at most for a login
+no one can give, rather than forever once it expires. A
 daemon left running without its files in `~/.cache`, which would take the
 node's connection from a new one, is stopped before the new one starts.

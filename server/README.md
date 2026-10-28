@@ -18,7 +18,10 @@ instructions above. This is a read-only probe, not a macOS permission-query API.
 Connect and verify Ethernet before setup disables Wi-Fi and Bluetooth.
 
 For initial Tailscale setup, run `./server/tailscale.sh` separately and authenticate.
-It installs the system daemon so remote access does not require a desktop login.
+It installs the system daemon so remote access does not require a desktop login,
+running as root from a copy of Homebrew's `tailscaled` that only root can change,
+which `fleet update` and `ship update` keep on Homebrew's newest (see the
+README's Passwords).
 Keep the server at the login screen; the workloads run in the Rex server, which
 starts at boot (see [Workloads](#workloads)). Do not enable automatic desktop
 login.

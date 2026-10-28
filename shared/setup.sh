@@ -104,7 +104,9 @@ merge_agent_settings() {
 # say so on every run.
 install_cf() {
     bun add -g --silent cf@latest
-    CF_QUIET=1 cf cli telemetry disable --quiet >/dev/null
+    # By its path, as setup's PATH may not have ~/.local/bin yet.
+    CF_QUIET=1 "$SHARED_DIR/../pc/cf" cli telemetry disable --quiet >/dev/null ||
+        echo "Could not turn cf's telemetry off; run cf cli telemetry disable." >&2
 }
 
 # cargo-hawk, from Astral's installer, as Cargo cannot build it: each release
@@ -177,7 +179,8 @@ missing_steps() {
     [ -z "$problem" ] || echo "$problem: put the backup disk in and run ship backup."
     # What fleet init gives, each part checked without changing it; a password
     # only for being kept, unread, as fleet update checks that it still works.
-    [ "$(tssh --tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
+    # With no input, tssh waits for no login, which fleet init asks for.
+    [ "$(tssh --tailscale status --json 2>/dev/null </dev/null | jq -r .BackendState)" = Running ] ||
         missing="$missing, the tailnet's login"
     jq -e .authenticated <<< "$(cf auth whoami 2>/dev/null)" >/dev/null 2>&1 ||
         missing="$missing, Cloudflare's login"
@@ -233,6 +236,12 @@ install_fleet_auto() {
 PLIST
     if cmp -s "$tmp" "$plist"; then
         rm -f "$tmp"
+        return 0
+    fi
+    # Reloading the agent would end a run of fleet's, mid-update.
+    if kill -0 "$(cat "$HOME/Library/Application Support/dots/fleet.lock/pid" 2>/dev/null)" 2>/dev/null; then
+        rm -f "$tmp"
+        echo "fleet runs, so its LaunchAgent changes at the next ship update."
         return 0
     fi
     mkdir -p "$(dirname "$plist")"

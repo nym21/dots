@@ -204,14 +204,20 @@ start_one() {
 # One start at a time: after a Rex restart, its boot starts the workloads while
 # ship apply would too, and of each workload started twice, the second fails
 # on the first's data. A later start waits, then finds them running. A start
-# that died leaves its lock to the next. Kept out of the caches, which a
-# cleaner may empty while a start holds it.
+# that died leaves its lock to the next, as does one from before the Mac last
+# started, whose number another process may have, or one left without its
+# number for a minute. Kept out of the caches, which a cleaner may empty while
+# a start holds it.
 START_LOCK="$HOME/Library/Application Support/dots/workloads-start.lock"
 lock_start() {
-    local waiting=''
+    local waiting='' booted taken
+    booted="$(sysctl -n kern.boottime | sed -E 's/^[{] sec = ([0-9]+),.*/\1/')"
     mkdir -p "$(dirname "$START_LOCK")"
     until mkdir "$START_LOCK" 2>/dev/null; do
-        if [ -f "$START_LOCK/pid" ] && ! kill -0 "$(cat "$START_LOCK/pid" 2>/dev/null)" 2>/dev/null; then
+        taken="$(stat -f %m "$START_LOCK" 2>/dev/null || echo 0)"
+        if [ "$taken" -lt "$booted" ] ||
+            { [ -f "$START_LOCK/pid" ] && ! kill -0 "$(cat "$START_LOCK/pid" 2>/dev/null)" 2>/dev/null; } ||
+            { [ ! -s "$START_LOCK/pid" ] && [ $(($(date +%s) - taken)) -gt 60 ]; }; then
             rm -rf "$START_LOCK"
             continue
         fi
@@ -293,6 +299,8 @@ stop() {
 # reaching Bitcoin Core needs its access to the external volume.
 boot() {
     local waited=0
+    # A password fleet lent a job the restart ended before it read it.
+    rm -f "$HOME/.config/dots/password"
     until rex ls >/dev/null 2>&1 && (source "$SERVER_DIR/external.sh") 2>/dev/null; do
         if [ "$waited" -ge 600 ]; then
             echo "The Rex server or the external volume is still missing after 10 minutes." >&2
