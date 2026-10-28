@@ -99,6 +99,14 @@ merge_agent_settings() {
     mv "$tmp" "$file"
 }
 
+# Cloudflare's cf, which Bun installs and runs in place of Node, newest first,
+# with its telemetry off for this Mac, as it would otherwise collect it and
+# say so on every run.
+install_cf() {
+    bun add -g --silent cf@latest
+    CF_QUIET=1 cf cli telemetry disable --quiet >/dev/null
+}
+
 # cargo-hawk, from Astral's installer, as Cargo cannot build it: each release
 # is built against one stable Rust, so a Rust update needs its newest.
 update_cargo_hawk() {
@@ -149,7 +157,7 @@ backup_problem() {
 # What only you can do on the workstation, one line each, while it is missing:
 # setup ends with it, and ship status shows it.
 missing_steps() {
-    local app problem hosts server last
+    local app problem hosts server last missing='' tunnel='' password='' forward=''
     [ "$(defaults read .GlobalPreferences LDMGlobalEnabled 2>/dev/null)" = 1 ] ||
         echo "Turn on Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode, then restart."
     # Each output read whole, as grep -q leaving early, or ssh -T failing even
@@ -158,10 +166,6 @@ missing_steps() {
         echo "Log in to Mullvad VPN: mullvad account login."
     grep -q 'successfully authenticated' <<< "$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1)" ||
         echo "Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys."
-    jq -e .authenticated <<< "$(cf auth whoami 2>/dev/null)" >/dev/null 2>&1 ||
-        echo "Log in to Cloudflare: cf auth login."
-    [ "$(tssh --tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
-        echo "Log in to the tailnet: tssh mini@SERVER once, and open the link it prints."
     ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
         echo "Install the Rex app."
     # From the App Store, which Homebrew cannot check without Spotlight's index.
@@ -171,13 +175,23 @@ missing_steps() {
     done
     problem="$(backup_problem)"
     [ -z "$problem" ] || echo "$problem: put the backup disk in and run ship backup."
+    # What fleet init gives, each part checked without changing it; a password
+    # only for being kept, unread, as fleet update checks that it still works.
+    [ "$(tssh --tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
+        missing="$missing, the tailnet's login"
+    jq -e .authenticated <<< "$(cf auth whoami 2>/dev/null)" >/dev/null 2>&1 ||
+        missing="$missing, Cloudflare's login"
     hosts="$(rex hosts list --json 2>/dev/null | jq -r '.hosts[]?.host.label' 2>/dev/null || true)"
     for server in $(awk '!/^#/ && NF { print $1 }' "$SHARED_DIR/../pc/fleet.conf"); do
-        if ! grep -qx "$server" <<< "$hosts"; then
-            echo "Run trex, which gives the Rex app the servers' Rex."
-            break
-        fi
+        awk -v name="$server" '$1 == name { found = 1 } END { exit !found }' "$SHARED_DIR/../pc/.tunnels" 2>/dev/null ||
+            tunnel=1
+        security find-generic-password -s "dots fleet $server" >/dev/null 2>&1 || password=1
+        grep -qx "$server" <<< "$hosts" || forward=1
     done
+    [ -z "$tunnel" ] || missing="$missing, a server's own tunnel"
+    [ -z "$password" ] || missing="$missing, a server's password"
+    [ -z "$forward" ] || missing="$missing, the Rex app's forward to a server"
+    [ -z "$missing" ] || echo "Run fleet init; missing: ${missing#, }."
     last="$(cat "$FLEET_AUTO_STAMP" 2>/dev/null || date +%s)"
     if [ $(($(date +%s) - last)) -gt $((3 * 86400)) ]; then
         echo "fleet auto has not completed a fleet update for over 3 days: leave this Mac on power, with the servers in reach; ~/Library/Logs/fleet-auto.log says why."

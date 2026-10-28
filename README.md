@@ -85,10 +85,10 @@ ship clean     # Free what caches and old builds take; ship update runs it too.
 ship status    # On the workstation: what only you can do, while it is missing.
 ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
+fleet init     # On the workstation: what fleet needs from you, once: logins, tunnels, passwords, Rex.
 fleet status   # On the workstation: one line per server, and what is due.
 fleet update   # On the workstation: ready every server at once, then restart what changed, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
-fleet tunnels  # On the workstation: give each server a tunnel named after it.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
 ```
@@ -122,12 +122,14 @@ password to download an update as well as to install it, so without a
 terminal `ship update` leaves it.
 
 `fleet` holds the servers' password instead, so nothing on them waits for a
-terminal. This Mac's login keychain keeps `mini`'s password for each server,
-asked once in a terminal. Each `fleet update` checks it on each server first:
-one missing or no longer right, as after a change, is asked again in a
-terminal, trying the one just typed before asking for another, while without
-a terminal the server goes without it and the run ends failing, which
-`fleet auto` notifies. `fleet` then lends it to the server for the run, in
+terminal. `fleet init` asks for `mini`'s password on each server, trying the
+one just typed before asking for another, checks it there, and keeps it in
+this Mac's login keychain; run again, it asks only for one missing or no
+longer right, as after a change. `fleet update` never asks: it checks each
+server's first, and one missing or no longer right goes without it, saying to
+run `fleet init`, and the run ends failing, which `fleet auto` notifies;
+`ship status` lists `fleet init` while one is not kept. `fleet` lends
+it to the server for the run, in
 `~/.config/dots/password`, and takes it back at the end: there, `sudo`
 takes it through `shared/askpass.sh`, as `ship` names it in `SUDO_ASKPASS`,
 and `softwareupdate` as the Mac's owner.
@@ -161,14 +163,27 @@ A tunnel is named after what it serves: a mode's site (`prod`, `next`,
 reach that server alone, at a hostname such as `m4-1.bitview.space`. Cloudflare
 holds the tokens; `fleet` keeps them at hand in the Git-ignored `pc/.tunnels`,
 one `NAME TOKEN` per line, fetching any it lacks with `cf`, so a new
-workstation needs only `cf auth login`. Each server gets only its own tunnels'
-tokens.
+workstation needs only Cloudflare's login. Each server gets only its own
+tunnels' tokens.
 
-`fleet tunnels SERVER...`, all of them by default, keeps Cloudflare to those
-names: it gives every tunnel its `pc/.tunnels` name, and for each server
-creates its tunnel, routes the server's hostname alone through it to the site,
-makes that hostname the only DNS name pointing at it, and saves its token, each
-only where that differs. Run it after adding a server to `fleet.conf`.
+### Setting up
+
+`fleet init [SERVER...]`, all of them by default, is what `fleet` needs from
+you, once for a new workstation and again after adding a server to
+`fleet.conf`, each part only where it is missing, so a rerun changes nothing.
+In a terminal, in turn:
+
+1. The tailnet's login: `tssh` prints the link to open on first use.
+2. Cloudflare's: `cf auth login`, when `cf` is not logged in.
+3. Each server's own tunnel, keeping Cloudflare to the names: it gives every
+   tunnel its `pc/.tunnels` name, and for each server creates its tunnel,
+   routes the server's hostname alone through it to the site, makes that
+   hostname the only DNS name pointing at it, and saves its token, each only
+   where that differs.
+4. `mini`'s password on each server (see [Passwords](#passwords)).
+5. The Rex app's forwards to the servers, with `trex`.
+
+`ship status` says to run it, and which part is missing.
 
 ### Updates
 
@@ -216,8 +231,11 @@ server at a time, so prod never loses two at once. Within a group, the order is
 decided when the run starts: servers that do not serve go first, as updating
 them costs no service, and before taking down a server that serves, `fleet`
 checks that the others of its group serve, stopping otherwise, so it never
-leaves a shared tunnel without a server it found serving. It stops if
-`ship apply` fails, if a server does not serve again within 12 hours, or at once
+leaves a shared tunnel without a server it found serving; a macOS update
+checks again just before its restart, and waits for a later run otherwise.
+Every connection to a server has keepalives, so one that goes away mid-step
+ends rather than waits. It stops if `ship apply` fails, if a server does not
+answer or serve again within 12 hours, or at once
 when a workload of the server crashed, as it stays down until looked at, and if
 it serves another version than the run's: the later servers, prod among them,
 could fail the same way, and a shared tunnel would serve two versions.
@@ -244,7 +262,8 @@ it is open for catches up. It leaves alone a group of which a server does not
 serve, as one stopped on purpose or after a crash, to be looked at, while the
 other groups update; `fleet update` by hand starts with those servers instead.
 One `fleet update` or `fleet restart` runs at a time: another stops at once,
-and an hourly run skips its turn. It keeps the Mac awake meanwhile, logs to
+and an hourly run skips its turn, which a day without a completed run
+notifies, as when one hangs. It keeps the Mac awake meanwhile, logs to
 `~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and notifies once
 when runs start failing, or when none has run for a day; `ship status` says
 when none succeeded for over 3 days.
@@ -312,8 +331,8 @@ trex --stop  # stop them all until the next trex
 The servers are those in `pc/fleet.conf`, by their Tailscale names. `trex`
 checks a new one once and skips it unless it accepts your SSH key as `mini` and
 runs a Rex server. Each server keeps the port it was first given, in
-`~/Library/Application Support/trex/ports`, so its host stays valid; run `trex`
-again after adding a server to `fleet.conf`. Each forward runs `tssh` as a
+`~/Library/Application Support/trex/ports`, so its host stays valid; `fleet init`
+runs `trex` after adding a server to `fleet.conf`. Each forward runs `tssh` as a
 LaunchAgent that starts at login and reconnects on its own. The Rex app only
 accepts http(s) hosts and Rex has no login on them, so any process on this Mac
 can use the ports to act as the servers' users.

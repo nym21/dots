@@ -10,10 +10,12 @@ set -euo pipefail
 # runs ship there. A server keeps what it was given, so it boots and serves
 # without the workstation.
 #
+#   fleet init [SERVER...]     what fleet needs from you, once: the tailnet's and
+#                              Cloudflare's logins, each server's own tunnel, its
+#                              password, and the Rex app's forwards
 #   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
 #   fleet update [SERVER...]   bring the servers to the newest version of their mode
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
-#   fleet tunnels [SERVER...]  give each server a tunnel named after it, with cf
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #   fleet auto                 fleet update, hourly, when this Mac can
 #
@@ -53,14 +55,15 @@ SITE=http://localhost:3110
 export CF_QUIET=1
 
 # cf caches the account in .cloudflare where it runs, so it runs in fleet's
-# cache rather than wherever fleet was.
+# cache rather than wherever fleet was. Quiet, as on a terminal it prints a
+# banner, and without CF_QUIET a spinner.
 cf() {
     mkdir -p "$HOME/Library/Caches/dots"
-    (cd "$HOME/Library/Caches/dots" && command cf "$@")
+    (cd "$HOME/Library/Caches/dots" && command cf "$@" --quiet)
 }
 
 usage() {
-    echo "Usage: fleet status | update | restart | tunnels | purge [SERVER...] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | purge [SERVER...] | auto" >&2
     exit 1
 }
 
@@ -159,16 +162,25 @@ check_names() {
     return "$bad"
 }
 
-on() {
+# ssh to SERVER as server_user, never asking, and with keepalives, so a server
+# that goes away mid-command, as when it restarts, ends the connection rather
+# than leaving it waiting.
+ssh_to() {
     local server="$1"
     shift
-    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$server" "$@" </dev/null
+    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+        "$server_user@$server" "$@"
+}
+
+# Run COMMAND on SERVER, with no input.
+on() {
+    ssh_to "$@" </dev/null
 }
 
 # Wait until SERVER serves again, stopping at once if a workload of its
 # crashed meanwhile, which stays down until it is looked at.
 wait_serving() {
-    local server="$1" waited=0 status
+    local server="$1" start="$SECONDS" status
     while :; do
         status=0
         on "$server" "$SHIP status --check" 2>/dev/null || status=$?
@@ -177,12 +189,11 @@ wait_serving() {
             echo "$server: a workload crashed and stays down; ship status there says which, and its crash log why. Stopping here." >&2
             exit 1
         fi
-        if [ "$waited" -ge "$ready_timeout" ]; then
+        if [ $((SECONDS - start)) -ge "$ready_timeout" ]; then
             echo "$server does not serve again after $((ready_timeout / 3600)) hours; stopping here." >&2
             exit 1
         fi
         sleep 2
-        waited=$((waited + 2))
     done
     echo "$server: $(on "$server" "$SHIP status")"
 }
@@ -198,17 +209,25 @@ detach() {
         'rm -f ~/Library/Logs/dots/fleet.status' \
         "nohup bash -c '( $2 ); echo \$? > ~/Library/Logs/dots/fleet.status' > ~/Library/Logs/dots/fleet.log 2>&1 &" \
         'echo $! > ~/Library/Logs/dots/fleet.pid' |
-        "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$1" 'bash -s'
+        ssh_to "$1" 'bash -s'
 }
 
 # Show the output of the job detach started on SERVER as it comes, through lost
 # connections, until it ends, and return its status: a failure when it ended
-# without one, as in a restart.
+# without one, as in a restart, or when SERVER stops answering for as long as
+# it may take to serve again.
 follow_job() {
-    local server="$1" shown=0 lines status=''
+    local server="$1" shown=0 lines status='' answered="$SECONDS"
     while [ -z "$status" ]; do
         sleep 2
-        lines="$(on "$server" "tail -n +$((shown + 1)) ~/Library/Logs/dots/fleet.log" 2>/dev/null)" || continue
+        if ! lines="$(on "$server" "tail -n +$((shown + 1)) ~/Library/Logs/dots/fleet.log" 2>/dev/null)"; then
+            if [ $((SECONDS - answered)) -ge "$ready_timeout" ]; then
+                echo "$server has not answered for $((ready_timeout / 3600)) hours." >&2
+                return 1
+            fi
+            continue
+        fi
+        answered="$SECONDS"
         status="$(on "$server" "bash -c 'cat ~/Library/Logs/dots/fleet.status 2>/dev/null ||
             kill -0 \$(cat ~/Library/Logs/dots/fleet.pid) 2>/dev/null || echo gone'" 2>/dev/null)" || status=''
         if [ "$status" = gone ]; then
@@ -238,7 +257,7 @@ set_tokens() {
         return 1
     fi
     echo "$server: serving tunnels ${*:-none}"
-    printf '%s\n' "$tokens" | "$tssh" -o BatchMode=yes "$server_user@$server" \
+    printf '%s\n' "$tokens" | ssh_to "$server" \
         'bash -c "umask 077; cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'
 }
 
@@ -254,53 +273,105 @@ give_tunnels() {
 # Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when it
 # is not, and another when SERVER does not answer.
 check_password() {
-    printf '%s\n' "$2" | "$tssh" -o BatchMode=yes -o ConnectTimeout=15 "$server_user@$1" \
-        'sudo -S -k -v -p "" 2>/dev/null' 2>/dev/null
+    printf '%s\n' "$2" | ssh_to "$1" 'sudo -S -k -v -p "" 2>/dev/null' 2>/dev/null
+}
+
+# Into the caller's $password, the password this Mac's login keychain keeps
+# for server_user on SERVER, checked there: status 0 when it works, 1 when it
+# is missing or no longer right, as after a change, and another when SERVER
+# does not answer.
+kept_password() {
+    password="$(security find-generic-password -s "dots fleet $1" -w 2>/dev/null || true)"
+    [ -n "$password" ] || return 1
+    check_password "$1" "$password"
+}
+
+# Give fleet server_user's password on each SERVER..., or all, from the
+# terminal: kept in the login keychain once checked there, and asked for each
+# missing or no longer right, trying the one just typed before asking again.
+init_passwords() {
+    local server password typed='' status
+    for server in $(entries "$@" | awk '{ print $1 }'); do
+        status=0
+        kept_password "$server" || status=$?
+        if [ "$status" -eq 1 ]; then
+            [ -z "$password" ] || echo "The password kept for $server_user on $server no longer works there."
+            if [ -n "$typed" ]; then
+                password="$typed"
+                status=0
+                check_password "$server" "$password" || status=$?
+            fi
+            if [ "$status" -eq 1 ]; then
+                status=0
+                ask_password "$server" || status=$?
+                typed="$password"
+            fi
+            [ "$status" -ne 0 ] || keep_password "$server" "$password"
+        fi
+        case "$status" in
+            0) echo "$server: fleet has $server_user's password." ;;
+            *) echo "$server does not answer, so its password was not checked." >&2 ;;
+        esac
+    done
+    unset password typed
 }
 
 # Lend each SERVER... server_user's password for this run, for whatever needs
 # it there without a terminal: sudo, and macOS's updates, which ask for it
-# even to download. This Mac's login keychain keeps it, checked on the server
-# first. A terminal asks for one missing or no longer right, as after a
-# change, trying the one just typed before asking again; without one, the
-# server goes without, and the run ends failing. The servers lent it are in
-# $work/lent, and take_passwords takes it back once the run ends.
+# even to download. A server whose password fleet init has not given, or no
+# longer right, goes without, and the run ends failing. The servers lent it
+# are in $work/lent, and take_passwords takes it back once the run ends.
 lend_passwords() {
-    local server item password typed='' status
+    local server password status
     for server; do
-        item="dots fleet $server"
-        password="$(security find-generic-password -s "$item" -w 2>/dev/null || true)"
         status=0
-        check_password "$server" "$password" || status=$?
-        if [ "$status" -eq 1 ] && [ -t 0 ]; then
-            [ -z "$password" ] || echo "The password kept for $server_user on $server no longer works there."
-            password="$typed"
-            if [ -z "$password" ] || ! check_password "$server" "$password"; then
-                read -r -s -p "Password of $server_user on $server: " password </dev/tty
-                echo
-                if ! check_password "$server" "$password"; then
-                    echo "That is not $server_user's password on $server." >&2
-                    exit 1
-                fi
-                typed="$password"
-            fi
-            security add-generic-password -U -s "$item" -a "$server_user" -w "$password"
-            echo "Kept $server_user's password on $server in the login keychain."
-            status=0
-        fi
+        kept_password "$server" || status=$?
         case "$status" in
             0)
-                printf '%s\n' "$password" | "$tssh" -o BatchMode=yes "$server_user@$server" \
-                    "bash -c 'umask 077; mkdir -p ~/.config/dots && cat > $PASSWORD'" &&
+                if printf '%s\n' "$password" |
+                    ssh_to "$server" "bash -c 'umask 077; mkdir -p ~/.config/dots && cat > $PASSWORD'"; then
                     echo "$server" >> "$work/lent"
+                else
+                    echo "$server: could not lend it its password, so it goes without." >&2
+                    incomplete=1
+                fi
                 ;;
             1)
-                echo "$server: fleet has no password for $server_user there, or no longer the right one; run fleet update in a terminal to give it." >&2
+                echo "$server: fleet has no password for $server_user there, or no longer the right one; run fleet init." >&2
                 incomplete=1
                 ;;
+            *) echo "$server does not answer, so its password was not checked." >&2 ;;
         esac
     done
-    unset password typed
+    unset password
+}
+
+# Ask the terminal for server_user's password on SERVER, unechoed, into the
+# caller's $password, until SERVER takes it: status 0 then, and another when
+# SERVER does not answer. An empty one is never sent.
+ask_password() {
+    local tries=0 status
+    while [ "$tries" -lt 3 ]; do
+        IFS= read -r -s -p "Password of $server_user on $1: " password </dev/tty
+        echo
+        tries=$((tries + 1))
+        if [ -z "$password" ]; then
+            echo "No password reached fleet; if you typed one, this terminal did not pass it on." >&2
+            continue
+        fi
+        status=0
+        check_password "$1" "$password" || status=$?
+        [ "$status" -eq 1 ] || return "$status"
+        echo "That is not $server_user's password on $1." >&2
+    done
+    exit 1
+}
+
+# Keep PASSWORD for SERVER in the login keychain, given to security on its
+# input, as hex, rather than in its arguments, which any process can read.
+keep_password() {
+    printf 'add-generic-password -U -s "dots fleet %s" -a %s -X %s\n' "$1" "$server_user" \
+        "$(printf '%s' "$2" | xxd -p | tr -d '\n')" | security -i
 }
 
 # Take back the password lent to this run's servers; one that does not answer
@@ -423,15 +494,19 @@ wait_updated() {
 
 # Install on SERVER, lent its password, the macOS update fetch found, and wait
 # until the server, which it restarts, serves again on it: the run ends
-# failing when it did not update.
+# failing when it did not update. Only while the others of SERVER... serve, as
+# its restart leaves their shared tunnels to them.
 update_macos() {
     local server="$1" before
+    shift
     grep -qx "$server" "$work/lent" 2>/dev/null || return 0
     grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$server" || return 0
+    if ! others_serve "$server" "$@"; then
+        incomplete=1
+        return 0
+    fi
     before="$(on "$server" 'sw_vers -productVersion' || true)"
-    # Its restart may drop the connection without closing it.
-    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-        "$server_user@$server" "$MACOS_UPDATE" </dev/null || true
+    on "$server" "$MACOS_UPDATE" || true
     echo "$server: waiting until it serves again..."
     wait_serving "$server"
     if [ "$(on "$server" 'sw_vers -productVersion' || true)" = "$before" ]; then
@@ -490,15 +565,15 @@ needing_first() {
     done
 }
 
-# Stop before taking SERVER down while another of SERVER... does not serve, as
-# their shared tunnels would be left without a server.
+# Whether the others of SERVER... serve, so taking SERVER down leaves their
+# shared tunnels a server; it says which does not.
 others_serve() {
     local server="$1" other
     shift
     for other; do
         if [ "$other" != "$server" ] && ! serving "$other"; then
             echo "$other does not serve, so $server is left as it is, serving their tunnels; run fleet again once $other serves." >&2
-            exit 1
+            return 1
         fi
     done
 }
@@ -545,7 +620,7 @@ update_group() {
             done
         fi
         if serving "$server"; then
-            others_serve "$server" "$@"
+            others_serve "$server" "$@" || exit 1
         fi
         update_server "$server" "$held"
         if [ -n "$changed" ] && [ "$server" = "$last" ]; then
@@ -557,7 +632,7 @@ update_group() {
             # shellcheck disable=SC2046
             purge_for "$server" $(unheld "$server" "$held")
         fi
-        update_macos "$server"
+        update_macos "$server" "$@"
     done
     # shellcheck disable=SC2046
     give_tunnels "$last" $(tunnels_of "$last")
@@ -681,7 +756,7 @@ restart() {
             echo "== $server"
             if serving "$server"; then
                 # shellcheck disable=SC2086
-                others_serve "$server" $group
+                others_serve "$server" $group || exit 1
             fi
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
             detach "$server" "$SHIP stop && $SHIP start"
@@ -711,7 +786,7 @@ status() {
         fi
         case " $tunnels " in
             *" $server "*) ;;
-            *) printf '%-6s has no tunnel of its own; run fleet tunnels %s\n' '' "$server" ;;
+            *) printf '%-6s has no tunnel of its own; run fleet init %s\n' '' "$server" ;;
         esac
         waiting="$(sed -nE 's/.*, macOS [^ ]+ \(([^ ]+) downloaded\).*/\1/p' <<< "$line")"
         if [ -n "$waiting" ]; then
@@ -746,11 +821,11 @@ status() {
     done
 }
 
-# cf, with which fleet tunnels changes Cloudflare and fleet update purges its
+# cf, with which fleet init changes Cloudflare and fleet update purges its
 # cache, must be logged in.
 cf_logged_in() {
     if ! cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null; then
-        echo "cf is not logged in; run cf auth login." >&2
+        echo "cf is not logged in; run fleet init." >&2
         exit 1
     fi
 }
@@ -759,10 +834,12 @@ cf_logged_in() {
 # named after a server, from Cloudflare, which holds them all: pc/.tunnels only
 # keeps them at hand, so a new workstation needs no more than cf's login.
 fetch_tokens() {
-    local list name id token
-    list="$(cf tunnels list --is-deleted false)"
+    local list='' name id token
     for name in $(awk '!/^#/ && NF >= 2 { for (i = 1; i <= NF; i++) if (i != 2) print $i }' "$CONF" | sort -u); do
         [ -z "$(tunnel_id "$name")" ] || continue
+        # Only when a token is missing, so a run with all of them at hand does
+        # without Cloudflare's API.
+        [ -n "$list" ] || list="$(cf tunnels list --is-deleted false)"
         id="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .id' <<< "$list" | head -1)"
         [ -n "$id" ] || continue
         echo "$name: saving its token, from Cloudflare, in $TUNNELS"
@@ -779,10 +856,10 @@ tunnel_id() {
 }
 
 # With Cloudflare's cf, name every tunnel as pc/.tunnels does, and give each
-# server a tunnel named after it that routes SERVER.$DOMAIN alone to its site,
-# the only name in DNS that points at it, with its token in pc/.tunnels, which
-# fleet update then hands out. It changes only what differs, so a rerun
-# changes nothing.
+# SERVER, or each of them, a tunnel named after it that routes SERVER.$DOMAIN
+# alone to its site, the only name in DNS that points at it, with its token in
+# pc/.tunnels, which fleet update then hands out. It changes only what
+# differs, so a rerun changes nothing.
 tunnels() {
     local list dns name id cf_name server hostname token ingress config target record current
     cf_logged_in
@@ -845,6 +922,33 @@ tunnels() {
             *) echo "$hostname already points elsewhere, $current; leaving it." >&2 ;;
         esac
     done
+}
+
+# What fleet needs from you, once, for this Mac or after adding a server to
+# fleet.conf, each part only where it is missing, so a rerun changes nothing:
+# the tailnet's login, Cloudflare's, each SERVER's own tunnel, or all of
+# theirs, mini's password on each, and the Rex app's forwards to them.
+init() {
+    if [ ! -t 0 ]; then
+        echo "fleet init may ask you to log in, and for passwords; run it in a terminal." >&2
+        exit 1
+    fi
+    # tssh logs in to the tailnet on first use, printing the link to open.
+    echo "== The tailnet"
+    "$tssh" --tailscale status --peers=false
+    echo "== Cloudflare"
+    if ! cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null; then
+        (cd "$HOME/Library/Caches/dots" && command cf auth login)
+    fi
+    cf_logged_in
+    echo "Logged in."
+    echo "== Tunnels"
+    tunnels "$@"
+    echo "Each server has its own tunnel."
+    echo "== Passwords"
+    init_passwords "$@"
+    echo "== Rex"
+    "$PC_DIR/trex"
 }
 
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
@@ -923,7 +1027,9 @@ auto() {
             date +%s > "$AUTO_DIR/fleet-auto"
             rm -f "$AUTO_DIR/fleet-auto-failed"
             ;;
-        3) ;;
+        # Another run holds the lock: this hour's turn, unless that one hangs,
+        # which a day without a run says.
+        3) overdue "another fleet update or restart runs" ;;
         *)
             alert "fleet update failed"
             return 1
@@ -938,9 +1044,9 @@ for server; do
     [ -n "$(entries "$server")" ] || { echo "$server is not in $CONF." >&2; exit 1; }
 done
 case "$command" in
+    init) init "$@" ;;
     status) status "$@" ;;
     restart) restart "$@" ;;
-    tunnels) tunnels "$@" ;;
     auto)
         [ "$#" -eq 0 ] || usage
         auto

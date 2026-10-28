@@ -63,7 +63,7 @@ link "$ROLE_DIR/tscreen" ~/.local/bin/tscreen
 link "$ROLE_DIR/trex" ~/.local/bin/trex
 link "$ROLE_DIR/cf" ~/.local/bin/cf
 echo "Installing Cloudflare's cf..."
-bun add -g --silent cf@latest
+install_cf
 git config --global core.editor "zed --wait"
 # Cloned over HTTPS, as by bootstrap, dots pushes over SSH: the workstation
 # makes every Git write.

@@ -124,8 +124,7 @@ case "$ROLE" in
         install_fleet_auto
         # Sparrow Wallet, updated only once verified as its author's.
         "$DOTS_DIR/pc/sparrow.sh" || echo "Sparrow was not updated; see above." >&2
-        # Cloudflare's cf, which Bun installs and runs in place of Node.
-        bun add -g --silent cf@latest
+        install_cf
 
         # Mullvad's exclusion of cloudflared, onto the version just upgraded to.
         "$DOTS_DIR/pc/split-tunnel.sh" || echo "Mullvad's exclusion of cloudflared was not moved; see above." >&2
