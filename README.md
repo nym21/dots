@@ -331,7 +331,9 @@ down, or Bitview stuck behind the tip (see the
 
 ## SSH over Tailscale
 
-PC setup makes `tssh`, `tcopy`, `tscreen`, and `trex` available on your PATH:
+PC setup makes `tssh`, `tcopy`, `tscreen`, and `trex` available on your PATH,
+and `rex`, the Rex app's command-line tool, which the app keeps inside its
+bundle:
 
 ```sh
 tssh mini@tailscale-host

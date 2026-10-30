@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -eu
+
+# The Rex app's command-line tool, which the app keeps inside its bundle, off
+# PATH but in Rex's own terminals: run from whichever Rex app is installed, as
+# its name changes between releases (Rex, Rex Beta), so a script, or a shell
+# outside Rex, reaches it too.
+for app in /Applications/Rex*.app; do
+    cli="$app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex"
+    [ -x "$cli" ] && exec "$cli" "$@"
+done
+echo "rex: the Rex app is not installed." >&2
+exit 127
