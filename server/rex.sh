@@ -89,6 +89,22 @@ status_field() {
     awk -v key="$1:" '$1 == key { print $2; exit }'
 }
 
+# The bundle a running server started from, renamed to $BUNDLE.old when a newer
+# build was installed, stays while the server runs from it: deleted, the
+# programs it runs lose what macOS grants them through it, the external disk
+# among them, as tccd can no longer read the path of the server it holds
+# responsible (Bitcoin Core lost its disk mid-write so). Gone once no server
+# runs that build.
+drop_stale_old() {
+    local running
+    [ -e "$BUNDLE.old" ] || return 0
+    running="$(server_status | status_field version)"
+    if [ -z "$running" ] ||
+        [ "$running" != "$("$BUNDLE.old/Contents/MacOS/rex" version 2>/dev/null | awk 'NR == 1 { print $2 }')" ]; then
+        rm -rf "$BUNDLE.old"
+    fi
+}
+
 # The daemon's settings, in PLIST_TMP.
 PLIST_TMP="$WORK/$LABEL.plist"
 write_plist() {
@@ -221,14 +237,17 @@ else
         -R="anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\"" \
         "$WORK/Rex Server.app"
 
-    # Swap by renaming, so a running server keeps its original files.
+    # Swap by renaming, so a running server keeps its original files, kept
+    # until it restarts (see drop_stale_old). While it still runs from an
+    # older $BUNDLE.old, the build installed since never ran: replaced.
     mkdir -p "$(dirname "$BUNDLE")"
-    rm -rf "$BUNDLE.old"
-    if [ -e "$BUNDLE" ]; then
+    drop_stale_old
+    if [ -e "$BUNDLE.old" ]; then
+        rm -rf "$BUNDLE"
+    elif [ -e "$BUNDLE" ]; then
         mv "$BUNDLE" "$BUNDLE.old"
     fi
     mv "$WORK/Rex Server.app" "$BUNDLE"
-    rm -rf "$BUNDLE.old"
     echo "Installed Rex build $LATEST in $BUNDLE."
 fi
 
@@ -311,6 +330,7 @@ if [ "$(status_field pid <<< "$status")" != "$daemon_pid" ]; then
 fi
 
 echo "Rex server $(status_field version <<< "$status") is running as $SERVICE."
+drop_stale_old
 
 if [ "$WORKLOADS" -eq 1 ]; then
     "$SERVER_DIR/workloads.sh" boot
