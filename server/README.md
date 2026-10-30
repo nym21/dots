@@ -250,12 +250,15 @@ for example `dbcache=8192` for the initial sync, then restart it with
 
 `server/bench.sh` runs in the foreground, like a terminal command, in a Rex pane
 or over SSH, which reach the external volume. It installs `bitviewd_bench` in
-the mode given, prod when none:
+the mode given, prod when none, pinned to a release or a commit if one follows,
+to bench one build on several minis:
 
 ```sh
-ship bench            # crates.io
-ship bench next       # the official repository's next branch
-ship bench local      # ~/Developer/mono
+ship bench                     # crates.io
+ship bench prod 0.12.2         # that release
+ship bench next                # the official repository's next branch
+ship bench next 4a0464f5a      # that commit of it
+ship bench local               # ~/Developer/mono
 ```
 
 It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
@@ -263,8 +266,9 @@ Bitview first with `ship stop tunnels bitviewd`; the script
 exits while `bitviewd` runs. Change the script's `--bitviewdir` to an empty
 directory for a full rebuild. Bitcoin Core must be running and synced. The
 benchmark exits after bootstrap without starting the HTTP server. Results are
-stored under `/Volumes/External/bitview/benches/bitviewd/run-<timestamp>/`,
-following `--bitviewdir`. It prints that path before bootstrap starts and after
+stored under `/Volumes/External/bitview/benches/MACHINE/COMMIT/TIMESTAMP/`
+(`apple-m4-16gb-external-tb/4a0464f5a/20261030T170751Z/`), following
+`--bitviewdir`. It prints that path before bootstrap starts and after
 completion. Run `ship start` afterwards to start Bitview again.
 
 ## Cloudflare tunnels
