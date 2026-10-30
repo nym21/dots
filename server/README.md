@@ -261,7 +261,8 @@ ship bench next 4a0464f5a      # that commit of it
 ship bench local               # ~/Developer/mono
 ```
 
-It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
+Reboot the mini first, `fleet reboot SERVER` from the workstation, so runs
+start from a fresh boot and compare. It reuses and writes Bitview's data in `/Volumes/External/bitview`, so stop
 Bitview first with `ship stop tunnels bitviewd`; the script
 exits while `bitviewd` runs. Change the script's `--bitviewdir` to an empty
 directory for a full rebuild. Bitcoin Core must be running and synced. The

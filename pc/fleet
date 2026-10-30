@@ -16,6 +16,8 @@ set -euo pipefail
 #   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
 #   fleet update [SERVER...]   bring the servers to the newest version of their mode
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
+#   fleet reboot [SERVER...]   restart the servers themselves, cleanly, in turn
+#   fleet shutdown [SERVER...] turn them off, cleanly, in turn
 #   fleet tunnels [SERVER...]  give the servers the tunnels fleet.conf gives them,
 #                              at once, updating nothing (a tunnel moved in an outage)
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
@@ -79,7 +81,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update | restart | tunnels | purge [SERVER...] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | reboot | shutdown | tunnels | purge [SERVER...] | auto" >&2
     exit 1
 }
 
@@ -951,6 +953,65 @@ restart() {
     done < <(groups "$@")
 }
 
+# Reboot or shut down (ACTION) SERVER..., all by default, cleanly, one at a
+# time, each as a job of its own with its password lent: its workloads stop
+# first (server/power.sh). One whose tunnels serve goes only while the others
+# of its group serve, as its shared tunnels are left to them. Rebooted, the
+# next goes once it is back: serving again if it served, else answering on a
+# new boot, as a mini benching.
+power() {
+    local action="$1" group server served booted selected
+    shift
+    selected=" $(entries "$@" | awk '{ print $1 }' | xargs) "
+    lock
+    work="$(mktemp -d)"
+    trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
+    # shellcheck disable=SC2046
+    check_passwords $(entries "$@" | awk '{ print $1 }')
+    while read -r group; do
+        # shellcheck disable=SC2086
+        for server in $(needing_first $group); do
+            case "$selected" in *" $server "*) ;; *) continue ;; esac
+            grep -qx "$server" "$work/checked" 2>/dev/null || continue
+            served=''
+            if connected "$server"; then
+                # shellcheck disable=SC2086
+                others_serve "$server" $group || { incomplete=1; continue; }
+                served=1
+            fi
+            echo "== $server: $action"
+            booted="$(on "$server" 'sysctl -n kern.boottime' || true)"
+            if ! lend_password "$server" || ! detach "$server" "$SHIP $action"; then
+                echo "$server: could not start its $action." >&2
+                incomplete=1
+                continue
+            fi
+            if [ "$action" = shutdown ]; then
+                # (It ends with the mini, which then answers no more.)
+                follow_job "$server" 60 2>/dev/null || true
+                if on "$server" true 2>/dev/null; then
+                    echo "$server did not shut down; see above." >&2
+                    incomplete=1
+                else
+                    echo "$server: off."
+                fi
+                continue
+            fi
+            # (A failure ends the job at once; the reboot ends it without a
+            # status, which the follow reads once the mini answers again.)
+            follow_job "$server" 1800 2>/dev/null || true
+            if [ "$(on "$server" 'sysctl -n kern.boottime' 2>/dev/null || true)" = "$booted" ]; then
+                echo "$server did not reboot; see above." >&2
+                incomplete=1
+                continue
+            fi
+            echo "$server: back."
+            [ -z "$served" ] || wait_serving "$server"
+        done
+    done < <(groups "$@")
+    [ -z "$incomplete" ]
+}
+
 # Whether fleet.conf gives each shared tunnel one mode, as two would serve two
 # versions; it says which does not.
 one_mode() {
@@ -1364,6 +1425,7 @@ case "$command" in
     status) status "$@" ;;
     restart) restart "$@" ;;
     tunnels) retunnel "$@" ;;
+    reboot | shutdown) power "$command" "$@" ;;
     auto)
         [ "$#" -eq 0 ] || usage
         auto

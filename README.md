@@ -94,6 +94,8 @@ fleet init     # On the workstation: what fleet needs from you, once: logins, tu
 fleet status   # On the workstation: one line per server, and what is due.
 fleet update   # On the workstation: ready every server at once, then restart what changed, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
+fleet reboot   # On the workstation: restart the servers themselves, cleanly, in turn.
+fleet shutdown # On the workstation: turn the servers off, cleanly, in turn.
 fleet tunnels  # On the workstation: give the servers fleet.conf's tunnels at once, updating nothing.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
@@ -305,7 +307,16 @@ restarts nothing. A closed or travelling Mac skips its hours, and the next one
 it is open for catches up. It leaves alone a group of which a server does not
 serve, as one stopped on purpose or after a crash, to be looked at, while the
 other groups update; `fleet update` by hand starts with those servers instead.
-One `fleet update` or `fleet restart` runs at a time: another stops at once,
+`fleet reboot [SERVER...]` and `fleet shutdown [SERVER...]` restart or turn
+off the Macs themselves, one at a time, each as a job with its password lent:
+`server/power.sh`, which is `ship reboot` and `ship shutdown` there, stops the
+workloads cleanly first, as shutting down would end Bitcoin Core mid-write, and
+the boot daemon starts them again. A server that serves goes only while the
+others of its group serve; rebooted, the next goes once it serves again, or,
+one that wasn't serving, as a mini benching, once it answers on a new boot. A
+fresh boot before a benchmark keeps runs comparable.
+
+One `fleet update`, `restart`, `reboot` or `shutdown` runs at a time: another stops at once,
 and an hourly run skips its turn, which a day without a completed run
 notifies, as when one hangs. It keeps the Mac awake meanwhile, logs to
 `~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and notifies once

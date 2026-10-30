@@ -28,6 +28,7 @@ usage() {
             echo "  stop [NAME...]              stop the workloads cleanly: bitcoind bitviewd mcp tunnels" >&2
             echo "  bench [MODE [PIN]]          run the Bitview benchmark, of a release or commit if pinned" >&2
             echo "  locate                      play a sound to find this mini" >&2
+            echo "  reboot | shutdown           stop the workloads cleanly, then restart or turn off this mini" >&2
             ;;
     esac
     exit 1
@@ -62,5 +63,6 @@ case "$ROLE:$command" in
     server:start | server:stop | server:boot) exec "$DOTS_DIR/server/workloads.sh" "$command" "$@" ;;
     server:bench) exec "$DOTS_DIR/server/bench.sh" "$@" ;;
     server:locate) exec "$DOTS_DIR/server/locate.sh" "$@" ;;
+    server:reboot | server:shutdown) exec "$DOTS_DIR/server/power.sh" "$command" "$@" ;;
     *) usage ;;
 esac
