@@ -94,6 +94,7 @@ fleet init     # On the workstation: what fleet needs from you, once: logins, tu
 fleet status   # On the workstation: one line per server, and what is due.
 fleet update   # On the workstation: ready every server at once, then restart what changed, in turn.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
+fleet tunnels  # On the workstation: give the servers fleet.conf's tunnels at once, updating nothing.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
 ```
@@ -186,6 +187,17 @@ holds the tokens; `fleet` keeps them at hand in the Git-ignored `pc/.tunnels`,
 one `NAME TOKEN` per line, fetching any it lacks with `cf`, so a new
 workstation needs only Cloudflare's login. Each server gets only its own
 tunnels' tokens.
+
+`fleet tunnels [SERVER...]`, all of them by default, gives the servers the
+tunnels `fleet.conf` gives them now and updates nothing, as when a tunnel moves
+to other servers in an outage: first each takes those it gains, keeping those
+it had, then each leaves those it no longer has, so a tunnel moved keeps a
+server throughout, serving both versions meanwhile if it moves to another. A
+server whose tunnels serve waits until each is connected; one whose tunnels
+don't run, stopped or benching, only gets the token file, which they take when
+they start, as reloading them would start its workloads. It refuses a shared
+tunnel given two modes, or served in two versions by the servers that serve it
+from now on, and purges the cache of the tunnels that changed servers.
 
 ### Setting up
 

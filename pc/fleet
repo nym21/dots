@@ -16,6 +16,8 @@ set -euo pipefail
 #   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
 #   fleet update [SERVER...]   bring the servers to the newest version of their mode
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
+#   fleet tunnels [SERVER...]  give the servers the tunnels fleet.conf gives them,
+#                              at once, updating nothing (a tunnel moved in an outage)
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #   fleet auto                 fleet update, hourly, when this Mac can
 #
@@ -77,7 +79,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update | restart | purge [SERVER...] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | tunnels | purge [SERVER...] | auto" >&2
     exit 1
 }
 
@@ -857,18 +859,7 @@ update() {
     # fleet auto leaves a major macOS upgrade to a run by hand.
     MACOS_ARGS=''
     [ -z "${FLEET_AUTO:-}" ] || MACOS_ARGS=' --same-major'
-    if ! awk '!/^#/ && NF >= 2 {
-            for (i = 3; i <= NF; i++) {
-                if (($i in m) && m[$i] != $2) {
-                    printf "%s is shared by servers in %s and %s; give them one mode.\n", $i, m[$i], $2
-                    bad = 1
-                }
-                m[$i] = $2
-            }
-        }
-        END { exit bad }' "$CONF" >&2; then
-        exit 1
-    fi
+    one_mode || exit 1
     cf_logged_in
     fetch_tokens
     # shellcheck disable=SC2086
@@ -958,6 +949,118 @@ restart() {
             wait_serving "$server"
         done
     done < <(groups "$@")
+}
+
+# Whether fleet.conf gives each shared tunnel one mode, as two would serve two
+# versions; it says which does not.
+one_mode() {
+    awk '!/^#/ && NF >= 2 {
+            for (i = 3; i <= NF; i++) {
+                if (($i in m) && m[$i] != $2) {
+                    printf "%s is shared by servers in %s and %s; give them one mode.\n", $i, m[$i], $2
+                    bad = 1
+                }
+                m[$i] = $2
+            }
+        }
+        END { exit bad }' "$CONF" >&2
+}
+
+# The words of the list A that the list B lacks, one a line.
+minus() {
+    local word
+    for word in $1; do
+        case " $2 " in
+            *" $word "*) ;;
+            *) echo "$word" ;;
+        esac
+    done
+}
+
+# Have SERVER's tunnels take the tokens of TUNNEL..., those kept staying
+# connected: at once, waiting until each is connected, where they serve; where
+# they don't run (stopped, or the mini benching), only the token file, which
+# they take when they start, as reloading them would start its workloads.
+take_tunnels() {
+    local server="$1"
+    set_tokens "$@" || return 0
+    # (The pattern's brackets keep it from matching this command's own shell.)
+    if ! on "$server" 'pgrep -qf "server/[t]unnels.sh"'; then
+        echo "$server: its tunnels don't run; they take these when they start."
+    elif connected "$server"; then
+        on "$server" "$TUNNELS_SH reload --wait" || {
+            echo "$server: its tunnels did not take the tokens; stopping here." >&2
+            exit 1
+        }
+    else
+        on "$server" "$TUNNELS_SH reload"
+    fi
+}
+
+# Give SERVER..., all by default, the tunnels fleet.conf gives them now,
+# updating nothing, as when a tunnel moves to other servers in an outage:
+# first each takes those it gains, keeping those it had, then each leaves those
+# it no longer has, so a tunnel moved has its new servers before its old ones
+# leave, a tunnel moved to another version serving both meanwhile, rather than
+# neither. It refuses what fleet update would not do: a shared tunnel given two
+# modes, or served in two versions by the servers that serve it from now on.
+# The tunnels that changed servers have their cache purged, as they may serve
+# another version now.
+retunnel() {
+    local server tunnel versions had wanted changed=''
+    lock
+    one_mode || exit 1
+    cf_logged_in
+    fetch_tokens
+    check_names "$@" || exit 1
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work" "$LOCK"' EXIT
+    # What every server has, and its version while its tunnels serve, as the
+    # servers not given serve their tunnels too.
+    while read -r server _; do
+        {
+            on "$server" 'cut -d " " -f 1 ~/Developer/dots/server/.tokens' 2>/dev/null | xargs >"$work/$server.had"
+            if connected "$server"; then
+                on "$server" "$SHIP status" 2>/dev/null | awk '{ print $2 }' | tr -d , >"$work/$server.version"
+            fi
+        } &
+    done < <(entries)
+    wait
+    for tunnel in $(entries | while read -r server _; do tunnels_of "$server"; done | sort -u); do
+        # (A case outside the command substitution, which bash 3.2 can't parse.)
+        versions=''
+        while read -r server _; do
+            case " $(tunnels_of "$server") " in
+                *" $tunnel "*) versions="$versions $(cat "$work/$server.version" 2>/dev/null || true)" ;;
+            esac
+        done < <(entries)
+        versions="$(xargs -n 1 <<< "$versions" | sort -u)"
+        if [ "$(grep -c . <<< "$versions")" -gt 1 ]; then
+            echo "$tunnel would serve more than one version: $(xargs <<< "$versions"); run fleet update." >&2
+            exit 1
+        fi
+    done
+    while read -r server _; do
+        wanted="$(tunnels_of "$server")" had="$(cat "$work/$server.had")"
+        [ -n "$(minus "$wanted" "$had")" ] || continue
+        # shellcheck disable=SC2046,SC2086
+        take_tunnels "$server" $wanted $(minus "$had" "$wanted")
+        changed="$changed $(minus "$wanted" "$had" | xargs)"
+    done < <(entries "$@")
+    while read -r server _; do
+        wanted="$(tunnels_of "$server")" had="$(cat "$work/$server.had")"
+        [ -n "$(minus "$had" "$wanted")" ] || continue
+        # shellcheck disable=SC2086
+        take_tunnels "$server" $wanted
+        changed="$changed $(minus "$had" "$wanted" | xargs)"
+    done < <(entries "$@")
+    changed="$(xargs -n 1 <<< "$changed" | sort -u | xargs)"
+    if [ -z "$changed" ]; then
+        echo "Every server has its tunnels already."
+        return
+    fi
+    # shellcheck disable=SC2086
+    purge $changed || echo "Could not purge the cache of $changed; run fleet purge" >&2
 }
 
 status() {
@@ -1260,6 +1363,7 @@ case "$command" in
     init) init "$@" ;;
     status) status "$@" ;;
     restart) restart "$@" ;;
+    tunnels) retunnel "$@" ;;
     auto)
         [ "$#" -eq 0 ] || usage
         auto
