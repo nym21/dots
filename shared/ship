@@ -23,7 +23,7 @@ usage() {
             echo "  fetch                       ready all of update while serving, restarting nothing" >&2
             echo "  apply                       then restart only what runs an older build than installed" >&2
             echo "  status [--check]            this mini's mode, workloads, tunnels, and disk" >&2
-            echo "  install [MODE]              install this mini's mode, or MODE: prod, next, a branch, or local" >&2
+            echo "  install [MODE]              install this mini's mode, or MODE: release, prod, next, a branch, or local" >&2
             echo "  start                       start the workloads that are not running" >&2
             echo "  stop [NAME...]              stop the workloads cleanly: bitcoind bitviewd mcp tunnels" >&2
             echo "  bench [MODE [PIN]]          run the Bitview benchmark, of a release or commit if pinned" >&2

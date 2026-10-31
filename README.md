@@ -173,9 +173,12 @@ backup is missing or over a week old.
 ## Servers
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
-servers by their Tailscale names, each with its mode, prod (crates.io), next
-or another branch, or local (the workstation's `~/Developer/mono`), and the
-tunnels it shares. Since tunnel tokens go out by name, `fleet update` first
+servers by their Tailscale names, each with its mode, release (crates.io),
+prod, next or another branch, or local (the workstation's `~/Developer/mono`),
+and the tunnels it shares. Mono's branches are tiers, each a prefix of the one
+before it and promoted by fast-forward: `main` the releases, `prod` what
+bitview.space runs, `next` the work in progress next.bitview.space shows, and
+feature branches off `next`. Since tunnel tokens go out by name, `fleet update` first
 checks that every server is on the tailnet under its `fleet.conf` name and
 calls itself that; `fleet status` also names a Mac on the tailnet that
 `fleet.conf` lacks.
@@ -226,7 +229,7 @@ In a terminal, in turn:
 newest version of their mode:
 
 1. It pins one version per mode for the whole run, the newest crates.io release
-   in prod and the branch's current commit otherwise, so servers in the same
+   in release and the branch's current commit otherwise, so servers in the same
    mode end on the same version even when the branch moves meanwhile. A
    release counts once it has been out 10 minutes, as crates.io's index can
    lag behind a publish.

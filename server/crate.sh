@@ -1,12 +1,12 @@
 # Sourced by the scripts that install Bitview's crates or follow its mode. A
-# mode is prod (crates.io), next or another branch of the official repository,
+# mode is release (crates.io), prod, next or another branch of the official repository,
 # or local (~/Developer/mono, which fleet copies from the workstation). Builds
 # take their native-CPU flags from shared/home/.cargo/config.toml, linked
 # during setup.
 
 # The mode this mini was given, which ship install records, followed by the
 # versions fleet pinned for it, bitviewd's then bitview_mcp's: a crates.io
-# release in prod, a commit on a branch.
+# release in release, a commit on a branch.
 MODE_FILE="$HOME/.config/dots/mode"
 
 # The build each of Bitview's workloads runs, as installed() named it when its
@@ -42,7 +42,7 @@ tokens_digest() {
 bitview_mode() {
     cargo install --list | awk '
         $1 == "bitviewd" {
-            if (NF == 2) print "prod"
+            if (NF == 2) print "release"
             else if ($3 ~ /^\(\//) print "local"
             else if ($3 ~ /[?&]branch=/) {
                 sub(/.*[?&]branch=/, "", $3)
@@ -61,7 +61,7 @@ bitview_mode() {
 install_crate() {
     local crate="$1" mode="$2" pin="${3:-}"
     case "$mode" in
-        prod)
+        release)
             cargo install --locked "$crate" --bin "$crate" ${pin:+--version "$pin"}
             ;;
         local)

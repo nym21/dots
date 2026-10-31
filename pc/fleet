@@ -517,12 +517,12 @@ clear_passwords() {
 }
 
 # The versions to install in MODE, bitviewd's and bitview_mcp's, resolved
-# once per run: the newest crates.io releases in prod, the branch's commit
+# once per run: the newest crates.io releases in release, the branch's commit
 # otherwise. None for local, which fleet copies.
 resolve() {
     local commit
     case "$1" in
-        prod)
+        release)
             # The newest release out for 10 minutes, by when crates.io's index
             # has it everywhere: cargo may not find one just published.
             for crate in bitviewd bitview_mcp; do
@@ -1160,7 +1160,7 @@ status() {
         fi
     done
     # A newer version of a mode than its servers have: a crates.io release in
-    # prod, a commit of the branch otherwise.
+    # release, a commit of the branch otherwise.
     for mode in $(entries "$@" | awk '$2 != "local" { print $2 }' | sort -u); do
         newest="$(resolve "$mode" 2>/dev/null | cut -d ' ' -f 1)" || continue
         [ -n "$newest" ] || continue
@@ -1169,7 +1169,7 @@ status() {
             [ "$(cat "$work/$server")" != unreachable ] || continue
             version="$(awk '{ print $2 }' "$work/$server" | tr -d ',')"
             case "$mode" in
-                prod) [ "$version" = "v$newest" ] ;;
+                release) [ "$version" = "v$newest" ] ;;
                 *) [ "${version#*#}" = "${newest:0:8}" ] ;;
             esac || behind="$behind $server"
         done < <(entries "$@" | awk -v mode="$mode" '$2 == mode { print $1 }')

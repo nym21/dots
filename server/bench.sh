@@ -5,7 +5,7 @@ set -euo pipefail
 SERVER_DIR="$(dirname "$0")"
 
 if [ "$#" -gt 2 ]; then
-    echo "Usage: $0 [prod | next | BRANCH | local] [VERSION | COMMIT]" >&2
+    echo "Usage: $0 [release | prod | next | BRANCH | local] [VERSION | COMMIT]" >&2
     exit 1
 fi
 
@@ -20,7 +20,7 @@ source "$SERVER_DIR/crate.sh"
 rustup update
 
 # (Pinned, a release or a commit, to bench one build on several minis.)
-install_crate bitviewd_bench "${1:-prod}" "${2:-}"
+install_crate bitviewd_bench "${1:-release}" "${2:-}"
 
 source "$SERVER_DIR/external.sh"
 mkdir -p "$EXTERNAL_VOLUME/bitview"

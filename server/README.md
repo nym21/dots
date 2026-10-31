@@ -158,8 +158,8 @@ mode and tunnels, and `fleet update` hands a mini its part, then runs
 what it was given, so it boots and serves without the workstation.
 
 Every mini runs the same setup, and the mode is the only difference: Bitview and
-the MCP server come from crates.io (**prod**), from a branch of the official
-`bitcoinresearchkit/mono` repository (**next**, or any other branch), or from
+the MCP server come from crates.io (**release**), from a branch of the official
+`bitcoinresearchkit/mono` repository (**prod**, **next**, or any other branch), or from
 the workstation's `~/Developer/mono`, which `fleet` copies to the mini
 (**local**).
 
@@ -170,7 +170,7 @@ Bitview or the MCP server records the build it runs in `~/.config/dots/running`;
 its version and commit decide a restart, so a rebuild of the same one needs
 none, and cargo builds a version only once, the crate's own binary alone, as
 one behind a feature, such as bitviewd 0.12.2's `bitview-bindgen`, would have
-it build the package again on every install. `ship update` runs it, taking prod's newest crates.io release and a
+it build the package again on every install. `ship update` runs it, taking the newest crates.io release in release and a
 branch's newest commit, unless `fleet update` pinned a version, as it does so
 that servers sharing a tunnel run the same one. Given a mode, as in
 `ship install next`, it switches the mini to it until `fleet update` sets it
@@ -220,7 +220,7 @@ Attach to the session from the Rex app to watch them, or run `ship status` for
 one line:
 
 ```text
-prod v0.12.2, workloads 4/4, tunnels prod mcp m4-1 3/3 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 3b1a84f
+release v0.12.2, workloads 4/4, tunnels prod mcp m4-1 3/3 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 3b1a84f
 ```
 
 They come back on their own after a reboot and after a Rex update restarts the
@@ -250,12 +250,12 @@ for example `dbcache=8192` for the initial sync, then restart it with
 
 `server/bench.sh` runs in the foreground, like a terminal command, in a Rex pane
 or over SSH, which reach the external volume. It installs `bitviewd_bench` in
-the mode given, prod when none, pinned to a release or a commit if one follows,
+the mode given, release when none, pinned to a release or a commit if one follows,
 to bench one build on several minis:
 
 ```sh
 ship bench                     # crates.io
-ship bench prod 0.12.2         # that release
+ship bench release 0.12.2      # that release
 ship bench next                # the official repository's next branch
 ship bench next 4a0464f5a      # that commit of it
 ship bench local               # ~/Developer/mono

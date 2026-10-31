@@ -20,7 +20,7 @@ set -euo pipefail
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
-    echo "Usage: $0 [--build] [prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
+    echo "Usage: $0 [--build] [release | prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
     echo "       $0 --restart" >&2
     exit 1
 }
@@ -47,7 +47,7 @@ if [ "$step" = all ] || [ "$step" = build ]; then
         mode="$(bitview_mode)" pin='' mcp_pin=''
     fi
     if [ -z "${mode:-}" ]; then
-        echo "This mini has no mode yet; give one: prod, next, a branch, or local." >&2
+        echo "This mini has no mode yet; give one: release, prod, next, a branch, or local." >&2
         exit 1
     fi
 
