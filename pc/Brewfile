@@ -1,4 +1,5 @@
 brew "bun"
+brew "gh"
 brew "mcp-publisher"
 brew "shellcheck"
 brew "uv"
