@@ -244,15 +244,17 @@ newest version of their mode:
    this Mac or the connection fares. A group whose version cannot be found or
    whose servers fail to get ready is left as it is while the others update,
    and the run ends failing.
-3. Then it updates them in turn, those sharing a tunnel together, so a tunnel
-   never serves two versions: each leaves the shared tunnels while it updates,
-   the others still serving them, and the updated ones take them back before
-   the last one leaves, which overlaps two versions for about a second rather
-   than leaving the tunnel without a server: once the last one's token file
-   drops them, each updated one joins them, and the moment all say they are
-   connected, the word to leave goes to the last one over a connection opened
-   beforehand, where its tunnels drop them and keep its own connected. Their
-   cache is purged once its last requests on them end.
+3. Then it updates those sharing a tunnel together, in two halves, each at
+   once, so a tunnel never serves two versions and half the group keeps
+   serving throughout: the first half, half the group rounded down, updates
+   without the shared tunnels while the second still serves them, and takes
+   them back before the second leaves and updates, which overlaps two versions
+   for about a second rather than leaving the tunnel without a server: once
+   the second half's token files drop them, each server of the first joins
+   them, and the moment all say they are connected, the word to leave goes to
+   each of the second over a connection opened beforehand, where its tunnels
+   drop them and keep its own connected. Their cache is purged once its last
+   requests on them end.
 4. For each server it gives it its tunnels and runs `ship apply` there, which
    restarts only what runs another build than the one installed: the Rex
    server, Bitview and the MCP server, the tunnels, for a new cloudflared or
@@ -264,8 +266,8 @@ newest version of their mode:
 5. As soon as only servers on the new version serve a tunnel, it purges
    Cloudflare's cache of the hostnames the tunnel routes, so none serves what
    the old version cached: a server's own tunnel once it serves again, and the
-   shared tunnels once the last server of their group has left them, as the
-   others serve them however long it recomputes. Both come before a macOS
+   shared tunnels once the second half of their group has left them, as the
+   first serves them however long it recomputes. Both come before a macOS
    update. Servers already at the run's versions keep their tunnels
    throughout, and their cache. `fleet purge SERVER...` purges by hand.
 
