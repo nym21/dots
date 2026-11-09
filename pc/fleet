@@ -916,6 +916,22 @@ leave() {
     incomplete=1
 }
 
+# Tell search engines which of the public site's pages this run's prod version
+# changed. The first run only notes where it starts, so the site's key is live
+# before anything is sent, and a failure waits for the next run: neither
+# touches the update.
+announce_pages() {
+    local new old state="$STATE_DIR/indexnow-prod" script="$HOME/Developer/mono/scripts/indexnow.sh"
+    [ -s "$work/pins.prod" ] && [ -x "$script" ] || return 0
+    new="$(cut -d ' ' -f 1 "$work/pins.prod")"
+    old="$(cat "$state" 2>/dev/null || true)"
+    [ "$old" != "$new" ] || return 0
+    if [ -z "$old" ] || "$script" "$old" "$new"; then
+        mkdir -p "$STATE_DIR"
+        echo "$new" > "$state"
+    fi
+}
+
 update() {
     local server mode tunnels tunnel group down servers='' kept='' selected
     lock
@@ -996,6 +1012,7 @@ update() {
         echo "Not everything was updated; see above." >&2
         exit 1
     fi
+    announce_pages
 }
 
 restart() {
