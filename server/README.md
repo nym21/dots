@@ -303,6 +303,10 @@ tunnel, the one named after it on the tailnet, goes down until it catches up,
 and Cloudflare's alert names the mini. The shared tunnels serve on, since the
 other servers may be stuck at the same block.
 
+The tunnels use HTTP/2 rather than QUIC, `cloudflared`'s default: Bitview sends
+its responses uncompressed for Cloudflare to compress, and large ones reached
+the edge about 18% faster over HTTP/2, with small ones no slower.
+
 Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
 tunnel of the account. Since each server also serves its own tunnel, its
 email says which server, whether `fleet` restarted it on purpose or it went
