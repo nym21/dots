@@ -558,11 +558,9 @@ resolve() {
     esac
 }
 
-# The last of what SERVER's fetch said of macOS: downloaded, not downloaded,
-# or a major upgrade waiting for a run by hand.
+# The last of what SERVER's fetch said of a macOS update: downloaded or not.
 macos_note() {
-    grep -E '^(macOS .* is downloaded|Could not download macOS .*|macOS .*, a major upgrade, waits .*)\.$' \
-        "$work/fetch.$1" | tail -1 || true
+    grep -E '^(macOS .* is downloaded|Could not download macOS .*)\.$' "$work/fetch.$1" | tail -1 || true
 }
 
 # Download on SERVER the macOS update ship fetch found but could not get
@@ -571,7 +569,7 @@ macos_note() {
 download_macos() {
     grep -q '^Could not download macOS .* without the password' "$work/fetch.$1" || return 0
     grep -qx "$1" "$work/checked" 2>/dev/null || return 0
-    if lend_password "$1" && detach "$1" "$MACOS_UPDATE --download$MACOS_ARGS"; then
+    if lend_password "$1" && detach "$1" "$MACOS_UPDATE --download"; then
         follow_job "$1" "$fetch_timeout" || true
     fi
 }
@@ -692,13 +690,13 @@ update_macos() {
     local server="$1" before
     shift
     grep -qx "$server" "$work/checked" 2>/dev/null || return 0
-    macos_note "$server" | grep -qE '^(macOS .* is downloaded|Could not download macOS .*)\.$' || return 0
+    [ -n "$(macos_note "$server")" ] || return 0
     if ! others_serve "$server" "$@"; then
         incomplete=1
         return 0
     fi
     before="$(on "$server" 'sw_vers -productVersion' || true)"
-    if ! lend_password "$server" || ! detach "$server" "$MACOS_UPDATE$MACOS_ARGS"; then
+    if ! lend_password "$server" || ! detach "$server" "$MACOS_UPDATE"; then
         echo "$server: could not start its macOS update." >&2
         incomplete=1
         return 0
@@ -938,9 +936,6 @@ update() {
     # The servers given and those sharing a tunnel with them, all by default,
     # which the run updates, so checks before it cover them all.
     selected="$(groups "$@" | tr '\n' ' ')"
-    # fleet auto leaves a major macOS upgrade to a run by hand.
-    MACOS_ARGS=''
-    [ -z "${FLEET_AUTO:-}" ] || MACOS_ARGS=' --same-major'
     one_mode || exit 1
     cf_logged_in
     fetch_tokens

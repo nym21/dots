@@ -7,8 +7,7 @@ set -euo pipefail
 # come back at boot, or at once should the install not restart the Mac. With
 # macOS current, it installs the other updates, such as Safari or the Command
 # Line Tools, the newest of each. With --download, for ship fetch and fleet,
-# it restarts nothing: it installs those, or downloads a macOS update. With
-# --same-major, as fleet auto runs it, a major upgrade waits for a run by hand.
+# it restarts nothing: it installs those, or downloads a macOS update.
 #
 # macOS asks for its owner's password to download an update as well as to
 # install it, even as root: a terminal's, or without one the password fleet
@@ -20,13 +19,11 @@ source "$DOTS_DIR/shared/lent.sh"
 # status shows it until then.
 WAITING="$HOME/.config/dots/macos-downloaded"
 download=0
-same_major=0
 for arg; do
     case "$arg" in
         --download) download=1 ;;
-        --same-major) same_major=1 ;;
         *)
-            echo "Usage: $0 [--download] [--same-major]" >&2
+            echo "Usage: $0 [--download]" >&2
             exit 1
             ;;
     esac
@@ -90,14 +87,6 @@ as_owner() {
 }
 
 macos="$(newest macOS)"
-if [ "$same_major" -eq 1 ] && [ -n "$macos" ]; then
-    IFS='|' read -r _ version _ <<< "$macos"
-    if [ "${version%%.*}" != "${current%%.*}" ]; then
-        echo "macOS $version, a major upgrade, waits for fleet update run by hand."
-        macos="$(awk -F '|' -v major="${current%%.*}." '$1 == "macOS" && index($2, major) == 1 { line = $0 }
-            END { if (line) print line }' <<< "$UPDATES")"
-    fi
-fi
 
 if [ "$download" -eq 1 ]; then
     if [ -z "$macos" ]; then

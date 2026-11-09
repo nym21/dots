@@ -306,8 +306,8 @@ hourly, runs `fleet update` without a terminal, when this Mac is on power, its
 dots is exactly origin's `main`, which the servers pull (not another branch, nor
 changes left to commit, push or pull), and a server answers. That one check brings the servers a new crates.io release or
 `next` commit within the hour, prod included, and Homebrew, Rust, Rex,
-cloudflared, Bitcoin Core, Tailscale, and macOS's updates within its major
-version, a major upgrade waiting for `fleet update` by hand; a run with nothing new
+cloudflared, Bitcoin Core, Tailscale, and macOS's updates, major upgrades
+included; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one
 it is open for catches up. It leaves alone a group of which a server does not
 serve, as one stopped on purpose or after a crash, to be looked at, while the

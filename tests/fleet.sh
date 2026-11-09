@@ -11,7 +11,7 @@ eval "$(sed -n '/^entries() {/,/^}/p; /^shared() {/,/^}/p; /^tunnels_of() {/,/^}
     /^serving() {/,/^}/p; /^connected() {/,/^}/p; /^needing_first() {/,/^}/p; /^hand_over() {/,/^}/p' "$fleet")"
 work="$TMP/work" STATE_DIR="$TMP/state" CONF="$TMP/fleet.conf" TUNNELS="$TMP/tunnels"
 mkdir -p "$work"
-server_user=mini ready_timeout=43200 fetch_timeout=3600 incomplete='' MACOS_ARGS=''
+server_user=mini ready_timeout=43200 fetch_timeout=3600 incomplete=''
 SHIP=ship JOB=job TAILSCALE_SH=tailscale.sh TUNNELS_SH=tunnels.sh MACOS_UPDATE=macos-update.sh PASSWORD='~/pw'
 printf 'm4-1 prod prod mcp\nm4-2 prod prod mcp\n' > "$CONF"
 printf 'prod t\nmcp t\nm4-1 t\nm4-2 t\n' > "$TUNNELS"
@@ -85,8 +85,7 @@ reset; keychain_password() { :; }; CHANGED='' ANSWER=0 check_passwords m4-1 2> /
 check "no password kept makes no attempt" fails called "checked m4-1"
 
 # update_macos: what fetch said decides, and only while the others serve.
-printf '%s\n' 'Could not download macOS 28.0 without the password, which fleet update lends.' \
-    'macOS 28.0, a major upgrade, waits for fleet update run by hand.' > "$work/fetch.m4-1"
+echo 'macOS 27.0.1 and its other software are up to date.' > "$work/fetch.m4-1"
 printf '%s\n' 'Could not download macOS 27.2 without the password, which fleet update lends.' \
     'macOS 27.2 is downloaded.' > "$work/fetch.m4-2"
 printf 'm4-1\nm4-2\n' > "$work/checked"
@@ -101,7 +100,7 @@ on() {
     esac
 }
 reset; update_macos m4-1 m4-1 2> /dev/null
-check "a major upgrade waiting is not installed" fails called "job on m4-1"
+check "with macOS current, nothing is installed" fails called "job on m4-1"
 reset; update_macos m4-2 m4-2 > /dev/null 2>&1
 check "a downloaded update is installed, as a job" called "job on m4-2: macos-update.sh"
 reset; CHECK=1 update_macos m4-2 m4-1 m4-2 2> /dev/null

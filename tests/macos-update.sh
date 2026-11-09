@@ -84,10 +84,9 @@ run none LIST="$minor" "$script" --download
 check "a download without it says so" said 'without the password'
 check "and marks nothing" [ ! -e "$marker" ]
 
-run lent LIST="$major" "$script" --download --same-major
-check "with --same-major, a major upgrade waits" said 'a major upgrade, waits'
-check "the other updates still install" called 'softwareupdate --install Safari'
-check "but not the major upgrade" not_called 'macOS Tahoe'
+run lent LIST="$major" "$script" --download
+check "a major upgrade downloads like any other" called 'softwareupdate --download macOS Tahoe 28.0-x'
+check "and is marked downloaded" [ "$(cat "$marker")" = 28.0 ]
 
 run lent LIST="$minor" "$script"
 check "an install stops the workloads before installing" before 'workloads stop' '--install macOS'
