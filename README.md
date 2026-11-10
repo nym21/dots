@@ -365,8 +365,8 @@ fresh boot before a benchmark keeps runs comparable.
 One `fleet update`, `restart`, `reboot` or `shutdown` runs at a time: another stops at once,
 and an hourly run skips its turn, which a day without a completed run
 notifies, as when one hangs. It keeps the Mac awake meanwhile, logs to
-`~/Library/Logs/fleet-auto.log`, with why it skipped an hour, and notifies once
-when runs start failing, when one has run for a day, as when it hangs, or
+`~/Library/Logs/fleet-auto.log`, each line of a run with its time, and why it
+skipped an hour, and notifies once when runs start failing, when one has run for a day, as when it hangs, or
 when none has run for a day; `ship status` says
 when none succeeded for over 3 days.
 

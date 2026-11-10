@@ -1468,8 +1468,11 @@ auto() {
     fi
     echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
     # Watched from here, as launchd starts no other hour's run while this one
-    # runs: one that hangs notifies once it has run for a day.
-    FLEET_AUTO=1 caffeinate -i "$0" update </dev/null &
+    # runs: one that hangs notifies once it has run for a day. Each line it
+    # prints is logged with its time, so how long a step took, as a server
+    # alone on a tunnel, reads from the log.
+    FLEET_AUTO=1 caffeinate -i "$0" update </dev/null \
+        > >(while IFS= read -r line; do printf '%s %s\n' "$(date +%T)" "$line"; done) 2>&1 &
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         if [ -z "$long" ] && [ "$SECONDS" -ge 86400 ]; then
