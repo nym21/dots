@@ -204,6 +204,47 @@ they start, as reloading them would start its workloads. It refuses a shared
 tunnel given two modes, or served in two versions by the servers that serve it
 from now on, and purges the cache of the tunnels that changed servers.
 
+### Borrowing a server
+
+A mini borrowed for a benchmark or a long computation leaves `fleet.conf` while
+it is lent, in commits like any other change, so dots stays clean and equal to
+origin and `fleet auto` keeps updating the others, knowing nothing of it. Its
+shared tunnels go first to every prod mini, which serve them on prod's version
+meanwhile, through prod's own hand-over: on all of them, as a hand-over joins
+only what the first half's servers are given. Every fleet run then notes the
+mini as on the tailnet but not in `fleet.conf`, which says it is still lent.
+For m6-2 and `next`, from `~/Developer/dots`, with m6-2 serving:
+
+1. In `fleet.conf`, add `next` to every prod mini's line, and leave m6-2's line
+   without tunnels, as `m6-2 next`: `fleet tunnels` changes only the servers
+   `fleet.conf` names, so m6-2 dropped here would keep serving `next` on its
+   own version beside prod's. Commit that alone and don't push yet: `fleet
+   auto` skips while main differs from origin, where pushed first it could
+   make the switch itself, in its own order.
+2. `pc/fleet tunnels`: the prod minis take `next`, each waiting until it is
+   connected, then m6-2 leaves it. `pc/fleet status` shows the prod minis with
+   `prod mcp next` and m6-2 with its own tunnel alone. Push.
+3. For a benchmark from a fresh boot, `pc/fleet reboot m6-2` now, as `fleet`
+   acts only on a server `fleet.conf` names.
+4. Remove m6-2's line, commit alone, push. m6-2 is the borrower's.
+
+Another fresh boot during the borrow: put `m6-2 next` back in `fleet.conf`
+without committing, so `fleet auto` skips, `pc/fleet reboot m6-2`, and
+`git checkout pc/fleet.conf`.
+
+To give it back:
+
+1. Put `m6-2 next` back, without tunnels, commit alone, push, and
+   `pc/fleet update m6-2`, which brings it to `next`'s newest version, however
+   long Bitview takes on the data the borrow left, touching nothing else.
+2. Once it serves, in `fleet.conf` give `next` back to m6-2 alone,
+   `m6-2 next next`, and remove it from the prod minis. Commit alone, don't push
+   yet, and `pc/fleet tunnels`: m6-2 takes `next`, waiting until it is
+   connected, then the prod minis leave it, and its cache is purged. Push.
+
+A prod mini is lent the same way, its line removed, but not while three serve
+prod: the two left would update in halves of one, each alone in turn.
+
 ### Setting up
 
 `fleet init [SERVER...]`, all of them by default, is what `fleet` needs from
