@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # server/tunnels.sh: a reload's leave and join, with a stand-in cloudflared
-# that only waits, and fakes for what else it asks of the mini.
+# that only waits, and once told to stop, ends half a second later, as one
+# finishing its last requests, and fakes for what else it asks of the mini.
 # shellcheck disable=SC2016,SC2034,SC2086 # ON_EXIT, expanded when it runs; the list counted by its words
 source "$(dirname "$0")/lib.sh"
 if ! command -v cc >/dev/null; then
@@ -10,8 +11,21 @@ fi
 mkdir -p "$TMP/bin" "$TMP/server" "$TMP/home"
 cp "$REPO/server/tunnels.sh" "$TMP/server/"
 printf '#!/bin/bash\necho "$*" >> "%s/workloads.calls"\n' "$TMP" > "$TMP/server/workloads.sh"
-printf 'int main(void) { for (;;) pause(); }\n' > "$TMP/cloudflared.c"
-cc -include unistd.h -o "$TMP/bin/cloudflared" "$TMP/cloudflared.c"
+cat > "$TMP/cloudflared.c" <<'EOF'
+#include <signal.h>
+#include <unistd.h>
+int main(void) {
+    sigset_t term;
+    int signal;
+    sigemptyset(&term);
+    sigaddset(&term, SIGTERM);
+    sigprocmask(SIG_BLOCK, &term, 0);
+    sigwait(&term, &signal);
+    usleep(500000);
+    return 0;
+}
+EOF
+cc -o "$TMP/bin/cloudflared" "$TMP/cloudflared.c"
 cat > "$TMP/bin/curl" <<'EOF'
 #!/bin/bash
 case "${*: -1}" in
@@ -73,6 +87,11 @@ check "the tokens it runs on are recorded" \
 tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own"
 check "a reload with --wait returns once every tunnel is connected" "$script" reload --wait
 check "the shared tunnels are back" [ "$(count)" -eq 3 ]
+tokens "prod tok-prod" "m4-1 tok-own"
+check "and once those the file dropped have stopped" "$script" reload --wait
+check "so mcp has left by then" [ "$(count)" -eq 2 ]
+tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own"
+check "they take mcp back" "$script" reload --wait
 check "and the own tunnel still keeps its process" contains "$(tunnels)" "$own"
 
 mv "$pid_file" "$TMP/pid"

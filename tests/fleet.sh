@@ -8,7 +8,8 @@ eval "$(sed -n '/^entries() {/,/^}/p; /^shared() {/,/^}/p; /^tunnels_of() {/,/^}
     /^check_password() {/,/^}/p; /^set_tokens() {/,/^}/p; /^detach() {/,/^}/p; /^follow_job() {/,/^}/p;
     /^kept_password() {/,/^}/p; /^check_passwords() {/,/^}/p; /^macos_note() {/,/^}/p;
     /^update_macos() {/,/^}/p; /^update_tailscaled() {/,/^}/p; /^others_serve() {/,/^}/p;
-    /^serving() {/,/^}/p; /^connected() {/,/^}/p; /^needing_first() {/,/^}/p; /^hand_over() {/,/^}/p' "$fleet")"
+    /^serving() {/,/^}/p; /^connected() {/,/^}/p; /^needing_first() {/,/^}/p; /^hand_over() {/,/^}/p;
+    /^take_tunnels() {/,/^}/p' "$fleet")"
 work="$TMP/work" STATE_DIR="$TMP/state" CONF="$TMP/fleet.conf" TUNNELS="$TMP/tunnels"
 mkdir -p "$work"
 server_user=mini ready_timeout=43200 fetch_timeout=3600 incomplete=''
@@ -153,4 +154,13 @@ rm -f "$work/leave.m4-2"
 reset
 check "a last server that never answers stops the run" fails eval '(LEAVE=255 RETRY=255 hand_over m4-2 "prod mcp" m4-1 m4-2) > /dev/null 2>&1'
 check "without purging" fails called "purged"
+
+# take_tunnels: a server that serves waits until its tunnels take a gain,
+# though its check fails the moment its token file names one more.
+printf 'prod mcp m4-1\n' > "$TMP/tokens"
+set_tokens() { shift; echo "$*" > "$TMP/tokens"; }
+connected() { [ "$(wc -w < "$TMP/tokens")" -eq 3 ]; }
+on() { case "$2" in *reload*) record "$2" ;; esac; }
+reset; take_tunnels m4-1 prod mcp next m4-1 > /dev/null
+check "a server that serves takes a gain waiting until it connects" called "reload --wait"
 finish

@@ -1119,12 +1119,17 @@ minus() {
 # they don't run (stopped, or the mini benching), only the token file, which
 # they take when they start, as reloading them would start its workloads.
 take_tunnels() {
-    local server="$1"
+    local server="$1" serving=''
+    # Asked before the token file changes, which they then fall short of until
+    # they take it.
+    if connected "$server"; then
+        serving=1
+    fi
     set_tokens "$@" || return 0
     # (The pattern's brackets keep it from matching this command's own shell.)
     if ! on "$server" 'pgrep -qf "server/[t]unnels.sh"'; then
         echo "$server: its tunnels don't run; they take these when they start."
-    elif connected "$server"; then
+    elif [ -n "$serving" ]; then
         on "$server" "$TUNNELS_SH reload --wait" || {
             echo "$server: its tunnels did not take the tokens; stopping here." >&2
             exit 1

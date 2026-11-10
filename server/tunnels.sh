@@ -69,10 +69,9 @@ case "$#:${1:-}:${2:-}" in
         fi
         # Checked every tenth of a second, as fleet acts on it at once.
         for _ in {1..1200}; do
-            if [ "${2:-}" = --wait ]; then
+            if [ "$(tunnel_pids | wc -l | tr -d ' ')" -le "${#TOKENS[@]}" ]; then
+                [ "${2:-}" = --wait ] || exit 0
                 [ "$(connected_count)" -lt "${#TOKENS[@]}" ] || exit 0
-            else
-                [ "$(tunnel_pids | wc -l | tr -d ' ')" -gt "${#TOKENS[@]}" ] || exit 0
             fi
             sleep 0.1
         done
