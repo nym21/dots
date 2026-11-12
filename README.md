@@ -19,8 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/nym21/dots/main/bootstrap | bash -s
 directly. For a headless mini, follow the
 [server setup instructions](server/README.md), then run `bootstrap` with
 `server`, or `./server/setup.sh`. Setup ends by listing what only you can do,
-such as logins, Lockdown Mode, Xcode, or a backup, while it is missing; run it
-again to check. T3 Code, Xcode, and the Rex app are installed by hand.
+such as logins, while it is missing; run it again to check. T3 Code and the Rex
+app are installed by hand.
 
 Setup installs the shared packages and the role's, from the `Brewfile` and
 `cargo.txt` in `shared/` and in the role's directory. It links `shared/home/`
@@ -43,17 +43,14 @@ Some apps cannot come from the Brewfile:
 - **`cargo-hawk`** comes from Astral's installer, which setup and `ship update`
   run when a newer release is out: Cargo cannot build it, and each release is
   built against one stable Rust, so a Rust update needs its newest.
-- **Xcode** comes from the App Store, by hand, as Homebrew cannot see App Store
-  apps without Spotlight's index; setup says while it is missing.
 
 Both roles turn the firewall on and Spotlight's index off. On the workstation,
-setup keeps it awake on power, display included, keeps Time Machine's
-automatic backups off (see [Backups](#backups)), and sets Mullvad: its tunnel
-MTU to 1380, which Tailscale's packets need, with IPv6 off and
-quantum-resistant key exchange on; DNS blocking of ads, trackers, and malware;
-the local network shared; connecting at login; lockdown mode off; and split
-tunneling on, with cloudflared excluded (see [Updates](#updates)).
-The relay stays Mullvad's default, and its account is logged in by hand.
+setup keeps it awake on power, display included, and leaves Mullvad at its
+defaults but for what something needs: its tunnel MTU at 1380, which
+Tailscale's packets need; the local network shared; connecting at login; and
+split tunneling on, with cloudflared excluded (see [Updates](#updates)). Its
+DNS blocking stays off, as each of its lists blocks T3 Connect's relay. Its
+account is logged in by hand.
 
 ## Layout
 
@@ -80,7 +77,6 @@ updates them. `ship` alone lists this Mac's commands.
 ship update    # Update everything and restart what changed; macOS last.
 ship clean     # Free what caches and old builds take; ship update runs it too.
 ship status    # On the workstation: what only you can do, while it is missing.
-ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
 fleet init     # On the workstation: what fleet needs from you, once: logins, tunnels, passwords, Rex.
 fleet status   # On the workstation: one line per server, and what is due.
 fleet update   # On the workstation: ready every server at once, then restart what changed, in turn.
@@ -100,9 +96,8 @@ the workloads within the mini's mode (see the
 [server instructions](server/README.md)), in two halves that `fleet` runs
 apart: `ship fetch` readies everything while the mini serves, restarting
 nothing, then `ship apply` restarts only what runs an older build than the one
-installed, for the seconds that takes. On the workstation it backs up whenever
-the backup disk is in. It then runs `ship clean`, which keeps what is
-in use and frees the rest: Homebrew's downloads, Rust toolchains but the
+installed, for the seconds that takes. It then runs `ship clean`, which keeps
+what is in use and frees the rest: Homebrew's downloads, Rust toolchains but the
 default and those a project pins, Cargo's caches, builds unused for 30 days,
 old releases of Codex's packages, and simulator runtimes but the newest stable
 iOS. Last, if macOS has an update, it downloads it, waits 30 seconds for
@@ -148,18 +143,6 @@ seconds, then only in that script's memory, never its environment; `sudo` and
 `softwareupdate` get it on their input. One no job read, as when a restart
 came first, goes at the server's next boot, at the next run's check, or at the
 end of the run.
-
-### Backups
-
-The workstation backs up to Time Machine by hand, as automatic backups keep
-snapshots on the local disk while the backup disk is away. `ship backup` leaves
-out what can be rebuilt or downloaded again, such as Bitcoin Core's and
-Bitview's data, toolchains, caches, and builds; unlocks the backup disk with
-its password from the login keychain, asked once and checked; backs up; and
-unmounts the disk, so the card can stay in for the next backup or come out,
-which locks it. Without the disk it fails. `ship update` runs it whenever the
-disk is in, and otherwise leaves Time Machine alone, saying only when the last
-backup is missing or over a week old.
 
 ## Servers
 

@@ -16,7 +16,6 @@ usage() {
     case "$ROLE" in
         pc)
             echo "  status                      what only you can do, while it is missing" >&2
-            echo "  backup                      back up with Time Machine, then unmount its disk" >&2
             ;;
         server)
             echo "  fetch                       ready all of update while serving, restarting nothing" >&2
@@ -47,7 +46,6 @@ case "$ROLE:$command" in
     *:update) exec "$DOTS_DIR/shared/update.sh" "$@" ;;
     *:clean) exec "$DOTS_DIR/shared/clean.sh" "$@" ;;
     pc:status) exec "$DOTS_DIR/pc/status.sh" "$@" ;;
-    pc:backup) exec "$DOTS_DIR/pc/backup.sh" "$@" ;;
     server:fetch)
         [ "$#" -eq 0 ] || usage
         exec "$DOTS_DIR/shared/update.sh" --fetch

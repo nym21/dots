@@ -19,10 +19,6 @@ install_fleet_auto
 echo "Merging Codex and Claude Code settings..."
 merge_agent_settings
 
-# Time Machine backs up only when asked: automatic backups keep snapshots on
-# the local disk while the backup disk is away.
-sudo tmutil disable
-
 # On power, this Mac never sleeps, nor its display, so T3 and its agents,
 # fleet auto, and the tunnel keep running.
 sudo pmset -c sleep 0 displaysleep 0
@@ -34,19 +30,14 @@ if [ ! -d "/Applications/Mullvad VPN.app" ]; then
     echo "Installing Mullvad VPN..."
     brew install --cask mullvad-vpn
 fi
-# Tailscale's packets, tssh's among them, need an MTU of 1380 in Mullvad's
-# tunnel: on its own, Mullvad lowers it below what they fit in. No IPv6.
-# Quantum-resistant, blocking ads, trackers, and malware by DNS, sharing the
-# local network, and connecting at login. Lockdown mode stays off, so this Mac
-# keeps its connections, the servers' among them, while Mullvad is down. The
-# relay is Mullvad's default; the account is logged in by hand.
+# Mullvad's defaults, but for what something here needs. Tailscale's packets,
+# tssh's among them, need an MTU of 1380 in its tunnel: on its own, Mullvad
+# lowers it below what they fit in. The local network stays reachable, and it
+# connects at login. Its DNS blocking stays off, as each of its lists blocks
+# T3 Connect's relay. The account is logged in by hand.
 mullvad tunnel set mtu 1380
-mullvad tunnel set ipv6 off
-mullvad tunnel set quantum-resistant on
-mullvad dns set default --block-ads --block-trackers --block-malware
 mullvad lan set allow
 mullvad auto-connect set on
-mullvad lockdown-mode set off
 # Cloudflare's tunnel servers are unreachable through Mullvad, so cloudflared
 # is excluded from it.
 mullvad split-tunnel set on

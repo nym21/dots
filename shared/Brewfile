@@ -1,4 +1,7 @@
 brew "bitcoin"
 brew "cloudflared"
 brew "fish"
+# cargo-update builds against OpenSSL, which it finds through pkg-config.
+brew "openssl@3"
+brew "pkgconf"
 brew "tailscale"

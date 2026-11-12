@@ -121,47 +121,10 @@ update_cargo_hawk() {
         sh -s -- --quiet --no-modify-path
 }
 
-# The name of Time Machine's backup disk, as it last knew it. Empty without one.
-backup_name() {
-    defaults read /Library/Preferences/com.apple.TimeMachine Destinations 2>/dev/null |
-        sed -nE 's/^ *LastKnownVolumeName = "?([^";]+)"?;$/\1/p' | head -1
-}
-
-# The volume of the backup disk named NAME, locked or not, when it is in.
-backup_volume() {
-    diskutil apfs list -plist | plutil -convert json -o - - |
-        jq -r --arg name "$1" '.Containers[].Volumes[] | select(.Name == $name) | .DeviceIdentifier' | head -1
-}
-
-# When this Mac's last Time Machine backup completed, as Time Machine's
-# settings list it, so a locked or missing backup disk does not matter. Empty
-# without one.
-last_backup() {
-    defaults read /Library/Preferences/com.apple.TimeMachine Destinations 2>/dev/null | awk '
-        /SnapshotDates/ { inside = 1; next }
-        inside && /\)/ { inside = 0 }
-        inside { gsub(/[",]/, ""); sub(/^ +/, ""); if ($0 != "") print }' | sort | tail -1
-}
-
-# Whether this Mac's last Time Machine backup is missing or over a week old.
-# Its backups run by hand, automatic ones being off, as they keep snapshots on
-# the local disk while the backup disk is away.
-backup_problem() {
-    local last
-    last="$(last_backup)"
-    if [ -z "$last" ]; then
-        echo "Time Machine has completed no backup"
-    elif [ "$(date -j -f '%Y-%m-%d %H:%M:%S %z' "$last" +%s 2>/dev/null || echo 0)" -lt "$(date -v-7d +%s)" ]; then
-        echo "Time Machine's last backup is from ${last%% *}, over a week ago"
-    fi
-}
-
 # What only you can do on the workstation, one line each, while it is missing:
 # setup ends with it, and ship status shows it.
 missing_steps() {
-    local problem hosts server last missing='' tunnel='' password='' forward=''
-    [ "$(defaults read .GlobalPreferences LDMGlobalEnabled 2>/dev/null)" = 1 ] ||
-        echo "Turn on Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode, then restart."
+    local hosts server last missing='' tunnel='' password='' forward=''
     # Each output read whole, as grep -q leaving early, or ssh -T failing even
     # when it logs in, would fail a pipeline.
     grep -q '^Mullvad account:' <<< "$(mullvad account get 2>/dev/null)" ||
@@ -170,10 +133,6 @@ missing_steps() {
         echo "Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys."
     ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
         echo "Install the Rex app."
-    # From the App Store, which Homebrew cannot check without Spotlight's index.
-    [ -d /Applications/Xcode.app ] || echo "Install Xcode from the App Store."
-    problem="$(backup_problem)"
-    [ -z "$problem" ] || echo "$problem: put the backup disk in and run ship backup."
     # What fleet init gives, each part checked without changing it; a password
     # only for being kept, unread, as fleet update checks that it still works.
     # With no input, tssh waits for no login, which fleet init asks for.
