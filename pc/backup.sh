@@ -27,9 +27,11 @@ if [ -z "$volume" ]; then
     exit 1
 fi
 
-# Rebuilt or downloaded again: Bitview's data; Rust's, Cargo's, and Bun's;
-# caches; Xcode's simulators and builds; and every project's build.
+# Rebuilt or downloaded again: Bitcoin Core's chain and Bitview's, from it;
+# Rust's, Cargo's, and Bun's; caches; Xcode's simulators and builds; and every
+# project's build.
 exclude=(
+    "$HOME/Library/Application Support/Bitcoin"
     "$HOME/.bitview"
     "$HOME/Downloads"
     "$HOME/.rustup"

@@ -59,7 +59,7 @@ The relay stays Mullvad's default, and its account is logged in by hand.
 
 - `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
 - `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Mullvad, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
-- `server/`: headless setup, profile, Helix and difftastic, Bitcoin Core, and the workloads.
+- `server/`: headless setup, profile, Helix and difftastic, and the workloads.
 - `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
   each run on this Mac alone with fakes for whatever it would change or reach:
   `tests/run.sh` runs them all, in about 20 seconds, and fails when any check
@@ -153,8 +153,8 @@ end of the run.
 
 The workstation backs up to Time Machine by hand, as automatic backups keep
 snapshots on the local disk while the backup disk is away. `ship backup` leaves
-out what can be rebuilt or downloaded again, such as Bitview's data,
-toolchains, caches, and builds; unlocks the backup disk with
+out what can be rebuilt or downloaded again, such as Bitcoin Core's and
+Bitview's data, toolchains, caches, and builds; unlocks the backup disk with
 its password from the login keychain, asked once and checked; backs up; and
 unmounts the disk, so the card can stay in for the next backup or come out,
 which locks it. Without the disk it fails. `ship update` runs it whenever the

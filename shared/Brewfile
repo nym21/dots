@@ -1,3 +1,4 @@
+brew "bitcoin"
 brew "cloudflared"
 brew "fish"
 brew "tailscale"
