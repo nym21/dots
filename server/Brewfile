@@ -1,3 +1,6 @@
+brew "bat"
+brew "bitcoin"
 brew "blueutil"
+brew "helix"
 brew "mactop"
 brew "switchaudio-osx"

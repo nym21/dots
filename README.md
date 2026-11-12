@@ -1,6 +1,9 @@
 # dots
 
 Shared macOS dotfiles and setup for a workstation and headless Mac minis.
+The workstation is an agents' Mac: it runs T3 Code, Claude Code, and Codex,
+controls the minis with `fleet`, and reaches them over Tailscale. It installs
+what that work needs and nothing personal.
 Run commands from this repository's root as your normal login user.
 
 ## Setup
@@ -16,8 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/nym21/dots/main/bootstrap | bash -s
 directly. For a headless mini, follow the
 [server setup instructions](server/README.md), then run `bootstrap` with
 `server`, or `./server/setup.sh`. Setup ends by listing what only you can do,
-such as logins, Lockdown Mode, App Store apps, or a backup, while it is
-missing; run it again to check.
+such as logins, Lockdown Mode, Xcode, or a backup, while it is missing; run it
+again to check. T3 Code, Xcode, and the Rex app are installed by hand.
 
 Setup installs the shared packages and the role's, from the `Brewfile` and
 `cargo.txt` in `shared/` and in the role's directory. It links `shared/home/`
@@ -25,49 +28,38 @@ and the role's dotfiles into your home directory, keeping existing files as
 `.backup`; edit the repository's files to change them. On the workstation, it
 also has dots push over SSH, as the workstation makes every Git write.
 
-Some settings cannot be linked, as their programs rewrite them:
-
-- **Codex and Claude Code** write machine state into their settings, such as
-  trusted projects, hooks, and auto mode, so setup and `ship update` merge
-  `shared/home/.codex/config.toml` and `shared/home/.claude/settings.json`
-  into each machine's own file. Shared keys overwrite the machine's values and
-  the rest is kept; removing a key from a shared file does not remove it from
-  machines that have it.
-- **Rex and macOS** keep theirs in their preferences, so `ship save` saves
-  them to `pc/rex-settings` and `pc/macos-settings`, and setup writes them
-  back. For macOS, those are the Dock, Finder, keyboard, trackpad, and
-  screenshot settings this Mac sets among the ones `pc/save.sh` lists; add a
-  `DOMAIN KEY` line there to keep another.
+Codex and Claude Code write machine state into their settings, such as
+trusted projects, hooks, and auto mode, so their settings cannot be linked:
+setup and `ship update` merge `shared/home/.codex/config.toml` and
+`shared/home/.claude/settings.json` into each machine's own file. Shared keys
+overwrite the machine's values and the rest is kept; removing a key from a
+shared file does not remove it from machines that have it.
 
 Some apps cannot come from the Brewfile:
 
-- **Apps that update themselves or predate Homebrew here,** such as Mullvad
-  VPN, ChatGPT, Claude, Discord, Signal, and GPG Suite: setup installs them from
-  their casks only when missing, since Homebrew cannot adopt an existing copy
-  without App Management access.
-- **Sparrow Wallet** has its own installer, `pc/sparrow.sh`, which setup and
-  `ship update` run, as a wallet must be its author's: it installs a release
-  only once its manifest is signed by Craig Raw's PGP key, pinned by
-  fingerprint, and lists the installer's checksum, and the app is signed by his
-  Developer ID and notarized, as [Sparrow asks](https://sparrowwallet.com/download/).
-  It leaves a running Sparrow alone; `pc/sparrow.sh --check` checks the
-  installed one.
+- **Mullvad VPN** updates itself, and Homebrew cannot adopt an existing copy
+  without App Management access, so setup installs it from its cask only when
+  missing.
 - **`cargo-hawk`** comes from Astral's installer, which setup and `ship update`
   run when a newer release is out: Cargo cannot build it, and each release is
   built against one stable Rust, so a Rust update needs its newest.
-- **App Store apps** stay out, as Homebrew cannot see them without Spotlight's
-  index; setup lists any missing.
+- **Xcode** comes from the App Store, by hand, as Homebrew cannot see App Store
+  apps without Spotlight's index; setup says while it is missing.
 
 Both roles turn the firewall on and Spotlight's index off. On the workstation,
-setup pins Mullvad's tunnel MTU to 1380, which Tailscale's packets need, with
-IPv6 off, and keeps Time Machine's automatic backups off (see
-[Backups](#backups)).
+setup keeps it awake on power, display included, keeps Time Machine's
+automatic backups off (see [Backups](#backups)), and sets Mullvad: its tunnel
+MTU to 1380, which Tailscale's packets need, with IPv6 off and
+quantum-resistant key exchange on; DNS blocking of ads, trackers, and malware;
+the local network shared; connecting at login; lockdown mode off; and split
+tunneling on, with cloudflared excluded (see [Updates](#updates)).
+The relay stays Mullvad's default, and its account is logged in by hand.
 
 ## Layout
 
-- `shared/`: what both roles use: packages, shell and editor dotfiles, setup internals, and `ship`.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Rex and Zed settings, desktop setup, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
-- `server/`: headless setup, profile, and the workloads.
+- `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Mullvad, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
+- `server/`: headless setup, profile, Helix and difftastic, Bitcoin Core, and the workloads.
 - `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
   each run on this Mac alone with fakes for whatever it would change or reach:
   `tests/run.sh` runs them all, in about 20 seconds, and fails when any check
@@ -88,7 +80,6 @@ updates them. `ship` alone lists this Mac's commands.
 ship update    # Update everything and restart what changed; macOS last.
 ship clean     # Free what caches and old builds take; ship update runs it too.
 ship status    # On the workstation: what only you can do, while it is missing.
-ship save      # On the workstation: save Cargo tools, Rex settings, and macOS settings into dots.
 ship backup    # On the workstation: back up with Time Machine, then unmount its disk.
 fleet init     # On the workstation: what fleet needs from you, once: logins, tunnels, passwords, Rex.
 fleet status   # On the workstation: one line per server, and what is due.
@@ -162,8 +153,8 @@ end of the run.
 
 The workstation backs up to Time Machine by hand, as automatic backups keep
 snapshots on the local disk while the backup disk is away. `ship backup` leaves
-out what can be rebuilt or downloaded again, such as Bitcoin Core's and
-Bitview's data, toolchains, caches, and builds; unlocks the backup disk with
+out what can be rebuilt or downloaded again, such as Bitview's data,
+toolchains, caches, and builds; unlocks the backup disk with
 its password from the login keychain, asked once and checked; backs up; and
 unmounts the disk, so the card can stay in for the next backup or come out,
 which locks it. Without the disk it fails. `ship update` runs it whenever the
@@ -377,8 +368,8 @@ as a LaunchAgent that starts it at login and again whenever it exits, logging
 to `~/Library/Logs/local-tunnel.log`, and moves it onto a new cloudflared on
 its own. First `pc/split-tunnel.sh`: Mullvad's split tunneling excludes
 cloudflared by its versioned Cellar path, which an upgrade replaces, and
-Cloudflare's tunnel servers are unreachable through Mullvad, so it moves an
-existing exclusion to the current binary, keeping the old one's while a tunnel
+Cloudflare's tunnel servers are unreachable through Mullvad, so it excludes
+the current binary, as setup has it do first, keeping the old one's while a tunnel
 started before the upgrade still runs it, as dropping it would cut that tunnel
 off until it restarts. Then the tunnel restarts onto the new binary, and its
 start, as every start of it, moves the exclusion again, dropping the old one's.

@@ -27,6 +27,13 @@ fi
 
 shared_setup
 
+# Helix, the servers' editor, and difftastic, Git's diff there. Helix's
+# config stays in shared/home, where the servers' links already point.
+mkdir -p ~/.config/helix
+link "$SHARED_DIR/home/.config/helix/config.toml" ~/.config/helix/config.toml
+git config --global core.editor hx
+git config --global diff.external difft
+
 # --- Headless macOS system ---
 NETWORK_SERVICES=("Ethernet" "USB 10/100/1G/2.5G LAN")
 DNS_SERVERS=("1.1.1.1" "1.0.0.1")

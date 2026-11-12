@@ -55,6 +55,6 @@ check "once that tunnel runs the new one, the old one goes" [ "$(excluded)" = "$
 run "$old" ""
 check "with no tunnel running, the exclusion moves to the new binary" [ "$(excluded)" = "$new " ]
 
-run "" "101 $old"
-check "with nothing excluded, nothing is added" [ ! -s "$TMP/excluded" ]
+run "" ""
+check "with nothing excluded, as on a new Mac, the binary installed is" [ "$(excluded)" = "$new " ]
 finish

@@ -159,7 +159,7 @@ backup_problem() {
 # What only you can do on the workstation, one line each, while it is missing:
 # setup ends with it, and ship status shows it.
 missing_steps() {
-    local app problem hosts server last missing='' tunnel='' password='' forward=''
+    local problem hosts server last missing='' tunnel='' password='' forward=''
     [ "$(defaults read .GlobalPreferences LDMGlobalEnabled 2>/dev/null)" = 1 ] ||
         echo "Turn on Lockdown Mode: System Settings > Privacy & Security > Lockdown Mode, then restart."
     # Each output read whole, as grep -q leaving early, or ssh -T failing even
@@ -171,10 +171,7 @@ missing_steps() {
     ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
         echo "Install the Rex app."
     # From the App Store, which Homebrew cannot check without Spotlight's index.
-    for app in "AdGuard for Safari" "Blackmagic Disk Speed Test" Developer "Numbers Creator Studio" \
-        "Pages Creator Studio" Xcode; do
-        [ -d "/Applications/$app.app" ] || echo "Install $app from the App Store."
-    done
+    [ -d /Applications/Xcode.app ] || echo "Install Xcode from the App Store."
     problem="$(backup_problem)"
     [ -z "$problem" ] || echo "$problem: put the backup disk in and run ship backup."
     # What fleet init gives, each part checked without changing it; a password
@@ -300,17 +297,12 @@ shared_setup() {
 
     # --- Dotfiles ---
     echo "Linking dotfiles..."
-    mkdir -p ~/.config/{fish,helix}
-
-    git config --global diff.external difft
-    git config --global core.editor hx
-
+    mkdir -p ~/.config/fish
     link "$SHARED_DIR/home/.config/fish/config.fish" ~/.config/fish/config.fish
     link "$SHARED_DIR/home/.config/starship.toml" ~/.config/starship.toml
-    link "$SHARED_DIR/home/.config/helix/config.toml" ~/.config/helix/config.toml
 
-    # The firewall on, and Spotlight's index off: Raycast finds apps without
-    # it, and a server has no use for one.
+    # The firewall on, and Spotlight's index off: neither role searches with
+    # it.
     sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
     sudo mdutil -a -i off >/dev/null
 

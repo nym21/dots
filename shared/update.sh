@@ -124,8 +124,6 @@ case "$ROLE" in
         merge_agent_settings
         update_cargo_hawk
         install_fleet_auto
-        # Sparrow Wallet, updated only once verified as its author's.
-        "$DOTS_DIR/pc/sparrow.sh" || echo "Sparrow was not updated; see above." >&2
         install_cf
 
         # Mullvad's exclusion of cloudflared, and this Mac's tunnel, onto the
