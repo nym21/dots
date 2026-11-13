@@ -45,12 +45,17 @@ Some apps cannot come from the Brewfile:
   built against one stable Rust, so a Rust update needs its newest.
 
 Both roles turn the firewall on and Spotlight's index off. On the workstation,
-setup keeps it awake on power, display included, and leaves Mullvad at its
-defaults but for what something needs: its tunnel MTU at 1380, which
-Tailscale's packets need; the local network shared; connecting at login; and
-split tunneling on, with cloudflared excluded (see [Updates](#updates)). Its
-DNS blocking stays off, as each of its lists blocks T3 Connect's relay. Its
-account is logged in by hand.
+setup keeps it from ever sleeping, on battery or with its lid closed too, and
+its display on with no screen saver, so nothing locks it, which iPhone
+Mirroring's automatic sign-in needs; with the lid closed, a display must stay
+attached (an HDMI dummy does). It leaves Mullvad at its defaults but for what
+something needs: its tunnel MTU at 1380, which Tailscale's packets need; the
+local network shared; connecting at login; and split tunneling on, with
+cloudflared and tssh's tailscaled excluded (see [Updates](#updates)). Its DNS
+blocking stays off, as each of its lists blocks T3 Connect's relay. Its
+account is logged in by hand. Setup also runs this Mac's Bitcoin Core node
+(`pc/bitcoin.sh`, a LaunchAgent whose first sync runs fast, then plain) and
+installs the private `stream` repo, the home video server.
 
 ## Layout
 

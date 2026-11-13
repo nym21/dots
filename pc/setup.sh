@@ -19,9 +19,13 @@ install_fleet_auto
 echo "Merging Codex and Claude Code settings..."
 merge_agent_settings
 
-# On power, this Mac never sleeps, nor its display, so T3 and its agents,
-# fleet auto, and the tunnel keep running.
-sudo pmset -c sleep 0 displaysleep 0
+# This Mac never sleeps, on battery or with its lid closed too, so T3 and its
+# agents, fleet auto, the node and the tunnels keep running; no deep sleep or
+# Power Nap wakes either. Its display stays on with no screen saver, so the
+# screen never locks, which iPhone Mirroring's automatic sign-in needs: with
+# the lid closed, an attached display (an HDMI dummy) keeps it on.
+sudo pmset -a sleep 0 displaysleep 0 disablesleep 1 standby 0 powernap 0
+defaults -currentHost write com.apple.screensaver idleTime -int 0
 
 # --- Mullvad VPN ---
 # It updates itself, which Homebrew cannot adopt without App Management
@@ -38,10 +42,18 @@ fi
 mullvad tunnel set mtu 1380
 mullvad lan set allow
 mullvad auto-connect set on
-# Cloudflare's tunnel servers are unreachable through Mullvad, so cloudflared
-# is excluded from it.
+# cloudflared and tssh's tailscaled are excluded from it (pc/split-tunnel.sh
+# says why).
 mullvad split-tunnel set on
 "$ROLE_DIR/split-tunnel.sh"
+
+# This Mac's own node, which its Bitview reads.
+"$ROLE_DIR/bitcoin.sh"
+
+# The home video server, a private repo: Transmission through Mullvad, files
+# made ready for the phone, and a web app on port 8080.
+[ -d ~/Developer/stream ] || git clone git@github.com:nym21/stream.git ~/Developer/stream
+~/Developer/stream/install.sh
 
 mkdir -p ~/.local/bin
 link "$ROLE_DIR/tssh" ~/.local/bin/tssh
