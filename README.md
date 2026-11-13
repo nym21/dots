@@ -58,6 +58,12 @@ account is logged in by hand. Setup also runs this Mac's Bitcoin Core node
 (`pc/bitcoin.sh`, a LaunchAgent whose first sync runs fast, then plain) and
 installs the private `stream` repo, the home video server.
 
+This Mac comes back by itself after any restart: FileVault stays off, as macOS
+refuses automatic login with it on, and setup says when either is wrong.
+`pc/password.sh` gives its user a new password, five random words shown once,
+and sets it everywhere that holds it: the account, the login keychain, the
+"agent mac password" item and automatic login.
+
 ## Layout
 
 - `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
