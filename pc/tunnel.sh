@@ -122,7 +122,7 @@ fi
 cloudflared_bin="$(readlink -f "$(command -v cloudflared)" 2>/dev/null)" || exit 0
 pid="$(launchctl print "$DOMAIN/$LABEL" | awk '$1 == "pid" { print $3; exit }')"
 [ -n "$pid" ] || exit 0
-running="$(lsof -p "$pid" 2>/dev/null | awk '$4 == "txt" { print $NF; exit }')"
+running="$(lsof -p "$pid" 2>/dev/null | awk '$4 == "txt" && !done { print $NF; done = 1 }')"
 case "$running" in
     "$cloudflared_bin" | '') ;;
     */Cellar/cloudflared/*/bin/cloudflared)

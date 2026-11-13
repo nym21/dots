@@ -9,6 +9,8 @@ set -euo pipefail
 #                 inside Mullvad's tunnel, which holds the direct paths to the
 #                 phone and the servers to Mullvad's speed and MTU; outside
 #                 it, Tailscale still encrypts them end to end.
+#   bitcoind      the node's sync and peers, several times faster outside it;
+#                 its peers see this Mac's address, as a node's do.
 #
 # This excludes each one's current binary: first when setup runs it, then
 # after each upgrade, when pc/tunnel.sh runs it, as ship update and fleet auto
@@ -28,7 +30,8 @@ exclude() {
     excluded="$(grep "$pattern" <<< "$excluded_list" || true)"
     # The binaries the running processes started from.
     running="$(for pid in $(pgrep -x "$name" || true); do
-        lsof -p "$pid" 2>/dev/null | awk '$4 == "txt" { print $NF; exit }'
+        # Read to the end: stopping early breaks the pipe from lsof, failing the run.
+        lsof -p "$pid" 2>/dev/null | awk '$4 == "txt" && !done { print $NF; done = 1 }'
     done | sort -u)"
     keep="$(printf '%s\n%s\n' "$current" "$running" | grep "$pattern" | sort -u)"
     while IFS= read -r path; do
@@ -41,3 +44,4 @@ exclude() {
 
 exclude cloudflared cloudflared
 exclude tailscaled tailscale
+exclude bitcoind bitcoin
