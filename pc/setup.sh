@@ -70,15 +70,6 @@ if [ "$(git -C "$ROLE_DIR/.." remote get-url origin)" = https://github.com/nym21
     git -C "$ROLE_DIR/.." remote set-url --push origin git@github.com:nym21/dots.git
 fi
 
-# FileVault requires the login password and returns a personal recovery key.
-if fdesetup isactive >/dev/null 2>&1; then
-    echo "FileVault is already enabled."
-else
-    echo "Enabling FileVault..."
-    echo "Save the recovery key somewhere other than this Mac."
-    sudo fdesetup enable -user "$(id -un)" -prompt
-fi
-
 missing="$(missing_steps)"
 echo
 echo "PC setup complete."
