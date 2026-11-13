@@ -51,7 +51,8 @@ Mirroring's automatic sign-in needs; with the lid closed, a display must stay
 attached (an HDMI dummy does). It leaves Mullvad at its defaults but for what
 something needs: its tunnel MTU at 1380, which Tailscale's packets need; the
 local network shared; connecting at login; and split tunneling on, with
-cloudflared and tssh's tailscaled excluded (see [Updates](#updates)). Its DNS
+cloudflared, tssh's tailscaled, bitcoind and the agents (`claude`, `codex`)
+excluded, `pc/split-tunnel.sh` saying why (see [Updates](#updates)). Its DNS
 blocking stays off, as each of its lists blocks T3 Connect's relay. Its
 account is logged in by hand. Setup also runs this Mac's Bitcoin Core node
 (`pc/bitcoin.sh`, a LaunchAgent whose first sync runs fast, then plain) and

@@ -42,8 +42,8 @@ fi
 mullvad tunnel set mtu 1380
 mullvad lan set allow
 mullvad auto-connect set on
-# cloudflared and tssh's tailscaled are excluded from it (pc/split-tunnel.sh
-# says why).
+# Some daemons and the agents are excluded from it (pc/split-tunnel.sh lists
+# them and says why).
 mullvad split-tunnel set on
 "$ROLE_DIR/split-tunnel.sh"
 
