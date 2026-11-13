@@ -156,12 +156,14 @@ if ! daemon_running; then
     rm -f "$socket" "$pid_file"
     # Give the shared daemon its own process group so a terminal's Ctrl-C
     # cannot stop other sessions. Close both locks in the daemon process.
+    # The state directory holds the HTTPS certificates `tailscale serve` uses.
     set -m
     nohup "$tailscaled_bin" \
         --tun=userspace-networking \
         --port=0 \
         --socket="$socket" \
         --state="$state" \
+        --statedir="$state_dir" \
         </dev/null >"$log" 2>&1 8>&- 9>&- &
     daemon_pid=$!
     set +m
