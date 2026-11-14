@@ -300,17 +300,18 @@ upgrades take effect in `fleet`'s order, not at the next reboot.
 While serving, `tunnels.sh` checks every minute that Bitview is at the tip. One
 stuck behind it for 10 minutes would serve on what it has, so the mini's own
 tunnel, the one named after it on the tailnet, goes down until it catches up,
-and Cloudflare's alert names the mini. The shared tunnels serve on, since the
+and its status in Cloudflare (and `fleet status`) names the mini. The shared tunnels serve on, since the
 other servers may be stuck at the same block.
 
 The tunnels use HTTP/2 rather than QUIC, `cloudflared`'s default: Bitview sends
 its responses uncompressed for Cloudflare to compress, and large ones reached
 the edge about 18% faster over HTTP/2, with small ones no slower.
 
-Cloudflare emails when a tunnel goes down, comes back, or degrades, for every
-tunnel of the account. Since each server also serves its own tunnel, its
-email says which server, whether `fleet` restarted it on purpose or it went
-down by itself, such as in a crash.
+Cloudflare emails when a tunnel goes down, comes back, or degrades, but only
+for the shared `prod` and `mcp` tunnels: its one notification policy lists
+their tunnel IDs. Each server's own tunnel, `next` and `local` send no email,
+so restarts and test servers stay quiet. A new shared tunnel needs its ID
+added to that policy.
 
 ## Rex
 

@@ -379,10 +379,11 @@ one tunnel would serve two versions.
 version than its servers have, when an update is due, and a macOS update
 downloaded for `fleet update` to install.
 
-Cloudflare emails when a tunnel goes down, comes back, or degrades, and each
-server's own tunnel says which server: a deliberate restart, a crash, a server
-down, or Bitview stuck behind the tip (see the
-[server instructions](server/README.md#cloudflare-tunnels)).
+Cloudflare emails when the shared `prod` or `mcp` tunnel goes down, comes
+back, or degrades. Each server's own tunnel, `next` and `local` send no email.
+Their state, which shows a deliberate restart, a crash, a server down or Bitview
+stuck behind the tip, is in Cloudflare's dashboard and in `fleet status` (see
+the [server instructions](server/README.md#cloudflare-tunnels)).
 
 ## SSH over Tailscale
 
