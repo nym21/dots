@@ -133,6 +133,8 @@ missing_steps() {
         echo "Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys."
     ls -d /Applications/Rex*.app >/dev/null 2>&1 ||
         echo "Install the Rex app."
+    jq -e .loggedIn <<< "$(CLAUDE_CONFIG_DIR=~/.claude-2 claude auth status 2>/dev/null)" >/dev/null 2>&1 ||
+        echo "Log in Claude's second account: CLAUDE_CONFIG_DIR=~/.claude-2 claude auth login."
     # This Mac has to come back by itself after any restart, a power cut past
     # its battery included: logged in, so its LaunchAgents run. macOS refuses
     # automatic login while FileVault is on, so FileVault stays off; Find My

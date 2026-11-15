@@ -35,6 +35,12 @@ setup and `ship update` merge `shared/home/.codex/config.toml` and
 overwrite the machine's values and the rest is kept; removing a key from a
 shared file does not remove it from machines that have it.
 
+The workstation runs a second Claude account from `~/.claude-2`, whose login
+and session state are its own, the rest linked to `~/.claude`'s: rules,
+settings, skills, agents, plugins, memory and transcripts. Setup makes those
+links and adds it to T3 as the provider instance "Claude 2", when T3 is
+installed; its login is one of the steps setup lists.
+
 Some apps cannot come from the Brewfile:
 
 - **Mullvad VPN** updates itself, and Homebrew cannot adopt an existing copy
