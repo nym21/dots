@@ -1219,7 +1219,8 @@ status() {
         [ "$line" != unreachable ] || continue
         tunnels="$(tunnels_of "$server")"
         if [ "${line%% *}" != "$mode" ] ||
-            [ "$(sed -nE 's/.*, tunnels (.*) [0-9]+\/[0-9]+ ready,.*/\1/p' <<< "$line")" != "${tunnels:-none}" ]; then
+            [ "$(sed -nE 's/.*, tunnels (.*) [0-9]+\/[0-9]+ ready,.*/\1/p' <<< "$line" | xargs -n 1 | sort | xargs)" != \
+                "$(xargs -n 1 <<< "${tunnels:-none}" | sort | xargs)" ]; then
             printf '%-6s fleet.conf gives it %s with tunnels %s; run fleet update %s\n' \
                 '' "$mode" "${tunnels:-none}" "$server"
         fi
