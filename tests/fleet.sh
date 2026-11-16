@@ -177,7 +177,7 @@ case "$cmd" in
         for n; do grep -q "^$n " <<< "$got" || exit 1; done
         before="$(names applied)"
         printf '%s\n' "$@" | grep . > "$M/tokens"
-        [ -e "$M/old" ] || get tokens > "$M/applied"
+        get tokens > "$M/applied" # an old workload too: set has it reload (USR1)
         [ "$before" = "$(names applied)" ] || changed "set $*"
         ;;
     *"ship apply --pending") pending ;;

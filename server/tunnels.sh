@@ -29,10 +29,13 @@ STATE_FILE="$HOME/.config/dots/running/tunnels"
 LOG="$HOME/Library/Logs/dots/tunnels.log"
 # The workload, by its command line, which the verbs' lack.
 WORKLOAD='server/tunnels\.sh$'
-# The workload from before this script wrote its pid there, and no state.
-# Until every mini runs this one, which ship apply restarts it into, it counts
-# as holding its token file's tunnels ready while each of its cloudflareds is,
-# and takes a new token file when it restarts. (Delete once rolled out.)
+# TEMPORARY, for the rollout from dots main of 2026-11, delete once every mini
+# runs this script (no ~/.config/dots/running/tunnels.pid on any): the
+# workload from before it wrote its pid there, and in place of the state, the
+# shasum of the token file it took. Until ship apply restarts it into this
+# one, it counts as holding its token file's tunnels ready while it runs one
+# connected cloudflared for each, and set has it take a new token file with
+# its own reload (USR1).
 OLD_PID_FILE="$HOME/.config/dots/running/tunnels.pid"
 
 usage() {
@@ -63,14 +66,17 @@ old_workload() {
     local pid
     pid="$(cat "$OLD_PID_FILE" 2>/dev/null)" && kill -0 "$pid" 2>/dev/null
 }
-old_state() {
-    local pid count=0
-    for pid in $(pgrep -P "$(cat "$OLD_PID_FILE")" -x cloudflared); do
-        connected_at "$(port_of "$pid")" || return 0
-        count=$((count + 1))
+old_running() {
+    pgrep -P "$(cat "$OLD_PID_FILE")" -x cloudflared || true
+}
+old_connected() {
+    local pid
+    for pid in $(old_running); do
+        connected_at "$(port_of "$pid")" || return 1
     done
-    [ "$count" -eq "$(names | wc -l)" ] || return 0
-    names | sed 's/$/ ready/'
+}
+old_ready() {
+    [ "$(old_running | wc -l)" -eq "$(names | wc -l)" ] && old_connected
 }
 
 case "${1:-}" in
@@ -78,7 +84,11 @@ case "${1:-}" in
     state)
         [ "$#" -eq 1 ] || usage
         echo "tokens $(names | xargs)"
-        if old_workload; then old_state; else fresh_state || true; fi
+        if old_workload; then # (TEMPORARY, with OLD_PID_FILE.)
+            ! old_ready || names | sed 's/$/ ready/'
+        else
+            fresh_state || true
+        fi
         exit 0
         ;;
     set)
@@ -95,22 +105,44 @@ case "${1:-}" in
                 exit 1
             }
         done
+        # Those it runs already need not be ready again, as its own tunnel
+        # stopped while Bitview is behind.
+        had=" $({ fresh_state || true; } | awk 'NF == 2 && $2 != "draining" { print $1 }' | xargs) "
         (umask 077 && printf '%s' "$tokens" > "$TOKEN_FILE.new" && mv "$TOKEN_FILE.new" "$TOKEN_FILE")
         # Not running, as while the mini is stopped or benching: it takes them
         # when it starts.
-        pgrep -qf "$WORKLOAD" && ! old_workload || exit 0
-        # Checked every tenth of a second, as fleet acts on it at once, on the
-        # state itself, which lists the tunnels the workload took.
+        pgrep -qf "$WORKLOAD" || exit 0
+        if old_workload; then # (TEMPORARY, with OLD_PID_FILE.)
+            sum="$(shasum "$TOKEN_FILE" | cut -d ' ' -f 1)"
+            kill -USR1 "$(cat "$OLD_PID_FILE")"
+        fi
         want="$(printf '%s\n' "$@" | sort -u | xargs)"
-        for _ in {1..1200}; do
-            state="$(fresh_state)" || state=''
-            if [ "$(awk 'NF == 2 { print $1 }' <<< "$state" | sort -u | xargs)" = "$want" ]; then
-                if grep -qx waiting <<< "$state"; then
-                    echo "$SERVER_DIR/tunnels.sh: the tunnels wait for this mini's servers; they serve once it does." >&2
-                    exit 0
-                fi
-                [ "$(grep -c ' ready$' <<< "$state")" -lt "$#" ] || exit 0
+        # Whether the workload took the token file: the state lists just those
+        # tunnels, the dropped done draining, and each gained ready, or none
+        # as it waits for the mini's servers.
+        taken() {
+            local state name
+            # (TEMPORARY, with OLD_PID_FILE: it recorded the file, the dropped
+            # stopped, and the cloudflareds it runs are connected, or none
+            # run, as it waits for the servers.)
+            if old_workload; then
+                [ -z "$(old_running)" ] || { [ "$(cat "$STATE_FILE" 2>/dev/null)" = "$sum" ] &&
+                    [ "$(old_running | wc -l)" -le "$(names | wc -l)" ] && old_connected; }
+                return
             fi
+            state="$(fresh_state)" || return 1
+            [ "$(awk 'NF == 2 { print $1 }' <<< "$state" | sort -u | xargs)" = "$want" ] || return 1
+            if grep -qx waiting <<< "$state"; then
+                echo "$SERVER_DIR/tunnels.sh: the tunnels wait for this mini's servers; they serve once it does." >&2
+                return 0
+            fi
+            for name in $want; do
+                case "$had" in *" $name "*) ;; *) grep -qx "$name ready" <<< "$state" || return 1 ;; esac
+            done
+        }
+        # Checked every tenth of a second, as fleet acts on it at once.
+        for _ in {1..1200}; do
+            ! taken || exit 0
             sleep 0.1
         done
         echo "$SERVER_DIR/tunnels.sh: the tunnels did not take $* within 2 minutes." >&2
@@ -307,7 +339,7 @@ lost_at=''
 if grep -qxE 'serving|waiting' "$STATE_FILE" 2>/dev/null; then
     lost_at="$(stat -f %m "$STATE_FILE")"
 fi
-rm -f "$OLD_PID_FILE"
+rm -f "$OLD_PID_FILE" # (TEMPORARY, with OLD_PID_FILE.)
 log '*' lost "$lost_at"
 trap cleanup EXIT
 trap 'exit 129' HUP

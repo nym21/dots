@@ -112,6 +112,12 @@ kept="$(tunnels)"
 set -- $kept
 check "the others keep their processes" [ "$#" -eq 2 ] && contains "$prod" "$1" && contains "$prod" "$2"
 check "it starts again 10 seconds later" until_true eval '[ "$(ready_count)" -eq 3 ]'
+kill -9 "$(/usr/bin/pgrep -n -P "$workload" -x cloudflared)"
+until_true eval '[ "$(ready_count)" -eq 2 ]'
+start=$SECONDS
+tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" | "$script" set prod mcp m4-1
+check "set returns at once while a tunnel it keeps is down" [ $((SECONDS - start)) -lt 5 ]
+until_true eval '[ "$(ready_count)" -eq 3 ]'
 
 touch "$TMP/down"
 check "with a server down, it waits" until_true eval '"$script" state | grep -qx waiting'

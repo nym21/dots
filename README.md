@@ -323,13 +323,16 @@ SERVER...` of only some of prod's minis, or with m6-2 off, updates them
 without a fourth: those on the new version wait without prod's tunnels until
 the rest follow, prod staying on two, and the run ends failing.
 
-`tunnels.sh` changed how it reports its tunnels in November 2026, so each
-mini's running one restarts into the new one, as `ship apply` does for any
-change of it: the first `fleet update` after does the prod minis, one at a
-time behind the floors, counting a mini still on the old one as holding its
-tunnels while each of its `cloudflared` is connected, and leaves m6-2, whose
-`next` has no stand-in until a prod mini runs the new one; the second does
-m6-2.
+(Temporary, with the shim in `tunnels.sh`: delete both once no mini has
+`~/.config/dots/running/tunnels.pid`.) `tunnels.sh` changed how it reports its
+tunnels in November 2026, so each mini's running one restarts into the new
+one, as `ship apply` does for any change of it. Until then, a mini on the old
+one counts as holding its tunnels while each of its `cloudflared` is
+connected, and `set` has it take a new token file with its own reload. The
+first `fleet update` after does the prod minis, one at a time behind the
+floors, and leaves m6-2, whose `next` has no stand-in until a prod mini runs
+the new one; the second does m6-2. Run it with no new version out, as fleet
+cannot see what the old ones serve.
 
 Every connection to a server has keepalives, so one that goes away mid-step
 ends rather than waits, and one that stops answering while it readies is left
