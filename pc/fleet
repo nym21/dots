@@ -18,28 +18,29 @@ set -euo pipefail
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
 #   fleet reboot [SERVER...]   restart the servers themselves, cleanly, in turn
 #   fleet shutdown [SERVER...] turn them off, cleanly, in turn
-#   fleet tunnels [SERVER...]  give the servers the tunnels fleet.conf gives them,
-#                              at once, updating nothing (a tunnel moved in an outage)
+#   fleet tunnels              give the servers the tunnels fleet.conf gives them,
+#                              updating nothing (a tunnel moved in an outage)
+#   fleet log [SINCE]          the fewest servers each tunnel had since SINCE, a
+#                              day ago by default, and when it had fewer than its
+#                              floor, from the servers' tunnels.log
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #   fleet auto                 fleet update, hourly, when this Mac can
 #
-# A tunnel never serves two versions, and loses no server but to a restart.
-# An update pins one version per mode for the whole run, then readies every
-# server at once while all serve, building it and updating everything else,
-# and only then, in turn, restarts on each what runs an older build, for the
-# seconds that takes, or as long as Bitview recomputes what the new version
-# changed. The servers that share a tunnel restart in two halves, each at
-# once: the first leaves the shared tunnels while it restarts, the second
-# still serving them, and takes them back before the second leaves and
-# restarts. Servers not in prod go first, so a bad version shows there before
-# prod, and each half must serve again before the next.
-# Each group gets ready on its own: one that cannot, as when its servers fail
-# to build, is left as it is while the others update, and the run ends
-# failing. A server that fails to restart stops the run, as the next could
-# fail the same way.
+# A shared tunnel keeps its floor of servers holding it ready, two where
+# fleet.conf gives it two or more, one otherwise: a server leaves a tunnel only
+# while the others holding it ready, counted just before, number at least that.
+# An update pins one version per mode, readies every server at once, then takes
+# them in turn, those not in prod first: one that would restart anything leaves
+# its tunnels (a stand-in taking one it alone holds), restarts, and takes them
+# back (converge). A server that cannot get ready, or cannot leave, is left as
+# it is and the run fails; a rerun after any stop starts from what the servers
+# hold, with nothing to resume.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-CONF="$PC_DIR/fleet.conf"
+FLEET_CONF="$PC_DIR/fleet.conf"
+# The run's conf: fleet.conf, or with servers lent for a version change
+# (lenders).
+CONF="$FLEET_CONF"
 TUNNELS="$PC_DIR/.tunnels"
 # The servers' ship, its ~ expanded there, by their shell.
 # shellcheck disable=SC2088
@@ -81,7 +82,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update | restart | reboot | shutdown | tunnels | purge [SERVER...] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | reboot | shutdown | purge [SERVER...] | tunnels | log [SINCE] | auto" >&2
     exit 1
 }
 
@@ -97,42 +98,11 @@ entries() {
     done
 }
 
-# The servers that share a tunnel with each other, one group per line, the
-# groups not in prod first, each in fleet.conf's order. With servers given,
-# only their groups.
-groups() {
-    local group server
-    awk '
-        function root(x) { while (parent[x] != x) x = parent[x]; return x }
-        !/^#/ && NF >= 2 {
-            servers[++count] = $1
-            mode[$1] = $2
-            parent[$1] = $1
-            for (i = 3; i <= NF; i++) {
-                if ($i in holder) parent[root($1)] = root(holder[$i])
-                else holder[$i] = $1
-            }
-        }
-        END {
-            for (i = 1; i <= count; i++) {
-                r = root(servers[i])
-                if (!(r in members)) order[++groups] = r
-                members[r] = members[r] " " servers[i]
-            }
-            for (prod = 0; prod <= 1; prod++)
-                for (g = 1; g <= groups; g++)
-                    if ((mode[order[g]] == "prod") == prod) print substr(members[order[g]], 2)
-        }' "$CONF" | while read -r group; do
-        if [ "$#" -eq 0 ]; then
-            echo "$group"
-            continue
-        fi
-        for server; do
-            case " $group " in
-                *" $server "*) echo "$group"; break ;;
-            esac
-        done
-    done
+# The servers given, or all, in fleet.conf's order, those not in prod first, so
+# a bad version shows there before prod.
+order() {
+    entries "$@" | awk '$2 != "prod" { print $1 }'
+    entries "$@" | awk '$2 == "prod" { print $1 }'
 }
 
 # The tunnels two or more of the servers given share.
@@ -273,97 +243,287 @@ follow_job() {
     return "$status"
 }
 
-# Give SERVER the tokens of TUNNEL..., only those, failing when it has them
-# already. Its tunnels run on the ones they started on until they restart. A
-# write that fails stops the run, as going on would hand the shared tunnels
-# over as if it had not, leaving one without a server, or serving two
-# versions. A new file each time, so the umask sets its mode.
-set_tokens() {
-    local server="$1" tokens tunnel
-    shift
-    tokens="$(for tunnel; do awk -v name="$tunnel" '$1 == name { print $1, $2 }' "$TUNNELS"; done)"
-    if [ "$(on "$server" 'shasum ~/Developer/dots/server/.tokens 2>/dev/null' | cut -d ' ' -f 1)" = \
-        "$(printf '%s\n' "$tokens" | shasum | cut -d ' ' -f 1)" ]; then
-        return 1
-    fi
-    echo "$server: serving tunnels ${*:-none}"
-    if ! printf '%s\n' "$tokens" | ssh_to "$server" \
-        'bash -c "umask 077; rm -f ~/Developer/dots/server/.tokens.new && cat > ~/Developer/dots/server/.tokens.new && mv ~/Developer/dots/server/.tokens.new ~/Developer/dots/server/.tokens"'; then
-        echo "$server: could not give it the tokens of ${*:-no tunnel}; stopping here, before a shared tunnel is left without a server or serves two versions." >&2
-        exit 1
-    fi
-}
-
-# Give SERVER the tokens of TUNNEL..., only those, and when that changes
-# them, have its tunnels take them, those it keeps staying connected, and wait
-# until it serves again.
-give_tunnels() {
-    set_tokens "$@" || return 0
-    on "$1" "$TUNNELS_SH reload --wait" || true
-    wait_serving "$1"
-}
-
-# Hand the shared tunnels HELD from LEAVING, the servers of SERVER... still on
-# the old version (one or several, as one word), to the others, on the run's,
-# so the tunnels go from one version to the other in about a second, never
-# without a server: each other joins them, and as soon as all say they are
-# connected, LEAVING leave them together, the word going to each over a
-# connection opened beforehand. Their token files go first, which their
-# tunnels take only on the word. Then the tunnels' cache is purged, once
-# LEAVING's last requests on them have ended.
-hand_over() {
-    local leaving="$1" held="$2" last other fifo pid status tries fd=4
-    local pids=() fds=()
-    shift 2
-    for last in $leaving; do
-        # shellcheck disable=SC2046
-        set_tokens "$last" $(unheld "$last" "$held") || true
-        fifo="$work/leave.$last"
-        mkfifo "$fifo"
-        ssh_to "$last" "bash -c 'read -r word && [ \"\$word\" = go ] && exec $TUNNELS_SH reload'" <"$fifo" &
+# What each server runs and holds now, read from all at once into
+# $work/live.SERVER: the builds its workloads run, as their starts recorded
+# them, then tunnels.sh state. Empty for one that does not answer.
+probe() {
+    local server pids=()
+    for server in $(entries | awk '{ print $1 }'); do
+        { on "$server" "cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
+            : ; } >"$work/live.$server" 2>/dev/null &
         pids+=("$!")
-        # (A descriptor each, numbered: this Mac's bash, 3.2, has no {fd}.)
-        eval "exec $fd>\"\$fifo\""
-        fds+=("$fd")
-        fd=$((fd + 1))
     done
-    for other; do
-        case " $leaving " in *" $other "*) continue ;; esac
-        echo "$other: joining $held"
-        # shellcheck disable=SC2046
-        set_tokens "$other" $(tunnels_of "$other") || true
-        # Not known connected, so it serves before LEAVING leave.
-        on "$other" "$TUNNELS_SH reload --wait" || wait_serving "$other"
-    done
-    echo "$leaving: leaving $held"
-    trap '' PIPE
-    for fd in "${fds[@]}"; do
-        echo go >&"$fd" || true
-        eval "exec $fd>&-"
-    done
-    trap - PIPE
-    # shellcheck disable=SC2086
-    set -- $leaving
-    for pid in "${pids[@]}"; do
-        last="$1"
-        shift
-        status=0
-        wait "$pid" || status=$?
-        # 1 is a word taken, its last requests running long; another, no
-        # answer, as of a connection lost, so the word goes again.
-        tries=0
-        while [ "$status" -gt 1 ] && [ "$tries" -lt 3 ]; do
-            tries=$((tries + 1))
-            status=0
-            on "$last" "$TUNNELS_SH reload" || status=$?
-        done
-        if [ "$status" -gt 1 ]; then
-            echo "$last does not answer, so it may not have left $held, which then serve two versions until it does; stopping here." >&2
-            exit 1
+    wait "${pids[@]}"
+}
+
+# From the last probe: the version SERVER runs, a checksum of its builds'
+# records, empty when unknown; the tunnels its token file names; and whether
+# its tunnels serve, rather than wait for its servers.
+version() {
+    local records
+    records="$(grep '^bitview' "$work/live.$1")" || return 0
+    cksum <<< "$records" | cut -d ' ' -f 1
+}
+tokens() {
+    sed -n 's/^tokens //p' "$work/live.$1"
+}
+up() {
+    grep -qx serving "$work/live.$1"
+}
+
+# The servers whose token file names TUNNEL, or on which it is in one of
+# STATES (ready, lost, draining), from the last probe.
+holding() {
+    local server
+    for server in $(entries | awk '{ print $1 }'); do
+        if [ "$#" -eq 1 ]; then
+            case " $(tokens "$server") " in *" $1 "*) echo "$server" ;; esac
+        elif grep -qE "^$1 ($2)\$" "$work/live.$server"; then
+            echo "$server"
         fi
     done
+}
+
+# The servers the run's conf gives TUNNEL.
+wanted() {
+    entries | awk -v tunnel="$1" '{ for (i = 3; i <= NF; i++) if ($i == tunnel) print $1 }'
+}
+
+# How many servers must keep TUNNEL ready at every step: two where fleet.conf
+# gives it two or more, one where it gives it one, none where none.
+floor() {
+    awk -v tunnel="$1" '!/^#/ && NF >= 2 { for (i = 3; i <= NF; i++) if ($i == tunnel) n++ }
+        END { print (n >= 2 ? 2 : n + 0) }' "$FLEET_CONF"
+}
+
+count() {
+    echo "$#"
+}
+
+# Give SERVER the tunnels TUNNEL..., only those, and wait until it has taken
+# them: those it gains ready, those it drops ended, after their last requests
+# (tunnels.sh set). A failure stops the run; a rerun starts again from what
+# the servers hold.
+give() {
+    local server="$1" tunnel
+    shift
+    echo "$server: tunnels ${*:-none}"
+    for tunnel; do
+        awk -v name="$tunnel" '$1 == name { print $1, $2 }' "$TUNNELS"
+    done | ssh_to "$server" "$TUNNELS_SH set $*" || {
+        echo "$server did not take the tunnels ${*:-none}; stopping here." >&2
+        exit 1
+    }
+}
+
+# Give each SERVER... the tokens it has with TUNNEL added (ACTION +) or
+# removed (-), at once, waiting for all.
+give_all() {
+    local action="$1" tunnel="$2" server pid pids=() failed=''
+    shift 2
+    for server; do
+        if [ "$action" = + ]; then
+            # shellcheck disable=SC2046
+            give "$server" $(tokens "$server") "$tunnel" &
+        else
+            # shellcheck disable=SC2046
+            give "$server" $(minus "$(tokens "$server")" "$tunnel") &
+        fi
+        pids+=("$!")
+    done
+    for pid in ${pids[@]+"${pids[@]}"}; do
+        wait "$pid" || failed=1
+    done
+    [ -z "$failed" ] || exit 1
+}
+
+# Whether TUNNEL keeps its floor without SERVER...: the others holding it
+# ready, as the last probe found, number at least its floor. It says why not.
+keeps_floor() {
+    local tunnel="$1" others need
+    shift
+    others="$(minus "$(holding "$tunnel" ready)" "$*" | xargs)"
+    need="$(floor "$tunnel")"
     # shellcheck disable=SC2086
-    purge_for "$leaving" $held
+    [ "$(count $others)" -lt "$need" ] || return 0
+    echo "$tunnel would be left with ${others:-no server}, below its floor of $need; leaving it on $*." >&2
+    return 1
+}
+
+# Take every tunnel but its own off SERVER before it stops, each only while it
+# keeps its floor without it, counted just before. A tunnel no other server
+# holds, as next on m6-2, first gains a stand-in: the first other server whose
+# tunnels serve, those the run's conf gives it first, whatever version it runs,
+# as next is shown on prod's meanwhile. A tunnel with a floor of two is never
+# stood in for, which would serve it in two versions. SERVER is left as it is,
+# failing, while a tunnel would fall below its floor.
+down() {
+    local server="$1" tunnel shared stand_in
+    probe
+    shared="$(minus "$(tokens "$server")" "$server" | xargs)"
+    for tunnel in $shared; do
+        if [ "$(floor "$tunnel")" -ne 1 ] || [ -n "$(minus "$(holding "$tunnel" ready)" "$server")" ]; then
+            continue
+        fi
+        for stand_in in $(wanted "$tunnel") $(entries | awk '{ print $1 }'); do
+            if [ "$stand_in" != "$server" ] && up "$stand_in"; then
+                echo "$stand_in: standing in for $server on $tunnel"
+                give_all + "$tunnel" "$stand_in"
+                probe
+                break
+            fi
+        done
+    done
+    for tunnel in $shared; do
+        keeps_floor "$tunnel" "$server" || return 1
+    done
+    [ -n "$shared" ] || return 0
+    # shellcheck disable=SC2046
+    give "$server" $(minus "$(tokens "$server")" "$shared")
+    probe
+    purge_changed
+}
+
+# The version TUNNEL should serve: in an update, that of the servers WANTED...
+# (those the run's conf gives it) at the run's versions, once one is;
+# otherwise the one version they run, if they agree.
+target() {
+    local tunnel="$1" mode server versions
+    shift
+    [ "$#" -gt 0 ] || return 0
+    read -r _ mode _ < <(entries "$1")
+    if [ -s "$work/pins.$mode" ]; then
+        for server; do
+            if at_pins "$server" "$(cat "$work/pins.$mode")"; then
+                version "$server"
+                return
+            fi
+        done
+        return 0
+    fi
+    versions="$(for server; do version "$server"; done | sort -u | grep .)" || return 0
+    [ "$(wc -l <<< "$versions")" -ne 1 ] || echo "$versions"
+}
+
+# Make each tunnel's servers those the run's conf gives it: those gaining it
+# take it, then, while it keeps its floor without them, those losing it leave it
+# together. It moves to another version (target) once its floor of servers serve
+# that one, all on another leaving it then; until then those on the new one wait
+# without it, and $unsettled says so.
+converge() {
+    local tunnel
+    unsettled=''
+    probe
+    for tunnel in $({ entries | awk '{ for (i = 3; i <= NF; i++) print $i }'
+        sed -n 's/^tokens //p' "$work"/live.* | xargs -n 1; } | sort -u); do
+        # A server's own tunnel stays with it.
+        [ -n "$(entries "$tunnel")" ] || converge_tunnel "$tunnel"
+    done
+    purge_changed
+}
+
+converge_tunnel() {
+    local tunnel="$1" wanted holders target need server new='' old='' versions gaining='' losing
+    wanted="$(wanted "$tunnel" | xargs)"
+    holders="$(holding "$tunnel" | xargs)"
+    # shellcheck disable=SC2086
+    target="$(target "$tunnel" $wanted)"
+    need="$(floor "$tunnel")"
+    [ "$need" -gt 0 ] || need=1
+    if [ -n "$target" ]; then
+        for server in $wanted; do
+            [ "$(version "$server")" != "$target" ] || ! up "$server" || new="$new $server"
+        done
+        for server in $holders; do
+            [ "$(version "$server")" = "$target" ] || old="$old $server"
+        done
+    fi
+    # shellcheck disable=SC2086
+    if [ -n "$target" ] && { [ -z "$old" ] || [ "$(count $new)" -ge "$need" ]; }; then
+        gaining="$(minus "$new" "$holders")"
+        losing="$(minus "$holders" "$wanted") $old"
+    else
+        [ -z "$old" ] || unsettled=1
+        versions="$(for server in $(holding "$tunnel" ready); do version "$server"; done)"
+        for server in $(minus "$wanted" "$holders"); do
+            if up "$server" && { [ -z "$versions" ] || grep -qx "$(version "$server")" <<< "$versions"; }; then
+                gaining="$gaining $server"
+            fi
+        done
+        losing="$(minus "$holders" "$wanted")"
+    fi
+    losing="$(xargs -n 1 <<< "$losing" | sort -u | xargs)"
+    [ -n "$gaining$losing" ] || return 0
+    # shellcheck disable=SC2086
+    give_all + "$tunnel" $gaining
+    probe
+    [ -n "$losing" ] || return 0
+    # (Counted again just before, as gaining took time.)
+    # shellcheck disable=SC2086
+    if ! keeps_floor "$tunnel" $losing; then
+        unsettled=1
+        return 0
+    fi
+    # shellcheck disable=SC2086
+    give_all - "$tunnel" $losing
+    probe
+}
+
+# Purge the cache of each tunnel whose servers, those holding it ready or
+# draining, run one version, other than the one its cache was last purged for,
+# so none serves what an earlier version left there. The version purged for is
+# kept in STATE_DIR, so a run stopped before its purge leaves it to the next.
+purge_changed() {
+    local tunnel server versions
+    mkdir -p "$STATE_DIR/purged"
+    for tunnel in $(sed -nE 's/^([^ ]+) (ready|draining)$/\1/p' "$work"/live.* | sort -u); do
+        versions="$(for server in $(holding "$tunnel" 'ready|draining'); do version "$server"; done | sort -u)"
+        [ "$(wc -l <<< "$versions")" -eq 1 ] && [ -n "$versions" ] &&
+            [ "$versions" != "$(cat "$STATE_DIR/purged/$tunnel" 2>/dev/null)" ] || continue
+        if purge "$tunnel"; then
+            echo "$versions" > "$STATE_DIR/purged/$tunnel"
+        else
+            echo "Could not purge the cache of $tunnel; the next run tries again." >&2
+            incomplete=1
+        fi
+    done
+}
+
+# For a version change of the tunnels fleet.conf gives two or three servers of
+# MODE, all among SELECTED...: the first other of SELECTED that answers, its
+# tunnels all of floor one, lent as a fourth in MODE, its tunnels going to
+# MODE's servers meanwhile, so two serve the old version while two ready the
+# new. The run's conf for it goes to $work/conf.
+lenders() {
+    local mode="$1" group tunnels server tunnel lent='' changed=''
+    shift
+    group="$(entries | awk -v mode="$mode" '$2 == mode && NF > 2 { print $1 }' | xargs)"
+    # shellcheck disable=SC2086
+    case "$(count $group)" in 2 | 3) ;; *) return 0 ;; esac
+    [ -s "$work/pins.$mode" ] && [ -z "$(minus "$group" "$*")" ] || return 0
+    for server in $group; do
+        at_pins "$server" "$(cat "$work/pins.$mode")" || changed=1
+    done
+    [ -n "$changed" ] || return 0
+    read -r _ _ tunnels < <(entries "${group%% *}")
+    for server in $(minus "$*" "$group"); do
+        # shellcheck disable=SC2086
+        [ "$(count $group $lent)" -lt 4 ] || break
+        [ -n "$(version "$server")" ] || continue
+        for tunnel in $(entries "$server" | awk '{ $1 = $2 = ""; print }'); do
+            [ "$(floor "$tunnel")" -eq 1 ] || continue 2
+        done
+        lent="$lent $server"
+    done
+    [ -n "$lent" ] || return 0
+    # shellcheck disable=SC2086
+    awk -v mode="$mode" -v group=" $group " -v lent="$lent " -v tunnels="$tunnels" \
+        -v moved="$(entries $lent | awk '{ $1 = $2 = ""; print }' | xargs)" '
+        !/^#/ && NF >= 2 && index(lent, " " $1 " ") { print $1, mode, tunnels; next }
+        !/^#/ && NF >= 2 && index(group, " " $1 " ") && moved != "" { print $0, moved; next }
+        { print }' "$FLEET_CONF" > "$work/conf"
+    # shellcheck disable=SC2086 # one line, the names apart
+    echo $lent
 }
 
 # Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when the
@@ -617,35 +777,38 @@ fetch() {
     done
 }
 
-# The tunnels of SERVER but those in HELD.
-unheld() {
-    local tunnel
-    for tunnel in $(tunnels_of "$1"); do
-        case " $2 " in
-            *" $tunnel "*) ;;
-            *) echo "$tunnel" ;;
-        esac
-    done
-}
-
-# Update SERVER, which fetch readied, without the tunnels HELD while others
-# still serve them: give it its tokens, then have ship apply restart what runs
-# an older build than fetch installed, and the tunnels on their new tokens, at
-# once; with nothing new, nothing stops. It is a job of the server's own,
-# which finishes there whatever happens to this Mac or the connection. Its
-# tunnels have left HELD once it returns.
+# Update SERVER, which fetch readied: when ship apply would restart anything, or
+# a macOS update waits, its tunnels go first (down), and it is left as it is
+# when they cannot. Then ship apply, a job of the server's own, which finishes
+# there whatever happens to this Mac or the connection, restarts only what
+# runs an older build than the one installed, and starts what is not running.
+# Once it serves the run's versions, its Tailscale daemon and macOS update,
+# and it takes its tunnels back (converge).
 update_server() {
-    local server="$1" held="$2" mode pins
+    local server="$1" mode pins pending macos=''
     read -r _ mode _ < <(entries "$server")
     pins="$(cat "$work/pins.$mode")"
-    echo "== $server: $mode${pins:+ ${pins%% *}}"
-    # shellcheck disable=SC2046
-    set_tokens "$server" $(unheld "$server" "$held") || true
+    if ! pending="$(on "$server" "$SHIP apply --pending")"; then
+        leave "$server" "$server does not answer"
+        return 0
+    fi
+    if grep -qx "$server" "$work/checked" 2>/dev/null && [ -n "$(macos_note "$server")" ]; then
+        macos=1
+    fi
+    echo "== $server: $mode${pins:+ ${pins%% *}}${pending:+, restarting $pending}"
+    if [ -n "$pending$macos" ] && ! down "$server"; then
+        leave "$server" "$server would take a tunnel below its floor"
+        return 0
+    fi
     detach "$server" "$SHIP apply"
     if ! follow_job "$server"; then
-        echo "$server: ship apply failed; see above. Stopping here, before a shared tunnel serves two versions." >&2
+        echo "$server: ship apply failed; see above. Stopping here." >&2
         exit 1
     fi
+    wait_updated "$server"
+    update_tailscaled "$server"
+    [ -z "$macos" ] || update_macos "$server"
+    converge
 }
 
 # Wait until SERVER serves again after its update. Serving is not enough: it
@@ -656,6 +819,7 @@ wait_updated() {
     read -r _ mode _ < <(entries "$server")
     pins="$(cat "$work/pins.$mode")"
     wait_serving "$server"
+    probe
     if [ -n "$pins" ] && ! at_pins "$server" "$pins"; then
         echo "$server serves, but not ${pins%% *}; stopping here." >&2
         exit 1
@@ -686,18 +850,9 @@ update_tailscaled() {
 
 # Install on SERVER, with its password lent it, the macOS update fetch found,
 # as a job of its own, which ends with the restart, and wait until the server
-# serves again on it: the run ends failing when it did not update. Only while
-# the others of SERVER... serve, as its restart leaves their shared tunnels to
-# them.
+# serves again on it: the run ends failing when it did not update.
 update_macos() {
     local server="$1" before
-    shift
-    grep -qx "$server" "$work/checked" 2>/dev/null || return 0
-    [ -n "$(macos_note "$server")" ] || return 0
-    if ! others_serve "$server" "$@"; then
-        incomplete=1
-        return 0
-    fi
     before="$(on "$server" 'sw_vers -productVersion' || true)"
     if ! lend_password "$server" || ! detach "$server" "$MACOS_UPDATE"; then
         echo "$server: could not start its macOS update." >&2
@@ -714,20 +869,18 @@ update_macos() {
     fi
 }
 
-# Whether SERVER already runs PINS, bitviewd's and bitview_mcp's, as the
-# builds its workloads recorded at their start say, so updating it restarts
-# neither. Never in local mode, which has none.
+# Whether SERVER runs PINS, bitviewd's and bitview_mcp's, as the builds its
+# workloads recorded at their start say, from the last probe. Never in local
+# mode, which has none.
 at_pins() {
-    local server="$1" pin mcp_pin running
+    local pin mcp_pin
     read -r pin mcp_pin <<< "$2"
     [ -n "$pin" ] || return 1
-    running="$(on "$server" 'cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp' 2>/dev/null)" ||
-        return 1
     awk -v pin="$pin" -v mcp_pin="$mcp_pin" '
         function at(p) { return $2 == "v" p ":" || index($0, "rev=" p) }
         $1 == "bitviewd" && at(pin) { found++ }
         $1 == "bitview_mcp" && at(mcp_pin) { found++ }
-        END { exit found != 2 }' <<< "$running"
+        END { exit found != 2 }' "$work/live.$1"
 }
 
 # Purge Cloudflare's cache of the hostnames that TUNNEL... route, so none
@@ -740,150 +893,6 @@ purge() {
     [ -n "$hosts" ] || return 0
     echo "Purging Cloudflare's cache of" $hosts
     cf cache purge --zone "$DOMAIN" --force --body "$(jq -Rnc '{hosts: [inputs]}' <<< "$hosts")" >/dev/null
-}
-
-# Whether SERVER serves: workloads running, tunnels connected, and Bitview at
-# the tip, as wait_serving waits for.
-serving() {
-    on "$1" "$SHIP status --check" 2>/dev/null
-}
-
-# Whether SERVER's tunnels are connected and serve: at the tip, or some blocks
-# short of it, as while Bitview catches up or recomputes. Taking it down would
-# leave its shared tunnels to the others, even while it is short.
-connected() {
-    local status=0
-    on "$1" "$SHIP status --check" 2>/dev/null || status=$?
-    [ "$status" -eq 0 ] || [ "$status" -eq 3 ]
-}
-
-# SERVER..., those whose tunnels serve nothing first, as updating or
-# restarting them costs no service, each part in the order given.
-needing_first() {
-    local server up=''
-    for server; do
-        if connected "$server"; then
-            up="$up $server"
-        else
-            echo "$server"
-        fi
-    done
-    for server in $up; do
-        echo "$server"
-    done
-}
-
-# Whether the others of SERVER... serve, so taking SERVER down leaves their
-# shared tunnels a server; it says which does not.
-others_serve() {
-    local server="$1" other
-    shift
-    for other; do
-        if [ "$other" != "$server" ] && ! serving "$other"; then
-            echo "$other does not serve, so $server is left as it is, serving their tunnels; run fleet again once $other serves." >&2
-            return 1
-        fi
-    done
-}
-
-# Purge the cache of TUNNEL..., which SERVER's update left to servers at the
-# run's versions alone. A rerun finds the group at its versions and would not
-# purge again, so a failure fails the run, saying how to purge by hand.
-purge_for() {
-    local server="$1"
-    shift
-    if ! purge "$@"; then
-        echo "Could not purge the cache of $*; run fleet purge $server" >&2
-        incomplete=1
-    fi
-}
-
-# Update a group of servers sharing tunnels in two halves, each at once, so
-# each tunnel serves one version at a time, but for about a second while the
-# second half hands its shared tunnels to the first, and keeps half the group
-# throughout: the first half (half the group, rounded down; a server down
-# among them) while the second serves the shared tunnels on the old version,
-# then the second, the first serving them on the new. Each tunnel's cache is
-# purged once only servers at the run's versions serve it, before any macOS
-# update: a server's own once it serves again, and the shared ones once the
-# second half has left them, as the first serves them meanwhile, however long
-# it recomputes. A group already at the run's versions keeps serving them
-# throughout, and keeps its cache.
-update_group() {
-    local changed='' held='' server mode first second
-    # shellcheck disable=SC2046
-    set -- $(needing_first "$@")
-    first="${*:1:$(($# / 2))}"
-    second="${*:$(($# / 2 + 1))}"
-    read -r _ mode _ < <(entries "$1")
-    for server; do
-        if ! at_pins "$server" "$(cat "$work/pins.$mode")"; then
-            changed=1
-            held="$(shared "$@")"
-            break
-        fi
-    done
-    update_half "$first" "$held" "$changed" "$@"
-    if [ -n "$held" ] && [ -n "$first" ]; then
-        hand_over "$second" "$held" "$@"
-    fi
-    update_half "$second" "$held" "$changed" "$@"
-    for server in $second; do
-        # shellcheck disable=SC2046
-        give_tunnels "$server" $(tunnels_of "$server")
-    done
-}
-
-# Update HALF of the group SERVER... at once, each server serving its tunnels
-# but HELD, then in turn each one's own cache purged (when the run CHANGED
-# versions), its Tailscale daemon and its macOS. Before, while any of HALF
-# serves, every other server must, as they carry its tunnels meanwhile. Each
-# server's lines come marked with its name when there are several; one that
-# fails stops the run once the others have ended, the rest of the group still
-# serving.
-update_half() {
-    local half="$1" held="$2" changed="$3" server other pid failed=''
-    local pids=()
-    shift 3
-    [ -n "$half" ] || return 0
-    for server in $half; do
-        connected "$server" || continue
-        for other; do
-            case " $half " in *" $other "*) continue ;; esac
-            if ! serving "$other"; then
-                echo "$other does not serve, so $half are left as they are, serving their tunnels; run fleet again once $other serves." >&2
-                exit 1
-            fi
-        done
-        break
-    done
-    for server in $half; do
-        if [ "$half" = "$server" ]; then
-            update_server "$server" "$held"
-            wait_updated "$server"
-        else
-            # (As one, so set -e still stops each at its first failure.)
-            { update_server "$server" "$held"; wait_updated "$server"; } 2>&1 |
-                while IFS= read -r line; do printf '[%s] %s\n' "$server" "$line"; done &
-            pids+=("$!")
-        fi
-    done
-    # (Guarded: bash 3.2 takes an empty array for an unset one under set -u.)
-    for pid in ${pids[@]+"${pids[@]}"}; do
-        wait "$pid" || failed=1
-    done
-    if [ -n "$failed" ]; then
-        echo "$half: not all updated; see above. Stopping here, the rest of the group still serving." >&2
-        exit 1
-    fi
-    for server in $half; do
-        if [ -n "$changed" ]; then
-            # shellcheck disable=SC2046
-            purge_for "$server" $(unheld "$server" "$held")
-        fi
-        update_tailscaled "$server"
-        update_macos "$server" "$@"
-    done
 }
 
 # One fleet update or restart at a time, as two would take servers down at
@@ -910,7 +919,7 @@ lock() {
     trap 'rm -rf "$LOCK"' EXIT
 }
 
-# Leave GROUP as it is, for REASON, and have the run end failing.
+# Leave SERVERS as they are, for REASON, and have the run end failing.
 incomplete=''
 leave() {
     echo "$2; leaving $1 alone." >&2
@@ -934,11 +943,10 @@ announce_pages() {
 }
 
 update() {
-    local server mode tunnels tunnel group down servers='' kept='' selected
+    local server mode tunnels tunnel selected kept='' lent=''
     lock
-    # The servers given and those sharing a tunnel with them, all by default,
-    # which the run updates, so checks before it cover them all.
-    selected="$(groups "$@" | tr '\n' ' ')"
+    # The servers given, all by default, which checks before the run cover.
+    selected="$(order "$@" | xargs)"
     one_mode || exit 1
     cf_logged_in
     fetch_tokens
@@ -964,48 +972,51 @@ update() {
             rm -f "$work/pins.$mode"
         fi
     done
-    while read -r group; do
-        read -r _ mode _ < <(entries "${group%% *}")
+    for server in $selected; do
+        read -r _ mode _ < <(entries "$server")
         if [ ! -e "$work/pins.$mode" ]; then
-            leave "$group" "$mode has no version to install"
-            continue
+            leave "$server" "$mode has no version to install"
+        # fleet auto leaves alone a server that does not serve, as one stopped
+        # on purpose or after a crash, to be looked at.
+        elif [ -n "${FLEET_AUTO:-}" ] && ! on "$server" "$SHIP status --check" 2>/dev/null; then
+            leave "$server" "$server does not serve, which ship status there explains"
+        else
+            kept="$kept $server"
         fi
-        # fleet auto leaves alone a group of which a server does not serve, as
-        # one stopped on purpose or after a crash, to be looked at; fleet update
-        # by hand starts with those, which costs no service.
-        if [ -n "${FLEET_AUTO:-}" ]; then
-            down=''
-            for server in $group; do
-                serving "$server" || down="$down $server"
-            done
-            if [ -n "$down" ]; then
-                leave "$group" "${down# } does not serve, which ship status there explains"
-                continue
-            fi
-        fi
-        kept="$kept$group"$'\n'
-        servers="$servers $group"
-    done < <(groups "$@")
-    if [ -n "$servers" ]; then
-        # shellcheck disable=SC2086
-        check_passwords $servers
-        # shellcheck disable=SC2086
-        fetch $servers
+    done
+    [ -n "$kept" ] || exit 1
+    probe
+    # shellcheck disable=SC2086
+    lent="$(lenders prod $kept)"
+    if [ -n "$lent" ]; then
+        echo "== $lent: serving prod's tunnels for its version change, as a fourth"
+        CONF="$work/conf"
     fi
-    # On another descriptor, as ssh reads its input.
-    while read -r group <&3; do
-        [ -n "$group" ] || continue
-        down=''
-        for server in $group; do
-            ! grep -qx "$server" "$work/unready" 2>/dev/null || down="$down $server"
-        done
-        if [ -n "$down" ]; then
-            leave "$group" "${down# } did not get ready"
-            continue
+    # shellcheck disable=SC2086
+    check_passwords $kept
+    # shellcheck disable=SC2086
+    fetch $kept
+    for server in $kept; do
+        if grep -qx "$server" "$work/unready" 2>/dev/null; then
+            leave "$server" "$server did not get ready"
+        else
+            update_server "$server"
         fi
+    done
+    if [ -n "$lent" ]; then
+        echo "== $lent: back to fleet.conf"
+        CONF="$FLEET_CONF"
         # shellcheck disable=SC2086
-        update_group $group
-    done 3<<< "$kept"
+        fetch $lent
+        for server in $lent; do
+            grep -qx "$server" "$work/unready" 2>/dev/null || update_server "$server"
+        done
+    fi
+    converge
+    if [ -n "$unsettled" ]; then
+        echo "Not every tunnel has the servers fleet.conf gives it; see above, and run fleet update again." >&2
+        incomplete=1
+    fi
     if [ -n "$incomplete" ]; then
         echo "Not everything was updated; see above." >&2
         exit 1
@@ -1014,80 +1025,76 @@ update() {
 }
 
 restart() {
-    local group server
+    local server
     lock
-    while read -r group; do
-        # shellcheck disable=SC2086
-        for server in $(needing_first $group); do
-            echo "== $server"
-            if connected "$server"; then
-                # shellcheck disable=SC2086
-                others_serve "$server" $group || exit 1
-            fi
-            on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
-            detach "$server" "$SHIP stop && $SHIP start"
-            follow_job "$server"
-            wait_serving "$server"
-        done
-    done < <(groups "$@")
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work" "$LOCK"' EXIT
+    for server in $(order "$@"); do
+        echo "== $server"
+        if ! down "$server"; then
+            leave "$server" "$server would take a tunnel below its floor"
+            continue
+        fi
+        on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
+        detach "$server" "$SHIP stop && $SHIP start"
+        follow_job "$server"
+        wait_serving "$server"
+        converge
+    done
+    [ -z "$incomplete" ]
 }
 
 # Reboot or shut down (ACTION) SERVER..., all by default, cleanly, one at a
 # time, each as a job of its own with its password lent: its workloads stop
-# first (server/power.sh). One whose tunnels serve goes only while the others
-# of its group serve, as its shared tunnels are left to them. Rebooted, the
-# next goes once it is back: serving again if it served, else answering on a
-# new boot, as a mini benching.
+# first (server/power.sh). Its tunnels go first (down), and it is left as it
+# is when they cannot. Rebooted, the next goes once it is back: serving again,
+# its tunnels taken back, if it served, else answering on a new boot, as a
+# mini benching.
 power() {
-    local action="$1" group server served booted selected
+    local action="$1" server served booted
     shift
-    selected=" $(entries "$@" | awk '{ print $1 }' | xargs) "
     lock
     work="$(mktemp -d)"
     trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
     # shellcheck disable=SC2046
     check_passwords $(entries "$@" | awk '{ print $1 }')
-    while read -r group; do
-        # shellcheck disable=SC2086
-        for server in $(needing_first $group); do
-            case "$selected" in *" $server "*) ;; *) continue ;; esac
-            grep -qx "$server" "$work/checked" 2>/dev/null || continue
-            served=''
-            if connected "$server"; then
-                # shellcheck disable=SC2086
-                others_serve "$server" $group || { incomplete=1; continue; }
-                served=1
-            fi
-            echo "== $server: $action"
-            booted="$(on "$server" 'sysctl -n kern.boottime' || true)"
-            if ! lend_password "$server" || ! detach "$server" "$SHIP $action"; then
-                echo "$server: could not start its $action." >&2
+    for server in $(order "$@"); do
+        grep -qx "$server" "$work/checked" 2>/dev/null || continue
+        if ! down "$server"; then
+            leave "$server" "$server would take a tunnel below its floor"
+            continue
+        fi
+        served=''
+        ! up "$server" || served=1
+        echo "== $server: $action"
+        booted="$(on "$server" 'sysctl -n kern.boottime' || true)"
+        if ! lend_password "$server" || ! detach "$server" "$SHIP $action"; then
+            echo "$server: could not start its $action." >&2
+            incomplete=1
+            continue
+        fi
+        if [ "$action" = shutdown ]; then
+            # (It ends with the mini, which then answers no more.)
+            follow_job "$server" 60 2>/dev/null || true
+            if on "$server" true 2>/dev/null; then
+                echo "$server did not shut down; see above." >&2
                 incomplete=1
-                continue
+            else
+                echo "$server: off."
             fi
-            if [ "$action" = shutdown ]; then
-                # (It ends with the mini, which then answers no more.)
-                follow_job "$server" 60 2>/dev/null || true
-                if on "$server" true 2>/dev/null; then
-                    echo "$server did not shut down; see above." >&2
-                    incomplete=1
-                else
-                    echo "$server: off."
-                fi
-                continue
-            fi
-            # (A failure ends the job at once; the reboot ends it without a
-            # status, which the follow reads once the mini answers again.)
-            follow_job "$server" 1800 2>/dev/null || true
-            if [ "$(on "$server" 'sysctl -n kern.boottime' 2>/dev/null || true)" = "$booted" ]; then
-                echo "$server did not reboot; see above." >&2
-                incomplete=1
-                continue
-            fi
-            echo "$server: back."
-            [ -z "$served" ] || wait_serving "$server"
-        done
-    done < <(groups "$@")
+            continue
+        fi
+        # (A failure ends the job at once; the reboot ends it without a
+        # status, which the follow reads once the mini answers again.)
+        follow_job "$server" 1800 2>/dev/null || true
+        if [ "$(on "$server" 'sysctl -n kern.boottime' 2>/dev/null || true)" = "$booted" ]; then
+            echo "$server did not reboot; see above." >&2
+            incomplete=1
+            continue
+        fi
+        echo "$server: back."
+        [ -z "$served" ] || { wait_serving "$server"; converge; }
+    done
     [ -z "$incomplete" ]
 }
 
@@ -1117,95 +1124,64 @@ minus() {
     done
 }
 
-# Have SERVER's tunnels take the tokens of TUNNEL..., those kept staying
-# connected: at once, waiting until each is connected, where they serve; where
-# they don't run (stopped, or the mini benching), only the token file, which
-# they take when they start, as reloading them would start its workloads.
-take_tunnels() {
-    local server="$1" serving=''
-    # Asked before the token file changes, which they then fall short of until
-    # they take it.
-    if connected "$server"; then
-        serving=1
-    fi
-    set_tokens "$@" || return 0
-    # (The pattern's brackets keep it from matching this command's own shell.)
-    if ! on "$server" 'pgrep -qf "server/[t]unnels.sh"'; then
-        echo "$server: its tunnels don't run; they take these when they start."
-    elif [ -n "$serving" ]; then
-        on "$server" "$TUNNELS_SH reload --wait" || {
-            echo "$server: its tunnels did not take the tokens; stopping here." >&2
-            exit 1
-        }
-    else
-        on "$server" "$TUNNELS_SH reload"
-    fi
-}
-
-# Give SERVER..., all by default, the tunnels fleet.conf gives them now,
-# updating nothing, as when a tunnel moves to other servers in an outage:
-# first each takes those it gains, keeping those it had, then each leaves those
-# it no longer has, so a tunnel moved has its new servers before its old ones
-# leave, a tunnel moved to another version serving both meanwhile, rather than
-# neither. It refuses what fleet update would not do: a shared tunnel given two
-# modes, or served in two versions by the servers that serve it from now on.
-# The tunnels that changed servers have their cache purged, as they may serve
-# another version now.
+# Give the servers the tunnels fleet.conf gives them now, updating nothing, as
+# when a tunnel moves to other servers in an outage, or back to a server of
+# another mode (converge): a tunnel moved keeps its floor throughout, and
+# serves two versions only while the old ones drain.
 retunnel() {
-    local server tunnel versions had wanted changed=''
     lock
     one_mode || exit 1
     cf_logged_in
     fetch_tokens
-    check_names "$@" || exit 1
+    check_names || exit 1
     work="$(mktemp -d)"
     trap 'rm -rf "$work" "$LOCK"' EXIT
-    # What every server has, and its version while its tunnels serve, as the
-    # servers not given serve their tunnels too.
-    while read -r server _; do
-        {
-            on "$server" 'cut -d " " -f 1 ~/Developer/dots/server/.tokens' 2>/dev/null | xargs >"$work/$server.had"
-            if connected "$server"; then
-                on "$server" "$SHIP status" 2>/dev/null | awk '{ print $2 }' | tr -d , >"$work/$server.version"
-            fi
-        } &
-    done < <(entries)
-    wait
-    for tunnel in $(entries | while read -r server _; do tunnels_of "$server"; done | sort -u); do
-        # (A case outside the command substitution, which bash 3.2 can't parse.)
-        versions=''
-        while read -r server _; do
-            case " $(tunnels_of "$server") " in
-                *" $tunnel "*) versions="$versions $(cat "$work/$server.version" 2>/dev/null || true)" ;;
-            esac
-        done < <(entries)
-        versions="$(xargs -n 1 <<< "$versions" | sort -u)"
-        if [ "$(grep -c . <<< "$versions")" -gt 1 ]; then
-            echo "$tunnel would serve more than one version: $(xargs <<< "$versions"); run fleet update." >&2
-            exit 1
-        fi
-    done
-    while read -r server _; do
-        wanted="$(tunnels_of "$server")" had="$(cat "$work/$server.had")"
-        [ -n "$(minus "$wanted" "$had")" ] || continue
-        # shellcheck disable=SC2046,SC2086
-        take_tunnels "$server" $wanted $(minus "$had" "$wanted")
-        changed="$changed $(minus "$wanted" "$had" | xargs)"
-    done < <(entries "$@")
-    while read -r server _; do
-        wanted="$(tunnels_of "$server")" had="$(cat "$work/$server.had")"
-        [ -n "$(minus "$had" "$wanted")" ] || continue
-        # shellcheck disable=SC2086
-        take_tunnels "$server" $wanted
-        changed="$changed $(minus "$had" "$wanted" | xargs)"
-    done < <(entries "$@")
-    changed="$(xargs -n 1 <<< "$changed" | sort -u | xargs)"
-    if [ -z "$changed" ]; then
-        echo "Every server has its tunnels already."
-        return
+    converge
+    if [ -n "$unsettled$incomplete" ]; then
+        echo "Not every tunnel has the servers fleet.conf gives it; see above." >&2
+        exit 1
     fi
-    # shellcheck disable=SC2086
-    purge $changed || echo "Could not purge the cache of $changed; run fleet purge" >&2
+    echo "Every server has its tunnels."
+}
+
+# The fewest servers each tunnel of fleet.conf had ready since SINCE, an ISO
+# time, a day ago by default, and each span below its floor, from the servers'
+# tunnels.log, merged.
+tunnels_log() {
+    local since="${1:-$(date -u -v-1d +%Y-%m-%dT%H:%M:%SZ)}" server floors=''
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    for server in $(entries | awk '{ print $1 }'); do
+        on "$server" 'cat ~/Library/Logs/dots/tunnels.log' >"$work/$server" 2>/dev/null ||
+            echo "$server does not answer; its log is left out." >&2 &
+    done
+    wait
+    for tunnel in $(entries | awk '{ for (i = 3; i <= NF; i++) print $i }' | sort -u); do
+        floors="$floors $tunnel=$(floor "$tunnel")"
+    done
+    sort "$work"/* | awk -v since="$since" -v floors="$floors" '
+        BEGIN { n = split(floors, pairs, " "); for (i = 1; i <= n; i++) { split(pairs[i], kv, "="); floor[kv[1]] = kv[2] } }
+        function start(when) { started = 1; for (t in floor) { least[t] = count[t]; if (count[t] < floor[t]) from[t] = when } }
+        function set(t, server, held) {
+            if (!(t in floor) || on[t, server] == held) return
+            on[t, server] = held
+            count[t] += held ? 1 : -1
+            if (!started) return
+            if (count[t] < least[t]) least[t] = count[t]
+            if (count[t] < floor[t] && !(t in from)) from[t] = $1
+            if (count[t] >= floor[t] && (t in from)) { spans[t] = spans[t] "  " from[t] " to " $1 "\n"; delete from[t] }
+        }
+        !started && $1 >= since { start(since) }
+        $3 == "*" { for (t in floor) set(t, $2, 0); next }
+        { set($3, $2, $4 == "connected") }
+        END {
+            if (!started) start(since)
+            for (t in floor) {
+                printf "%s: at least %d since %s, its floor %d\n", t, least[t], since, floor[t]
+                if (t in from) spans[t] = spans[t] "  " from[t] " until now\n"
+                if (spans[t] != "") printf "  below it:\n%s", spans[t]
+            }
+        }'
 }
 
 status() {
@@ -1505,14 +1481,21 @@ auto() {
 [ "$#" -ge 1 ] || usage
 command="$1"
 shift
-for server; do
+[ "$command" = log ] || for server; do
     [ -n "$(entries "$server")" ] || { echo "$server is not in $CONF." >&2; exit 1; }
 done
 case "$command" in
     init) init "$@" ;;
     status) status "$@" ;;
     restart) restart "$@" ;;
-    tunnels) retunnel "$@" ;;
+    tunnels)
+        [ "$#" -eq 0 ] || usage
+        retunnel
+        ;;
+    log)
+        [ "$#" -le 1 ] || usage
+        tunnels_log "$@"
+        ;;
     reboot | shutdown) power "$command" "$@" ;;
     auto)
         [ "$#" -eq 0 ] || usage

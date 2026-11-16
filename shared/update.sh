@@ -16,6 +16,8 @@ set -euo pipefail
 #                         downloaded
 #   update.sh --apply     ship apply: restart only what runs something other
 #                         than what is installed, and start what is not running
+#   update.sh --pending   ship apply --pending: what ship apply would restart,
+#                         nothing when it restarts nothing
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 SERVER_DIR="$DOTS_DIR/server"
@@ -26,8 +28,9 @@ case "$#:${1:-}" in
     0:) ;;
     1:--fetch) step=fetch ;;
     1:--apply) step=apply ;;
+    1:--pending) step=pending ;;
     *)
-        echo "Usage: $0 [--fetch | --apply]" >&2
+        echo "Usage: $0 [--fetch | --apply | --pending]" >&2
         exit 1
         ;;
 esac
@@ -35,9 +38,12 @@ esac
 # Restart what runs something other than what is installed, each for the
 # seconds it takes, and start what is not running: the Rex server, which
 # restarts the workloads too; Bitview and the MCP server, with the tunnels; and
-# the tunnels, for a new cloudflared or other tokens.
+# the tunnels, for a new cloudflared.
+rex_pending() {
+    [ -r "$SERVER_DIR/.rex-feed" ] && [ -n "$("$SERVER_DIR/rex.sh" --pending)" ]
+}
 apply() {
-    if [ -r "$SERVER_DIR/.rex-feed" ] && [ -n "$("$SERVER_DIR/rex.sh" --pending)" ]; then
+    if rex_pending; then
         "$SERVER_DIR/rex.sh" --yes
     fi
     "$SERVER_DIR/install.sh" --restart || echo "Bitview is not installed; fleet update gives this mini its mode."
@@ -58,6 +64,11 @@ update_tailscaled() {
     fi
 }
 
+if [ "$step" = pending ]; then
+    if rex_pending; then echo rex; fi
+    "$SERVER_DIR/install.sh" --pending || true
+    exit 0
+fi
 if [ "$step" = apply ]; then
     apply
     echo "Applied."

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# server/tunnels.sh: a reload's leave and join, with a stand-in cloudflared
-# that only waits, and once told to stop, ends half a second later, as one
-# finishing its last requests, and fakes for what else it asks of the mini.
+# server/tunnels.sh: the workload taking its token file, set's leave and join,
+# one tunnel's crash, a stray cloudflared reaped, and the transition log, with a
+# stand-in cloudflared that only waits, and once told to stop, ends half a
+# second later, as one finishing its last requests, and fakes for what else it
+# asks of the mini.
 # shellcheck disable=SC2016,SC2034,SC2086 # ON_EXIT, expanded when it runs; the list counted by its words
 source "$(dirname "$0")/lib.sh"
 if ! command -v cc >/dev/null; then
@@ -10,7 +12,6 @@ if ! command -v cc >/dev/null; then
 fi
 mkdir -p "$TMP/bin" "$TMP/server" "$TMP/home"
 cp "$REPO/server/tunnels.sh" "$TMP/server/"
-printf '#!/bin/bash\necho "$*" >> "%s/workloads.calls"\n' "$TMP" > "$TMP/server/workloads.sh"
 cat > "$TMP/cloudflared.c" <<'EOF'
 #include <signal.h>
 #include <unistd.h>
@@ -30,7 +31,7 @@ cat > "$TMP/bin/curl" <<'EOF'
 #!/bin/bash
 case "${*: -1}" in
     */api/server/sync) printf '{"blocks_behind":0}\n200' ;;
-    */ready) printf '{"readyConnections":1}' ;;
+    */ready) printf '{"status":200,"readyConnections":1}' ;;
 esac
 EOF
 cat > "$TMP/bin/lsof" <<'EOF'
@@ -44,18 +45,21 @@ cat > "$TMP/bin/pgrep" <<'EOF'
 case "$*" in "-x bitcoind" | "-x bitviewd" | "-x bitview_mcp") exit 0 ;; esac
 exec /usr/bin/pgrep "$@"
 EOF
+# Only the stand-ins: this Mac's own cloudflared is not the test's.
+printf '#!/bin/bash\nexec /usr/bin/pkill -f "%s/bin/cloudflared"\n' "$TMP" > "$TMP/bin/pkill"
 printf '#!/bin/bash\necho %s\n' "'{\"Self\":{\"DNSName\":\"m4-1.tail.ts.net.\"}}'" > "$TMP/bin/tailscale"
 chmod +x "$TMP"/bin/* "$TMP"/server/*.sh
 export HOME="$TMP/home" PATH="$TMP/bin:$PATH"
 script="$TMP/server/tunnels.sh"
-pid_file="$HOME/.config/dots/running/tunnels.pid"
+log="$HOME/Library/Logs/dots/tunnels.log"
+ON_EXIT='kill "$workload" 2>/dev/null; wait "$workload" 2>/dev/null'
 
 tokens() {
-    printf '%s\n' "$@" > "$TMP/server/.tokens"
+    printf '%s\n' "$@"
 }
-# The running tunnels.sh's cloudflared processes, and how many.
+# The workload's cloudflareds, and how many.
 tunnels() {
-    /usr/bin/pgrep -P "$(cat "$pid_file" 2>/dev/null || echo 0)" -x cloudflared | sort | tr '\n' ' '
+    /usr/bin/pgrep -P "$workload" -x cloudflared | sort | tr '\n' ' '
 }
 count() {
     local list
@@ -63,45 +67,54 @@ count() {
     set -- $list
     echo "$#"
 }
+# Wait until COMMAND... holds, run anew each tenth of a second, for up to 15
+# seconds.
+until_true() {
+    for _ in $(seq 1 150); do
+        "$@" >/dev/null 2>&1 && return 0
+        sleep 0.1
+    done
+    return 1
+}
+ready_count() {
+    "$script" state | grep -c ' ready$'
+}
 
-tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own"
+"$TMP/bin/cloudflared" &
+stray=$!
+tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" > "$TMP/server/.tokens"
 "$script" > "$TMP/workload.log" 2>&1 &
 workload=$!
-ON_EXIT='kill "$workload" 2>/dev/null; pkill -f "$TMP/bin/cloudflared" 2>/dev/null'
-for _ in $(seq 1 50); do
-    [ "$(count)" -ne 3 ] || break
-    sleep 0.1
-done
-check "it starts a tunnel for each token" [ "$(count)" -eq 3 ]
+check "a cloudflared a killed workload left is stopped" until_true eval '! kill -0 "$stray" 2>/dev/null'
+check "it starts a tunnel for each token" until_true eval '[ "$(count)" -eq 3 ]'
+check "and says each is ready" until_true eval '[ "$(ready_count)" -eq 3 ]'
+check "the log has each connected" until_true eval '[ "$(grep -c " connected$" "$log")" -eq 3 ]'
 before="$(tunnels)"
 
-tokens "m4-1 tok-own"
-check "a reload returns once the tunnels the file dropped have stopped" "$script" reload
+check "set returns once the tunnels dropped have ended" eval 'tokens "m4-1 tok-own" | "$script" set m4-1'
 check "only the own tunnel is left" [ "$(count)" -eq 1 ]
 own="$(tunnels)"
 own="${own% }"
 check "the own tunnel keeps its process" contains "$before" "$own"
-check "the tokens it runs on are recorded" \
-    [ "$(cat "$HOME/.config/dots/running/tunnels")" = "$(shasum "$TMP/server/.tokens" | cut -d ' ' -f 1)" ]
+check "the log has prod lost" grep -q ' m4-1 prod lost$' "$log"
 
-tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own"
-check "a reload with --wait returns once every tunnel is connected" "$script" reload --wait
-check "the shared tunnels are back" [ "$(count)" -eq 3 ]
-tokens "prod tok-prod" "m4-1 tok-own"
-check "and once those the file dropped have stopped" "$script" reload --wait
-check "so mcp has left by then" [ "$(count)" -eq 2 ]
-tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own"
-check "they take mcp back" "$script" reload --wait
-check "and the own tunnel still keeps its process" contains "$(tunnels)" "$own"
+check "set returns once those gained are ready" eval 'tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" | "$script" set prod mcp m4-1'
+check "so all three are ready by then" [ "$(ready_count)" -eq 3 ]
+check "a set missing a token fails" fails eval 'tokens "prod tok-prod" | "$script" set prod mcp m4-1'
+check "and changes nothing" [ "$(wc -l < "$TMP/server/.tokens")" -eq 3 ]
 
-mv "$pid_file" "$TMP/pid"
-"$script" reload >/dev/null 2>&1
-mv "$TMP/pid" "$pid_file"
-check "a tunnels.sh without reloads is restarted instead" grep -qx "stop tunnels" "$TMP/workloads.calls"
+prod="$(tunnels)"
+kill -9 "$(/usr/bin/pgrep -n -P "$workload" -x cloudflared)"
+check "a cloudflared that exits is lost alone" until_true eval '[ "$(ready_count)" -eq 2 ]'
+kept="$(tunnels)"
+set -- $kept
+check "the others keep their processes" [ "$#" -eq 2 ] && contains "$prod" "$1" && contains "$prod" "$2"
+check "it starts again 10 seconds later" until_true eval '[ "$(ready_count)" -eq 3 ]'
 
 kill -TERM "$workload"
 wait "$workload" 2>/dev/null
-sleep 0.3
-check "stopped, it stops its tunnels" [ -z "$(/usr/bin/pgrep -f "$TMP/bin/cloudflared")" ]
-check "and removes its pid file" [ ! -e "$pid_file" ]
+check "stopped, it stops its tunnels" fails /usr/bin/pgrep -f '^cloudflared tunnel run --protocol http2'
+
+check "and logs each lost" [ "$(tail -n 3 "$log" | grep -c ' lost$')" -eq 3 ]
+check "its state says only the token file's tunnels" [ "$("$script" state)" = "tokens prod mcp m4-1" ]
 finish

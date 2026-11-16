@@ -1,88 +1,100 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The tunnels fleet gave this mini, each a cloudflared, as the tunnels
-# workload, which its supervisor runs. fleet also runs it to hand a shared
-# tunnel over from one server to another in about a second:
+# This mini's Cloudflare tunnels, those fleet gave it in server/.tokens, one
+# cloudflared each, as the tunnels workload, which its supervisor runs. They
+# serve while Bitcoin Core, Bitview and the MCP server run, starting once
+# Bitview has reached Bitcoin Core's tip. The workload takes the token file as
+# it changes, within a second: a tunnel gained starts, one dropped stops after
+# its last requests, and the others stay connected. A cloudflared that exits
+# starts again 10 seconds later, alone. Every second it records each tunnel's
+# state, and appends each change to ~/Library/Logs/dots/tunnels.log, which is
+# never trimmed: TIME MINI TUNNEL connected|lost, TUNNEL being * when the
+# workload starts, as what this mini held before is unknown then.
 #
-#   tunnels.sh reload          have the running tunnels take the token file as
-#                              it is now, those it keeps staying connected, and
-#                              wait until those it dropped have stopped, after
-#                              their last requests
-#   tunnels.sh reload --wait   the same, then wait until each is connected
+#   tunnels.sh set NAME...   take NAME..., their tokens on input as NAME TOKEN
+#                            lines, as this mini's tunnels, and return once the
+#                            workload has taken them: those gained ready, those
+#                            dropped ended
+#   tunnels.sh state         the tunnels the token file names, then, while the
+#                            workload runs, whether it serves or waits for the
+#                            servers, and each tunnel's state: ready (connected,
+#                            both servers answering), lost, or draining
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOKEN_FILE="$SERVER_DIR/.tokens"
-RUNNING_DIR="$HOME/.config/dots/running"
-# The running tunnels.sh, which takes a reload, as one from before could not.
-PID_FILE="$RUNNING_DIR/tunnels.pid"
-NAMES=()
-TOKENS=()
-PIDS=()
+STATE_FILE="$HOME/.config/dots/running/tunnels"
+LOG="$HOME/Library/Logs/dots/tunnels.log"
+# The workload, by its command line, which the verbs' lack.
+WORKLOAD='server/tunnels\.sh$'
 
-# The tunnels fleet gave this mini, one NAME TOKEN per line.
-read_tokens() {
-    NAMES=()
-    TOKENS=()
-    [ -r "$TOKEN_FILE" ] || return 0
-    while IFS=$' \t\r' read -r name token || [ -n "$name" ]; do
-        case "$name" in
-            ''|\#*) continue ;;
-        esac
-        NAMES+=("$name")
-        TOKENS+=("$token")
-    done < "$TOKEN_FILE"
+usage() {
+    echo "Usage: $0 [set NAME... | state]" >&2
+    exit 1
 }
 
-# The cloudflared processes of the running tunnels.sh, one per tunnel, and
-# for a while one it dropped, until its last requests end.
-tunnel_pids() {
-    local pid
-    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-    [ -z "$pid" ] || pgrep -P "$pid" -x cloudflared || true
+# The workload's state, while it runs: it rewrites it every second.
+fresh_state() {
+    [ -r "$STATE_FILE" ] && [ $(($(date +%s) - $(stat -f %m "$STATE_FILE"))) -le 5 ] &&
+        pgrep -qf "$WORKLOAD" && cat "$STATE_FILE"
 }
 
-# How many of them Cloudflare has connected.
-connected_count() {
-    local pid port count=0
-    for pid in $(tunnel_pids); do
-        port="$(lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n.*://p' | head -1)"
-        if [ -n "$port" ] && curl -s -m 1 "http://127.0.0.1:$port/ready" | jq -e '.readyConnections > 0' >/dev/null 2>&1; then
-            count=$((count + 1))
-        fi
-    done
-    echo "$count"
-}
-
-case "$#:${1:-}:${2:-}" in
-    0::) ;;
-    1:reload: | 2:reload:--wait)
-        read_tokens
-        pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null &&
-            [[ "$(ps -ww -p "$pid" -o command=)" == *server/tunnels.sh ]]; then
-            kill -USR1 "$pid"
-        else
-            # Tunnels from before a reload was possible, or none: restarted.
-            "$SERVER_DIR/workloads.sh" stop tunnels
-            "$SERVER_DIR/workloads.sh" start
-        fi
-        # Checked every tenth of a second, as fleet acts on it at once.
+case "${1:-}" in
+    '') ;;
+    state)
+        [ "$#" -eq 1 ] || usage
+        echo "tokens $(awk '!/^#/ && NF { print $1 }' "$TOKEN_FILE" 2>/dev/null | xargs)"
+        fresh_state || true
+        exit 0
+        ;;
+    set)
+        shift
+        # Only whole lines count, so a connection lost while they come in
+        # leaves a tunnel without its token, and nothing is written.
+        tokens=''
+        while IFS=$' \t' read -r name token; do
+            case " $* " in *" $name "*) tokens="$tokens$name $token"$'\n' ;; esac
+        done
+        for name; do
+            grep -q "^$name " <<< "$tokens" || {
+                echo "$SERVER_DIR/tunnels.sh: no token came for $name; nothing changed." >&2
+                exit 1
+            }
+        done
+        had=" $(awk '!/^#/ && NF { print $1 }' "$TOKEN_FILE" 2>/dev/null | xargs) "
+        running="$(fresh_state | awk 'NF == 2 { print $1 }')" || running=''
+        (umask 077 && printf '%s' "$tokens" > "$TOKEN_FILE.new" && mv "$TOKEN_FILE.new" "$TOKEN_FILE")
+        # Not running, as while the mini is stopped or benching: it takes them
+        # when it starts.
+        pgrep -qf "$WORKLOAD" || exit 0
+        # The tunnels gained ready, and those dropped ended, checked every
+        # tenth of a second, as fleet acts on it at once.
         for _ in {1..1200}; do
-            if [ "$(tunnel_pids | wc -l | tr -d ' ')" -le "${#TOKENS[@]}" ]; then
-                [ "${2:-}" = --wait ] || exit 0
-                [ "$(connected_count)" -lt "${#TOKENS[@]}" ] || exit 0
+            state="$(fresh_state)" || state=''
+            done=1
+            for name; do
+                case "$had" in *" $name "*) ;; *) grep -qx "$name ready" <<< "$state" || done='' ;; esac
+            done
+            for name in $running; do
+                case " $* " in *" $name "*) ;; *) ! grep -q "^$name " <<< "$state" || done='' ;; esac
+            done
+            [ -z "$done" ] || exit 0
+            if grep -qx waiting <<< "$state"; then
+                echo "$SERVER_DIR/tunnels.sh: the tunnels wait for this mini's servers; they take $* once it serves." >&2
+                exit 1
             fi
             sleep 0.1
         done
-        echo "The tunnels did not take the token file within 2 minutes." >&2
+        echo "$SERVER_DIR/tunnels.sh: the tunnels did not take $* within 2 minutes." >&2
         exit 1
         ;;
-    *)
-        echo "Usage: $0 [reload [--wait]]" >&2
-        exit 1
-        ;;
+    *) usage ;;
 esac
+
+command -v cloudflared >/dev/null || {
+    echo "cloudflared is not installed; run ./server/setup.sh first." >&2
+    exit 1
+}
 
 backends_running() {
     pgrep -x bitcoind >/dev/null &&
@@ -90,20 +102,14 @@ backends_running() {
         pgrep -x bitview_mcp >/dev/null
 }
 
-command -v cloudflared >/dev/null || {
-    echo "cloudflared is not installed; run ./server/setup.sh first." >&2
-    exit 1
+# Whether both servers answer, on the ports the tunnels route to.
+answering() {
+    curl -sf -m 2 -o /dev/null http://127.0.0.1:3110/ &&
+        curl -sf -m 2 -o /dev/null http://127.0.0.1:3111/
 }
 
-read_tokens
-if [ "${#TOKENS[@]}" -eq 0 ]; then
-    echo "No tunnel runs on this mini."
-    exit 0
-fi
-
-# The tunnels send public traffic here as soon as they connect, so wait until
-# both servers answer, on the ports the tunnels route to, and Bitview has
-# reached Bitcoin Core's tip.
+# The tunnels send public traffic here as soon as they connect, so they start
+# only once both servers answer and Bitview has reached Bitcoin Core's tip.
 at_tip() {
     local response body
     response="$(curl -s -m 5 -w '\n%{http_code}' http://127.0.0.1:3110/api/server/sync)" || return 1
@@ -120,62 +126,139 @@ at_tip() {
         *) return 1 ;;
     esac
 }
-ready() {
-    curl -sf -m 5 -o /dev/null http://127.0.0.1:3110/ &&
-        curl -sf -m 5 -o /dev/null http://127.0.0.1:3111/ &&
-        at_tip
-}
-# Checked every second, so a restart is over as soon as Bitview serves.
-wait_ready() {
-    if ! ready; then
-        echo "Waiting for Bitview to reach the tip and both servers to answer..."
-        until ready; do
-            sleep 1
-        done
-    fi
-}
 
-# Start the tunnel at INDEX in NAMES and TOKENS, or stop it.
+NAMES=()
+TOKENS=()
+# Each tunnel's cloudflared, its metrics port once known, and when it exited.
+PIDS=()
+PORTS=()
+EXITED=()
+# Those dropped, until their last requests end.
+DRAINING=()
+DRAINING_NAMES=()
+
+# Start the tunnel at INDEX in NAMES and TOKENS.
 start_tunnel() {
     echo "Starting tunnel ${NAMES[$1]}..."
     # HTTP/2, not QUIC, cloudflared's default: Bitview's large uncompressed
     # responses reach the edge about 18% faster over it, and small ones no slower.
     cloudflared tunnel run --protocol http2 --token-file <(printf '%s' "${TOKENS[$1]}") &
     PIDS[$1]=$!
-}
-stop_tunnel() {
-    kill "${PIDS[$1]}" 2>/dev/null || true
-    wait "${PIDS[$1]}" 2>/dev/null || true
-    unset "PIDS[$1]"
+    unset "PORTS[$1]" "EXITED[$1]"
 }
 
-stop_tunnels() {
-    if [ "${#PIDS[@]}" -gt 0 ]; then
-        kill "${PIDS[@]}" 2>/dev/null || true
-        wait "${PIDS[@]}" 2>/dev/null || true
-    fi
-    PIDS=()
+# Stop the tunnel at INDEX, which drains until its last requests end.
+stop_tunnel() {
+    [ -n "${PIDS[$1]:-}" ] || return 0
+    kill "${PIDS[$1]}" 2>/dev/null || true
+    DRAINING+=("${PIDS[$1]}")
+    DRAINING_NAMES+=("${NAMES[$1]}")
+    unset "PIDS[$1]" "PORTS[$1]"
+}
+
+# Whether the tunnel at INDEX is connected, as its cloudflared's /ready says,
+# on the metrics port it chose, looked up once.
+tunnel_ready() {
+    [ -n "${PIDS[$1]:-}" ] || return 1
+    [ -n "${PORTS[$1]:-}" ] ||
+        PORTS[$1]="$(lsof -nP -a -p "${PIDS[$1]}" -iTCP -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n.*://p' | head -1)"
+    [ -n "${PORTS[$1]}" ] && curl -s -m 1 "http://127.0.0.1:${PORTS[$1]}/ready" | grep -q '"readyConnections":[1-9]'
+}
+
+# Take the token file's CONTENT: start the tunnels it gained while serving,
+# stop those it dropped, and keep the others as they are. A tunnel keeps its
+# index for as long as it runs, the others' left empty.
+added=0
+apply_tokens() {
+    local index name token kept=' '
+    while IFS=$' \t\r' read -r name token; do
+        case "$name" in ''|\#*) continue ;; esac
+        for index in "${!NAMES[@]}"; do
+            if [ "${NAMES[$index]} ${TOKENS[$index]}" = "$name $token" ]; then
+                kept="$kept$index "
+                continue 2
+            fi
+        done
+        added=$((added + 1))
+        NAMES[added]="$name" TOKENS[added]="$token"
+        kept="$kept$added "
+        [ -z "$serving" ] || start_tunnel "$added"
+    done <<< "$1"
+    for index in "${!NAMES[@]}"; do
+        case "$kept" in *" $index "*) continue ;; esac
+        echo "Leaving tunnel ${NAMES[$index]}..."
+        stop_tunnel "$index"
+        unset "NAMES[$index]" "TOKENS[$index]" "EXITED[$index]"
+    done
+    find_own
+}
+
+# Write the state, which fleet and ship status read, and log each tunnel that
+# became ready or stopped being so since the last.
+connected=' '
+record_state() {
+    local index now=' ' name up=''
+    [ -z "$serving" ] || ! answering || up=1
+    {
+        if [ -n "$serving" ]; then echo serving; else echo waiting; fi
+        for index in "${!NAMES[@]}"; do
+            if [ -n "$up" ] && tunnel_ready "$index"; then
+                echo "${NAMES[$index]} ready"
+                now="$now${NAMES[$index]} "
+            else
+                echo "${NAMES[$index]} lost"
+            fi
+        done
+        for index in "${!DRAINING[@]}"; do
+            echo "${DRAINING_NAMES[$index]} draining"
+        done
+    } > "$STATE_FILE.new"
+    mv "$STATE_FILE.new" "$STATE_FILE"
+    for name in $now; do
+        case "$connected" in *" $name "*) ;; *) log "$name" connected ;; esac
+    done
+    for name in $connected; do
+        case "$now" in *" $name "*) ;; *) log "$name" lost ;; esac
+    done
+    connected="$now"
+}
+
+log() {
+    printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$self" "$1" "$2" >> "$LOG"
+}
+
+# Forget the drained tunnels whose cloudflared has ended.
+reap() {
+    local index
+    for index in "${!DRAINING[@]}"; do
+        if ! kill -0 "${DRAINING[$index]}" 2>/dev/null; then
+            wait "${DRAINING[$index]}" 2>/dev/null || true
+            unset "DRAINING[$index]" "DRAINING_NAMES[$index]"
+        fi
+    done
 }
 
 cleanup() {
+    local index
     trap - EXIT HUP INT TERM
-    rm -f "$PID_FILE"
-    stop_tunnels
+    for name in $connected; do
+        log "$name" lost
+    done
+    for index in "${!NAMES[@]}"; do
+        stop_tunnel "$index"
+    done
+    for index in "${!DRAINING[@]}"; do
+        while kill -0 "${DRAINING[$index]}" 2>/dev/null; do
+            wait "${DRAINING[$index]}" 2>/dev/null || true
+        done
+    done
+    rm -f "$STATE_FILE"
 }
-
-trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-# A reload, which tunnels.sh reload asks for, taken at the next check.
-reload=''
-trap 'reload=1' USR1
-mkdir -p "$RUNNING_DIR"
-echo "$$" > "$PID_FILE"
 
 # This mini's own tunnel, the one named after it on the tailnet, as fleet
 # names it: its index in NAMES, if it has one.
 self="$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName | split(".")[0]' 2>/dev/null || true)"
+self="${self:-$(hostname -s)}"
 find_own() {
     local index
     OWN=''
@@ -183,42 +266,18 @@ find_own() {
         [ "${NAMES[$index]}" != "$self" ] || OWN="$index"
     done
 }
-find_own
 
-# Take the token file as it is now: start the tunnels it gained, stop those it
-# dropped, and leave connected those it kept, so handing a tunnel over moves
-# it alone. One kept but stopped, as the own tunnel while Bitview is behind,
-# stays so. The tokens it runs on are recorded, as the supervisor does.
-apply_tokens() {
-    local old_names=() old_tokens=() old_pids=() i j kept
-    for i in "${!NAMES[@]}"; do
-        old_names[$i]="${NAMES[$i]}"
-        old_tokens[$i]="${TOKENS[$i]}"
-        old_pids[$i]="${PIDS[$i]:-}"
-    done
-    read_tokens
-    PIDS=()
-    for j in "${!NAMES[@]}"; do
-        kept=''
-        for i in "${!old_names[@]}"; do
-            if [ "${old_names[$i]}" = "${NAMES[$j]}" ] && [ "${old_tokens[$i]}" = "${TOKENS[$j]}" ]; then
-                kept=1
-                [ -z "${old_pids[$i]}" ] || PIDS[$j]="${old_pids[$i]}"
-                old_pids[$i]=''
-                break
-            fi
-        done
-        [ -n "$kept" ] || start_tunnel "$j"
-    done
-    for i in "${!old_pids[@]}"; do
-        if [ -n "${old_pids[$i]}" ]; then
-            echo "Leaving tunnel ${old_names[$i]}..."
-            kill "${old_pids[$i]}" 2>/dev/null || true
-        fi
-    done
-    find_own
-    shasum "$TOKEN_FILE" 2>/dev/null | cut -d ' ' -f 1 > "$RUNNING_DIR/tunnels"
-}
+mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LOG")"
+# Only this workload runs cloudflared on a mini, so any running now was left by
+# one killed before it could stop them, and serves what it was given then.
+if pkill -x cloudflared; then
+    echo "Stopped the tunnels a previous run left."
+fi
+log '*' lost
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # How long Bitview may stay behind the tip, in seconds, checked every minute,
 # before this mini's own tunnel goes down.
@@ -230,43 +289,52 @@ CHECK_EVERY=60
 # again. Bitview stuck behind the tip would serve on what it has: then only
 # this mini's own tunnel goes down, so Cloudflare's alert names it, while the
 # shared ones serve on, as the other servers may be stuck as well; it comes
-# back once Bitview reaches the tip. A tunnel that exits ends them all, for
-# the supervisor to log and start again.
-while true; do
-    wait_ready
-    # A reload asked while the tunnels were down: the token file as it is now.
-    if [ -n "$reload" ]; then
-        reload=''
-        read_tokens
-        find_own
-        shasum "$TOKEN_FILE" 2>/dev/null | cut -d ' ' -f 1 > "$RUNNING_DIR/tunnels"
+# back once Bitview reaches the tip.
+serving=''
+applied=''
+waiting=''
+while :; do
+    tokens="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+    if [ "$tokens" != "$applied" ]; then
+        apply_tokens "$tokens"
+        applied="$tokens"
     fi
-    for index in "${!TOKENS[@]}"; do
-        start_tunnel "$index"
-    done
-    behind_since=''
-    checked=$SECONDS
-    while backends_running; do
-        if [ -n "$reload" ]; then
-            reload=''
-            apply_tokens
-        fi
-        if [ "${#PIDS[@]}" -gt 0 ]; then
-            for index in "${!PIDS[@]}"; do
-                pid="${PIDS[$index]}"
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    echo "Tunnel ${NAMES[$index]} exited; stopping this session's tunnels." >&2
-                    unset "PIDS[$index]"
-                    wait "$pid"
-                    exit 1
-                fi
+    if ! backends_running; then
+        if [ -n "$serving" ]; then
+            echo "bitcoind, bitviewd, or bitview_mcp is down; the tunnels wait for it." >&2
+            for index in "${!NAMES[@]}"; do
+                stop_tunnel "$index"
             done
+            serving=''
         fi
+    elif [ -z "$serving" ]; then
+        if answering && at_tip; then
+            serving=1 waiting='' behind_since='' checked=$SECONDS
+            for index in "${!NAMES[@]}"; do
+                start_tunnel "$index"
+            done
+        elif [ -z "$waiting" ]; then
+            echo "Waiting for Bitview to reach the tip and both servers to answer..."
+            waiting=1
+        fi
+    else
+        for index in "${!NAMES[@]}"; do
+            pid="${PIDS[$index]:-}"
+            if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+                status=0
+                wait "$pid" 2>/dev/null || status=$?
+                echo "Tunnel ${NAMES[$index]} exited with status $status; it starts again in 10 seconds." >&2
+                unset "PIDS[$index]" "PORTS[$index]"
+                EXITED[$index]=$SECONDS
+            elif [ -n "${EXITED[$index]:-}" ] && [ $((SECONDS - EXITED[index])) -ge 10 ]; then
+                start_tunnel "$index"
+            fi
+        done
         if [ -n "$OWN" ] && [ $((SECONDS - checked)) -ge "$CHECK_EVERY" ]; then
             checked=$SECONDS
             if at_tip; then
                 behind_since=''
-                if [ -z "${PIDS[$OWN]:-}" ]; then
+                if [ -z "${PIDS[$OWN]:-}" ] && [ -z "${EXITED[$OWN]:-}" ]; then
                     echo "Bitview is at the tip again; tunnel ${NAMES[$OWN]} serves again."
                     start_tunnel "$OWN"
                 fi
@@ -277,10 +345,8 @@ while true; do
                 stop_tunnel "$OWN"
             fi
         fi
-        # A reload interrupts the wait, so it is taken at once.
-        sleep 1 &
-        wait $! || true
-    done
-    echo "bitcoind, bitviewd, or bitview_mcp is down; the tunnels wait for it." >&2
-    stop_tunnels
+    fi
+    reap
+    record_state
+    sleep 1
 done

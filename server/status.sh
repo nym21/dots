@@ -24,29 +24,17 @@ esac
 
 source "$SERVER_DIR/crate.sh"
 
-# The tunnels fleet gave this mini; without any, tunnels.sh does not stay up.
-names="$(awk '!/^#/ && NF { printf "%s%s", sep, $1; sep = " " }' "$SERVER_DIR/.tokens" 2>/dev/null || true)"
-
 workloads=0
-expected=3
 down=''
 for name in bitcoind bitviewd bitview_mcp; do
     if pgrep -x "$name" >/dev/null; then workloads=$((workloads + 1)); else down="$down $name"; fi
 done
-if [ -n "$names" ]; then
-    expected=4
-    if pgrep -f server/tunnels.sh >/dev/null; then workloads=$((workloads + 1)); else down="$down tunnels"; fi
-fi
+if pgrep -qf 'server/tunnels\.sh$'; then workloads=$((workloads + 1)); else down="$down tunnels"; fi
 
-tunnels=0
-ready=0
-for pid in $(pgrep -x cloudflared || true); do
-    tunnels=$((tunnels + 1))
-    port="$(lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n.*://p' | head -1)"
-    if [ -n "$port" ] && curl -s -m 3 "http://127.0.0.1:$port/ready" | jq -e '.readyConnections > 0' >/dev/null 2>&1; then
-        ready=$((ready + 1))
-    fi
-done
+# The tunnels fleet gave this mini, and how many of them are ready.
+state="$("$SERVER_DIR/tunnels.sh" state)"
+names="$(sed -n 's/^tokens //p' <<< "$state")"
+ready="$(grep -c ' ready$' <<< "$state" || true)"
 
 behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_behind // empty' 2>/dev/null || true)"
 
@@ -54,8 +42,7 @@ behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_be
 crashes="$(awk -v since="$(date -v-7d +%Y-%m-%dT%H:%M:%S)" '$1 >= since' "$CRASH_LOG" 2>/dev/null || true)"
 
 if [ "$check" -eq 1 ]; then
-    if [ "$workloads" -eq "$expected" ] && [ "$ready" -eq "$(wc -w <<< "$names")" ] &&
-        [ "$ready" -eq "$tunnels" ]; then
+    if [ "$workloads" -eq 4 ] && [ "$ready" -eq "$(wc -w <<< "$names")" ]; then
         [ "${behind:-1}" != 0 ] || exit 0
         # A count of blocks, not a Bitview that does not answer, whose tunnels
         # would only serve errors.
@@ -87,9 +74,9 @@ fi
 macos="$(sw_vers -productVersion)"
 waiting="$(cat "$HOME/.config/dots/macos-downloaded" 2>/dev/null || true)"
 [ "$waiting" != "$macos" ] || waiting=''
-printf '%s %s, workloads %s/%s%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s%s, Rex %s, dots %s\n' \
-    "${mode:-no mode}" "${version:-}" "$workloads" "$expected" "${down:+ (down:$down)}" "${crashed:+, crashes $crashed}" \
-    "${names:-none}" "$ready" "$tunnels" \
+printf '%s %s, workloads %s/4%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s%s, Rex %s, dots %s\n' \
+    "${mode:-no mode}" "${version:-}" "$workloads" "${down:+ (down:$down)}" "${crashed:+, crashes $crashed}" \
+    "${names:-none}" "$ready" "$(wc -w <<< "$names" | tr -d ' ')" \
     "${behind:-?}" "$(df -h /Volumes/External 2>/dev/null | awk 'NR == 2 { print $4 }')" \
     "$macos" "${waiting:+ ($waiting downloaded)}" \
     "$(rex --autostart=false server status 2>/dev/null | awk '$1 == "version:" { print $2; exit }')" \

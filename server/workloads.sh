@@ -8,8 +8,8 @@ set -euo pipefail
 # survives Rex updates. A workload that fails is logged, with the end of its
 # output, and stays down to be looked at. Meanwhile the tunnels are down, so
 # the other servers serve and Cloudflare's alert about this mini's own tunnel
-# says so. Only the tunnels start again, 10 seconds later, as cloudflared
-# gives up during a long network outage. The workloads start again at boot,
+# says so. Only the tunnels start again, 10 seconds later, as each of their
+# cloudflareds does on its own. The workloads start again at boot,
 # after rex.sh restarts the Rex server, and on ship start.
 #
 #   workloads.sh start            start what is not running, in order
@@ -44,14 +44,13 @@ script() {
     esac
 }
 
-# A workload's processes, wherever they were started. Tunnels started before
-# tunnels.sh run as bare cloudflared processes.
+# A workload's processes, wherever they were started.
 pids() {
     case "$1" in
         bitcoind) pgrep -x bitcoind ;;
         bitviewd) pgrep -x bitviewd ;;
         mcp) pgrep -x bitview_mcp ;;
-        tunnels) pgrep -f server/tunnels.sh; pgrep -x cloudflared ;;
+        tunnels) pgrep -f 'server/tunnels\.sh$' ;;
     esac || true
 }
 
@@ -112,8 +111,8 @@ trim_window() {
 # Run workload $1 until it exits, logging a failing exit; only the tunnels
 # start again, 10 seconds later. TERM, which stop sends, passes on to the
 # workload and ends the loop once it has exited. Each start of Bitview or the
-# MCP server records the build it runs, and of the tunnels their tokens, in
-# RUNNING_DIR. Meanwhile its window is kept small.
+# MCP server records the build it runs in RUNNING_DIR. Meanwhile its window is
+# kept small.
 supervise() {
     local name="$1" command crate='' pid='' status stopping=0 trimmer
     command="$SERVER_DIR/$(script "$name")"
@@ -129,8 +128,6 @@ supervise() {
         mkdir -p "$RUNNING_DIR"
         if [ -n "$crate" ]; then
             installed "$crate" > "$RUNNING_DIR/$crate" || true
-        elif [ "$name" = tunnels ]; then
-            tokens_digest > "$RUNNING_DIR/tunnels"
         fi
         "$command" &
         pid=$!

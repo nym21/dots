@@ -99,7 +99,8 @@ fleet update   # On the workstation: ready every server at once, then restart wh
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 fleet reboot   # On the workstation: restart the servers themselves, cleanly, in turn.
 fleet shutdown # On the workstation: turn the servers off, cleanly, in turn.
-fleet tunnels  # On the workstation: give the servers fleet.conf's tunnels at once, updating nothing.
+fleet tunnels  # On the workstation: give the servers fleet.conf's tunnels, updating nothing.
+fleet log      # On the workstation: the fewest servers each tunnel had, and when below its floor.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
 ```
@@ -183,57 +184,60 @@ one `NAME TOKEN` per line, fetching any it lacks with `cf`, so a new
 workstation needs only Cloudflare's login. Each server gets only its own
 tunnels' tokens.
 
-`fleet tunnels [SERVER...]`, all of them by default, gives the servers the
-tunnels `fleet.conf` gives them now and updates nothing, as when a tunnel moves
-to other servers in an outage: first each takes those it gains, keeping those
-it had, then each leaves those it no longer has, so a tunnel moved keeps a
-server throughout, serving both versions meanwhile if it moves to another. A
-server whose tunnels serve waits until each is connected; one whose tunnels
-don't run, stopped or benching, only gets the token file, which they take when
-they start, as reloading them would start its workloads. It refuses a shared
-tunnel given two modes, or served in two versions by the servers that serve it
-from now on, and purges the cache of the tunnels that changed servers.
+A shared tunnel keeps a floor of servers holding it ready, two where
+`fleet.conf` gives it two or more, as `prod` and `mcp`, one otherwise, as
+`next`, at every step of every `fleet` command: a server leaves a tunnel only
+while the others holding it ready, counted just before, number at least its
+floor. Desired is `fleet.conf` alone; what each server holds is what its
+tunnels run, which `fleet` reads from all of them before each step, so a run
+stopped at any moment and run again starts from there, with nothing to resume.
+
+`fleet tunnels` gives the servers the tunnels `fleet.conf` gives them now and
+updates nothing, as when a tunnel moves to other servers in an outage, or back
+to a server of another mode: the servers gaining a tunnel take it, waiting
+until it is connected, then those losing it leave it together. A tunnel moving
+to another version moves once at least its floor of the servers it is given
+serve that version, so two versions serve it only while the old ones drain.
+Each tunnel's cache is purged once the servers holding it run one version
+again, other than the one it was last purged for (kept in
+`~/Library/Application Support/dots/purged`, so a run stopped before its purge
+leaves it to the next).
+
+`fleet log [SINCE]` merges the servers' `tunnels.log`, where each server notes
+every tunnel it gains or loses (see the
+[server instructions](server/README.md#cloudflare-tunnels)), into the fewest
+servers each tunnel had since SINCE, a day ago by default, and every span below
+its floor.
 
 ### Borrowing a server
 
 A mini borrowed for a benchmark or a long computation leaves `fleet.conf` while
 it is lent, in commits like any other change, so dots stays clean and equal to
-origin and `fleet auto` keeps updating the others, knowing nothing of it. Its
-shared tunnels go first to every prod mini, which serve them on prod's version
-meanwhile, through prod's own hand-over: on all of them, as a hand-over joins
-only what the first half's servers are given. Every fleet run then notes the
-mini as on the tailnet but not in `fleet.conf`, which says it is still lent.
-For m6-2 and `next`, from `~/Developer/dots`, with m6-2 serving:
+origin and `fleet auto` keeps updating the others, knowing nothing of it. Every
+fleet run then notes the mini as on the tailnet but not in `fleet.conf`, which
+says it is still lent. For m6-2 and `next`, from `~/Developer/dots`, with m6-2
+serving:
 
 1. In `fleet.conf`, add `next` to every prod mini's line, and leave m6-2's line
-   without tunnels, as `m6-2 next`: `fleet tunnels` changes only the servers
-   `fleet.conf` names, so m6-2 dropped here would keep serving `next` on its
-   own version beside prod's. Commit that alone and don't push yet: `fleet
-   auto` skips while main differs from origin, where pushed first it could
-   make the switch itself, in its own order.
-2. `pc/fleet tunnels`: the prod minis take `next`, each waiting until it is
-   connected, then m6-2 leaves it. `pc/fleet status` shows the prod minis with
-   `prod mcp next` and m6-2 with its own tunnel alone. Push.
-3. For a benchmark from a fresh boot, `pc/fleet reboot m6-2` now, as `fleet`
-   acts only on a server `fleet.conf` names.
-4. Remove m6-2's line, commit alone, push. m6-2 is the borrower's.
+   without tunnels, as `m6-2 next`: `fleet` acts only on the servers
+   `fleet.conf` names, so m6-2 dropped here would keep serving `next`. Commit
+   that alone and don't push yet, as `fleet auto` skips while main differs from
+   origin. `pc/fleet tunnels`: the prod minis take `next`, then m6-2 leaves it.
+   Push.
+2. For a benchmark from a fresh boot, `pc/fleet reboot m6-2` now.
+3. Remove m6-2's line, commit alone, push. m6-2 is the borrower's.
 
 Another fresh boot during the borrow: put `m6-2 next` back in `fleet.conf`
 without committing, so `fleet auto` skips, `pc/fleet reboot m6-2`, and
-`git checkout pc/fleet.conf`.
+`git checkout pc/fleet.conf`. To give it back, put `m6-2 next next` back and
+`next` off the prod minis' lines, commit alone, push, and `pc/fleet update`:
+m6-2 comes to `next`'s newest version, however long Bitview takes on the data
+the borrow left, and takes `next` back, the prod minis leaving it.
 
-To give it back:
-
-1. Put `m6-2 next` back, without tunnels, commit alone, push, and
-   `pc/fleet update m6-2`, which brings it to `next`'s newest version, however
-   long Bitview takes on the data the borrow left, touching nothing else.
-2. Once it serves, in `fleet.conf` give `next` back to m6-2 alone,
-   `m6-2 next next`, and remove it from the prod minis. Commit alone, don't push
-   yet, and `pc/fleet tunnels`: m6-2 takes `next`, waiting until it is
-   connected, then the prod minis leave it, and its cache is purged. Push.
-
-A prod mini is lent the same way, its line removed, but not while three serve
-prod: the two left would update in halves of one, each alone in turn.
+While m6-2 is lent, prod has no fourth server for its version changes (see
+[Updates](#updates)), so `fleet update` leaves prod's minis at their version,
+past the first of them, rather than let prod fall to one. A prod mini is lent
+the same way, its line removed, which leaves prod two servers.
 
 ### Setting up
 
@@ -257,7 +261,7 @@ In a terminal, in turn:
 
 ### Updates
 
-`fleet update SERVER...`, all of them by default, brings the servers to the
+`fleet update [SERVER...]`, all of them by default, brings the servers to the
 newest version of their mode:
 
 1. It pins one version per mode for the whole run, the newest crates.io release
@@ -272,66 +276,54 @@ newest version of their mode:
    build, Bitview and the MCP server, the cleanup, and Apple's other updates
    while no macOS update waits; then macOS's download, as a job of its own,
    with the password `fleet` lends it (see [Passwords](#passwords)). Each is a
-   job of the server's own, which finishes however
-   this Mac or the connection fares. A group whose version cannot be found or
-   whose servers fail to get ready is left as it is while the others update,
-   and the run ends failing.
-3. Then it updates those sharing a tunnel together, in two halves, each at
-   once, so a tunnel never serves two versions and half the group keeps
-   serving throughout: the first half, half the group rounded down, updates
-   without the shared tunnels while the second still serves them, and takes
-   them back before the second leaves and updates, which overlaps two versions
-   for about a second rather than leaving the tunnel without a server: once
-   the second half's token files drop them, each server of the first joins
-   them, and the moment all say they are connected, the word to leave goes to
-   each of the second over a connection opened beforehand, where its tunnels
-   drop them and keep its own connected. Their cache is purged once its last
-   requests on them end.
-4. For each server it gives it its tunnels and runs `ship apply` there, which
-   restarts only what runs another build than the one installed: the Rex
-   server, Bitview and the MCP server, the tunnels, for a new cloudflared or
-   the tokens just given, and the whole node for a new Bitcoin Core. Then it
-   waits until the server serves again, workloads running, tunnels connected,
-   and Bitview at the tip, and checks it runs the run's versions. A Bitview
-   restart takes about 10 seconds, its load, or as long as it recomputes what
-   a new version changed, and a run with nothing new stops nothing.
-5. As soon as only servers on the new version serve a tunnel, it purges
-   Cloudflare's cache of the hostnames the tunnel routes, so none serves what
-   the old version cached: a server's own tunnel once it serves again, and the
-   shared tunnels once the second half of their group has left them, as the
-   first serves them however long it recomputes. Both come before a macOS
-   update. Servers already at the run's versions keep their tunnels
-   throughout, and their cache. `fleet purge SERVER...` purges by hand.
+   job of the server's own, which finishes however this Mac or the connection
+   fares. A server whose version cannot be found or that fails to get ready is
+   left as it is while the others update, and the run ends failing.
+3. Then it takes the servers one at a time, those not in prod first, so a bad
+   version shows there before prod. When `ship apply --pending` says `ship
+   apply` would restart anything (the Rex server, Bitview or the MCP server on
+   a new build, the tunnels on a new cloudflared, or the whole node on a new
+   Bitcoin Core), or a macOS update waits, the server first leaves its shared
+   tunnels, each only while it keeps its floor; a tunnel it alone holds, as
+   `next` on m6-2, first gains a stand-in, the first prod mini, which serves it
+   on prod's version meanwhile. A server that would take a tunnel below its
+   floor is left as it is, and the run ends failing.
+4. It runs `ship apply` there, which restarts only what runs another build
+   than the one installed and starts what is not running, then waits until the
+   server serves, workloads running, tunnels connected and Bitview at the tip,
+   on the run's versions: about 10 seconds for a restart, or as long as
+   Bitview recomputes what a new version changed. Its Tailscale daemon then
+   moves onto Homebrew's newest tailscaled, when that changes it, and a macOS
+   update that the fetch found installs, with the lent password, and restarts
+   the server, which must serve again on it.
+5. Then the servers get their tunnels back as in `fleet tunnels`: a tunnel on
+   another version moves once its floor of servers serve the new one, the old
+   ones leaving it together, and the stand-in leaves its tunnel once the
+   server is back. Caches are purged as there.
 
-Groups not in prod go first, so a bad version shows there before prod, and one
-server at a time, so prod never loses two at once. Within a group, the order is
-decided when the run starts: servers that do not serve go first, as updating
-them costs no service, and before taking down a server that serves, `fleet`
-checks that the others of its group serve, stopping otherwise, so it never
-leaves a shared tunnel without a server it found serving; a macOS update
-checks again just before its restart, and waits for a later run otherwise.
+Prod's version changes need a fourth server, as three cannot keep two serving
+the old version while two ready the new: when the run takes all of prod's
+minis and prod's version changes, the first other mini, m6-2, serves prod in
+prod's mode meanwhile, its own tunnels going to the prod minis, which serve
+`next` on prod's version. It readies prod's version with the others, comes up
+on it first, then a prod mini follows, and the two take prod and `mcp` while
+the other two leave them together; those two then update and take them back,
+and m6-2 goes back to `next`, readied again, taking `next` back. Nobody edits
+`fleet.conf` for it. `fleet update SERVER...` of only some of prod's minis
+updates them without a fourth: those on the new version wait without prod's
+tunnels until the rest follow, and the run ends failing.
+
 Every connection to a server has keepalives, so one that goes away mid-step
-ends rather than waits, and one that stops answering while it readies, which
-restarts nothing, is left out after an hour, its group with it, rather than
-holding the others' update. It stops if `ship apply` fails, if a server does not
-answer or serve again within 12 hours, or at once
-when a workload of the server crashed, as it stays down until looked at, and if
-it serves another version than the run's: the later servers, prod among them,
-could fail the same way, and a shared tunnel would serve two versions.
-Selecting a server selects every server it shares a tunnel with, and
-`fleet.conf` may not give a shared tunnel two modes.
-
-Whatever moment it stops at, as when this Mac sleeps, every shared tunnel keeps
-a server, as a server takes a tunnel back before another leaves it. A step that
-stops and starts what a server runs is a job of the server's own, started with
-`nohup`, which finishes there however the connection fares, while `fleet`
-follows its output and, after a lost connection, takes it up again, one job
-at a time on each server, a later one waiting for an earlier one, as of a run
-cut short. Last for each server, its Tailscale daemon moves onto Homebrew's
-newest tailscaled, when that changes it, a failure stopping the run; then a
-macOS update that the fetch found installs, with the lent password, as a job
-of its own, and restarts the server, which must then serve again on the new
-macOS before the next goes; the run ends failing when it did not update.
+ends rather than waits, and one that stops answering while it readies is left
+out after an hour rather than holding the others' update. It stops if `ship
+apply` fails, if a server does not answer or serve again within 12 hours, or at
+once when a workload of the server crashed, as it stays down until looked at,
+and if it serves another version than the run's: the later servers, prod among
+them, could fail the same way. A step that stops and starts what a server runs
+is a job of the server's own, started with `nohup`, which finishes there however
+the connection fares, while `fleet` follows its output and, after a lost
+connection, takes it up again, one job at a time on each server, a later one
+waiting for an earlier one, as of a run cut short.
 
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
 hourly, runs `fleet update` without a terminal, when this Mac is on power, its
@@ -341,16 +333,15 @@ changes left to commit, push or pull), and a server answers. That one check brin
 cloudflared, Bitcoin Core, Tailscale, and macOS's updates, major upgrades
 included; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one
-it is open for catches up. It leaves alone a group of which a server does not
-serve, as one stopped on purpose or after a crash, to be looked at, while the
-other groups update; `fleet update` by hand starts with those servers instead.
+it is open for catches up. It leaves alone a server that does not serve, as one
+stopped on purpose or after a crash, to be looked at, while the others update.
 `fleet reboot [SERVER...]` and `fleet shutdown [SERVER...]` restart or turn
 off the Macs themselves, one at a time, each as a job with its password lent:
 `server/power.sh`, which is `ship reboot` and `ship shutdown` there, stops the
 workloads cleanly first, as shutting down would end Bitcoin Core mid-write, and
-the boot daemon starts them again. A server that serves goes only while the
-others of its group serve; rebooted, the next goes once it serves again, or,
-one that wasn't serving, as a mini benching, once it answers on a new boot. A
+the boot daemon starts them again. Each leaves its tunnels first, as in an
+update; rebooted, the next goes once it serves again and has its tunnels back,
+or, one that wasn't serving, as a mini benching, once it answers on a new boot. A
 fresh boot before a benchmark keeps runs comparable.
 
 One `fleet update`, `restart`, `reboot` or `shutdown` runs at a time: another stops at once,
