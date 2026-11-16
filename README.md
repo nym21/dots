@@ -100,7 +100,7 @@ fleet restart  # On the workstation: restart the servers' workloads cleanly, in 
 fleet reboot   # On the workstation: restart the servers themselves, cleanly, in turn.
 fleet shutdown # On the workstation: turn the servers off, cleanly, in turn.
 fleet tunnels  # On the workstation: give the servers fleet.conf's tunnels, updating nothing.
-fleet log      # On the workstation: the fewest servers each tunnel had, and when below its floor.
+fleet log      # On the workstation: how many servers each tunnel had, and when below its floor.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
 ```
@@ -191,6 +191,10 @@ while the others holding it ready, counted just before, number at least its
 floor. Desired is `fleet.conf` alone; what each server holds is what its
 tunnels run, which `fleet` reads from all of them before each step, so a run
 stopped at any moment and run again starts from there, with nothing to resume.
+A server that does not answer is left as it is, as what it holds is unknown,
+never nothing. A run stopped between a tunnel's gain and its drop, which only
+killing it does, leaves the tunnel on two versions until the next run: one by
+hand, or `fleet auto`'s next hour.
 
 `fleet tunnels` gives the servers the tunnels `fleet.conf` gives them now and
 updates nothing, as when a tunnel moves to other servers in an outage, or back
@@ -198,6 +202,9 @@ to a server of another mode: the servers gaining a tunnel take it, waiting
 until it is connected, then those losing it leave it together. A tunnel moving
 to another version moves once at least its floor of the servers it is given
 serve that version, so two versions serve it only while the old ones drain.
+The run ends failing while a tunnel's servers holding it ready are not those
+`fleet.conf` gives it, on one version, as when one was moved to another mode
+there but not yet updated.
 Each tunnel's cache is purged once the servers holding it run one version
 again, other than the one it was last purged for (kept in
 `~/Library/Application Support/dots/purged`, so a run stopped before its purge
@@ -205,9 +212,10 @@ leaves it to the next).
 
 `fleet log [SINCE]` merges the servers' `tunnels.log`, where each server notes
 every tunnel it gains or loses (see the
-[server instructions](server/README.md#cloudflare-tunnels)), into the fewest
-servers each tunnel had since SINCE, a day ago by default, and every span below
-its floor.
+[server instructions](server/README.md#cloudflare-tunnels)), into how many
+servers held each tunnel ready at each change since SINCE, a day ago by
+default, the changes of one second taken together, then the fewest and every
+span below its floor.
 
 ### Borrowing a server
 
@@ -282,8 +290,8 @@ newest version of their mode:
 3. Then it takes the servers one at a time, those not in prod first, so a bad
    version shows there before prod. When `ship apply --pending` says `ship
    apply` would restart anything (the Rex server, Bitview or the MCP server on
-   a new build, the tunnels on a new cloudflared, or the whole node on a new
-   Bitcoin Core), or a macOS update waits, the server first leaves its shared
+   a new build, the tunnels on a new cloudflared or a changed `tunnels.sh`, or
+   the whole node on a new Bitcoin Core), or a macOS update waits, the server first leaves its shared
    tunnels, each only while it keeps its floor; a tunnel it alone holds, as
    `next` on m6-2, first gains a stand-in, the first prod mini, which serves it
    on prod's version meanwhile. A server that would take a tunnel below its
@@ -302,16 +310,26 @@ newest version of their mode:
    server is back. Caches are purged as there.
 
 Prod's version changes need a fourth server, as three cannot keep two serving
-the old version while two ready the new: when the run takes all of prod's
-minis and prod's version changes, the first other mini, m6-2, serves prod in
-prod's mode meanwhile, its own tunnels going to the prod minis, which serve
+the old version while two ready the new: when the run takes all of a mode's
+two or three minis, as prod's, and its version changes, the first other mini
+whose tunnels have a floor of one, m6-2, serves prod in prod's mode meanwhile, its own tunnels going to the prod minis, which serve
 `next` on prod's version. It readies prod's version with the others, comes up
 on it first, then a prod mini follows, and the two take prod and `mcp` while
 the other two leave them together; those two then update and take them back,
 and m6-2 goes back to `next`, readied again, taking `next` back. Nobody edits
-`fleet.conf` for it. `fleet update SERVER...` of only some of prod's minis
-updates them without a fourth: those on the new version wait without prod's
-tunnels until the rest follow, and the run ends failing.
+`fleet.conf` for it. One that fails to get ready stops the lend: every server
+it would move is left as it is, and the run ends failing. `fleet update
+SERVER...` of only some of prod's minis, or with m6-2 off, updates them
+without a fourth: those on the new version wait without prod's tunnels until
+the rest follow, prod staying on two, and the run ends failing.
+
+`tunnels.sh` changed how it reports its tunnels in November 2026, so each
+mini's running one restarts into the new one, as `ship apply` does for any
+change of it: the first `fleet update` after does the prod minis, one at a
+time behind the floors, counting a mini still on the old one as holding its
+tunnels while each of its `cloudflared` is connected, and leaves m6-2, whose
+`next` has no stand-in until a prod mini runs the new one; the second does
+m6-2.
 
 Every connection to a server has keepalives, so one that goes away mid-step
 ends rather than waits, and one that stops answering while it readies is left
