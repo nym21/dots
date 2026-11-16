@@ -10,12 +10,14 @@ set -euo pipefail
 # starts again 10 seconds later, alone. Every second it records each tunnel's
 # state, and appends each change to ~/Library/Logs/dots/tunnels.log, which is
 # never trimmed: TIME MINI TUNNEL connected|lost, TUNNEL being * when the
-# workload starts, as what this mini held before is unknown then.
+# workload starts, as what this mini held before is unknown then, dated by the
+# state the last run left, when it ended without stopping, as in a power loss.
 #
 #   tunnels.sh set NAME...   take NAME..., their tokens on input as NAME TOKEN
 #                            lines, as this mini's tunnels, and return once the
-#                            workload has taken them: those gained ready, those
-#                            dropped ended
+#                            workload has taken them: they alone listed, even
+#                            draining, and ready, or, while it waits for the
+#                            servers, listed
 #   tunnels.sh state         the tunnels the token file names, then, while the
 #                            workload runs, whether it serves or waits for the
 #                            servers, and each tunnel's state: ready (connected,
@@ -27,6 +29,11 @@ STATE_FILE="$HOME/.config/dots/running/tunnels"
 LOG="$HOME/Library/Logs/dots/tunnels.log"
 # The workload, by its command line, which the verbs' lack.
 WORKLOAD='server/tunnels\.sh$'
+# The workload from before this script wrote its pid there, and no state.
+# Until every mini runs this one, which ship apply restarts it into, it counts
+# as holding its token file's tunnels ready while each of its cloudflareds is,
+# and takes a new token file when it restarts. (Delete once rolled out.)
+OLD_PID_FILE="$HOME/.config/dots/running/tunnels.pid"
 
 usage() {
     echo "Usage: $0 [set NAME... | state]" >&2
@@ -39,12 +46,39 @@ fresh_state() {
         pgrep -qf "$WORKLOAD" && cat "$STATE_FILE"
 }
 
+names() {
+    awk '!/^#/ && NF { print $1 }' "$TOKEN_FILE" 2>/dev/null || true
+}
+
+# The metrics port cloudflared PID listens on, and whether the one at PORT is
+# connected, as its /ready says.
+port_of() {
+    lsof -nP -a -p "$1" -iTCP -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n.*://p' | head -1
+}
+connected_at() {
+    [ -n "$1" ] && curl -s -m 1 "http://127.0.0.1:$1/ready" | grep -q '"readyConnections":[1-9]'
+}
+
+old_workload() {
+    local pid
+    pid="$(cat "$OLD_PID_FILE" 2>/dev/null)" && kill -0 "$pid" 2>/dev/null
+}
+old_state() {
+    local pid count=0
+    for pid in $(pgrep -P "$(cat "$OLD_PID_FILE")" -x cloudflared); do
+        connected_at "$(port_of "$pid")" || return 0
+        count=$((count + 1))
+    done
+    [ "$count" -eq "$(names | wc -l)" ] || return 0
+    names | sed 's/$/ ready/'
+}
+
 case "${1:-}" in
     '') ;;
     state)
         [ "$#" -eq 1 ] || usage
-        echo "tokens $(awk '!/^#/ && NF { print $1 }' "$TOKEN_FILE" 2>/dev/null | xargs)"
-        fresh_state || true
+        echo "tokens $(names | xargs)"
+        if old_workload; then old_state; else fresh_state || true; fi
         exit 0
         ;;
     set)
@@ -61,27 +95,21 @@ case "${1:-}" in
                 exit 1
             }
         done
-        had=" $(awk '!/^#/ && NF { print $1 }' "$TOKEN_FILE" 2>/dev/null | xargs) "
-        running="$(fresh_state | awk 'NF == 2 { print $1 }')" || running=''
         (umask 077 && printf '%s' "$tokens" > "$TOKEN_FILE.new" && mv "$TOKEN_FILE.new" "$TOKEN_FILE")
         # Not running, as while the mini is stopped or benching: it takes them
         # when it starts.
-        pgrep -qf "$WORKLOAD" || exit 0
-        # The tunnels gained ready, and those dropped ended, checked every
-        # tenth of a second, as fleet acts on it at once.
+        pgrep -qf "$WORKLOAD" && ! old_workload || exit 0
+        # Checked every tenth of a second, as fleet acts on it at once, on the
+        # state itself, which lists the tunnels the workload took.
+        want="$(printf '%s\n' "$@" | sort -u | xargs)"
         for _ in {1..1200}; do
             state="$(fresh_state)" || state=''
-            done=1
-            for name; do
-                case "$had" in *" $name "*) ;; *) grep -qx "$name ready" <<< "$state" || done='' ;; esac
-            done
-            for name in $running; do
-                case " $* " in *" $name "*) ;; *) ! grep -q "^$name " <<< "$state" || done='' ;; esac
-            done
-            [ -z "$done" ] || exit 0
-            if grep -qx waiting <<< "$state"; then
-                echo "$SERVER_DIR/tunnels.sh: the tunnels wait for this mini's servers; they take $* once it serves." >&2
-                exit 1
+            if [ "$(awk 'NF == 2 { print $1 }' <<< "$state" | sort -u | xargs)" = "$want" ]; then
+                if grep -qx waiting <<< "$state"; then
+                    echo "$SERVER_DIR/tunnels.sh: the tunnels wait for this mini's servers; they serve once it does." >&2
+                    exit 0
+                fi
+                [ "$(grep -c ' ready$' <<< "$state")" -lt "$#" ] || exit 0
             fi
             sleep 0.1
         done
@@ -160,9 +188,8 @@ stop_tunnel() {
 # on the metrics port it chose, looked up once.
 tunnel_ready() {
     [ -n "${PIDS[$1]:-}" ] || return 1
-    [ -n "${PORTS[$1]:-}" ] ||
-        PORTS[$1]="$(lsof -nP -a -p "${PIDS[$1]}" -iTCP -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n.*://p' | head -1)"
-    [ -n "${PORTS[$1]}" ] && curl -s -m 1 "http://127.0.0.1:${PORTS[$1]}/ready" | grep -q '"readyConnections":[1-9]'
+    [ -n "${PORTS[$1]:-}" ] || PORTS[$1]="$(port_of "${PIDS[$1]}")"
+    connected_at "${PORTS[$1]}"
 }
 
 # Take the token file's CONTENT: start the tunnels it gained while serving,
@@ -223,8 +250,9 @@ record_state() {
     connected="$now"
 }
 
+# Log TUNNEL's STATE, now, or at the epoch second WHEN.
 log() {
-    printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$self" "$1" "$2" >> "$LOG"
+    printf '%s %s %s %s\n' "$(date -u -r "${3:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)" "$self" "$1" "$2" >> "$LOG"
 }
 
 # Forget the drained tunnels whose cloudflared has ended.
@@ -273,7 +301,14 @@ mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LOG")"
 if pkill -x cloudflared; then
     echo "Stopped the tunnels a previous run left."
 fi
-log '*' lost
+# A state left means the last run ended without stopping, so the tunnels went
+# at its last write; a clean stop removes it, having logged each.
+lost_at=''
+if grep -qxE 'serving|waiting' "$STATE_FILE" 2>/dev/null; then
+    lost_at="$(stat -f %m "$STATE_FILE")"
+fi
+rm -f "$OLD_PID_FILE"
+log '*' lost "$lost_at"
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
@@ -293,6 +328,7 @@ CHECK_EVERY=60
 serving=''
 applied=''
 waiting=''
+OWN=''
 while :; do
     tokens="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
     if [ "$tokens" != "$applied" ]; then

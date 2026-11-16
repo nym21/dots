@@ -280,9 +280,10 @@ Cloudflare holds the tunnel tokens, and the workstation keeps them at hand in
 the Git-ignored `pc/.tunnels`. `fleet` gives each mini only the tunnels that are
 its own, with `server/tunnels.sh set NAME...`, their tokens on its input: it
 writes the Git-ignored `server/.tokens` whole and returns once the running
-tunnels have taken it, those gained connected, those dropped ended after their
-last requests. A connection lost while the tokens come in leaves one missing,
-and nothing is written. The running `tunnels.sh` takes the token file within a
+tunnels have taken it, as their state shows: those named alone listed, even
+draining, the dropped ones having ended after their last requests, and each
+connected, or, while the mini waits for its servers, listed. A connection lost
+while the tokens come in leaves one missing, and nothing is written. The running `tunnels.sh` takes the token file within a
 second of any change, starting the tunnels it gained and stopping those it
 dropped, the others staying connected, so the file is never a change waiting
 to happen. `tunnels.sh state`, which `fleet` and `ship status` read, says what
@@ -299,7 +300,8 @@ serves again. A `cloudflared` that exits starts again 10 seconds later, alone,
 the other tunnels serving on, and any running when `tunnels.sh` starts, left by
 one killed before it could stop them, are stopped first. `ship install` and
 `ship apply` restart the tunnels when Bitview changes version and when they
-run an older `cloudflared` than the one installed, and the whole node when
+run an older `cloudflared` than the one installed or `tunnels.sh` as it was
+before it changed, and the whole node when
 Bitcoin Core runs an older binary than the one Homebrew installed, so its
 upgrades take effect in `fleet`'s order, not at the next reboot. `ship apply
 --pending` says what it would restart, which `fleet` reads to take the mini's
@@ -307,8 +309,10 @@ tunnels off it first.
 
 Every change of a tunnel's state goes to `~/Library/Logs/dots/tunnels.log`,
 never trimmed, a line each, `TIME MINI TUNNEL connected|lost`, in UTC to the
-second; `TUNNEL` is `*` when `tunnels.sh` starts, as what the mini held before,
-as through a power loss, is unknown then. `fleet log` merges the minis' logs.
+second; `TUNNEL` is `*` when `tunnels.sh` starts, as what the mini held before
+is unknown then, dated by the state the last run left, when it ended without
+stopping, as in a power loss, so the loss shows when it happened. `fleet log`
+merges the minis' logs.
 
 While serving, `tunnels.sh` checks every minute that Bitview is at the tip. One
 stuck behind it for 10 minutes would serve on what it has, so the mini's own

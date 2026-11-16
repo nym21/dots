@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # server/tunnels.sh: the workload taking its token file, set's leave and join,
-# one tunnel's crash, a stray cloudflared reaped, and the transition log, with a
+# while serving and while waiting, one tunnel's crash, a stray cloudflared
+# reaped, a start after a crash, and the transition log, with a
 # stand-in cloudflared that only waits, and once told to stop, ends half a
 # second later, as one finishing its last requests, and fakes for what else it
 # asks of the mini.
@@ -40,10 +41,11 @@ pid=''
 while [ $# -gt 0 ]; do [ "$1" != -p ] || pid="$2"; shift; done
 printf 'p%s\nf3\nn127.0.0.1:%s\n' "$pid" $((20000 + pid % 1000))
 EOF
-cat > "$TMP/bin/pgrep" <<'EOF'
+# The servers run unless $TMP/down exists.
+cat > "$TMP/bin/pgrep" <<EOF
 #!/bin/bash
-case "$*" in "-x bitcoind" | "-x bitviewd" | "-x bitview_mcp") exit 0 ;; esac
-exec /usr/bin/pgrep "$@"
+case "\$*" in "-x bitcoind" | "-x bitviewd" | "-x bitview_mcp") [ ! -e "$TMP/down" ]; exit ;; esac
+exec /usr/bin/pgrep "\$@"
 EOF
 # Only the stand-ins: this Mac's own cloudflared is not the test's.
 printf '#!/bin/bash\nexec /usr/bin/pkill -f "%s/bin/cloudflared"\n' "$TMP" > "$TMP/bin/pkill"
@@ -80,9 +82,9 @@ ready_count() {
     "$script" state | grep -c ' ready$'
 }
 
+check "set writes the token file while no workload runs" eval 'tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" | "$script" set prod mcp m4-1'
 "$TMP/bin/cloudflared" &
 stray=$!
-tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" > "$TMP/server/.tokens"
 "$script" > "$TMP/workload.log" 2>&1 &
 workload=$!
 check "a cloudflared a killed workload left is stopped" until_true eval '! kill -0 "$stray" 2>/dev/null'
@@ -111,10 +113,25 @@ set -- $kept
 check "the others keep their processes" [ "$#" -eq 2 ] && contains "$prod" "$1" && contains "$prod" "$2"
 check "it starts again 10 seconds later" until_true eval '[ "$(ready_count)" -eq 3 ]'
 
+touch "$TMP/down"
+check "with a server down, it waits" until_true eval '"$script" state | grep -qx waiting'
+check "set returns once a drop is taken while waiting" eval 'tokens "m4-1 tok-own" | "$script" set m4-1 2>/dev/null'
+check "which it has taken by then" [ "$("$script" state | tail -n +3 | xargs)" = "m4-1 lost" ]
+rm "$TMP/down"
+
+check "set to nothing" eval '"$script" set < /dev/null'
+kill -9 "$workload"
+wait "$workload" 2>/dev/null
+touch -t 202611161200 "$HOME/.config/dots/running/tunnels"
+"$script" >> "$TMP/workload.log" 2>&1 &
+workload=$!
+check "started after a crash, it logs all lost when the crash left its state" until_true grep -q '^2026-11-16T..:00:00Z m4-1 \* lost$' "$log"
+sleep 2
+check "and runs with no tunnel" kill -0 "$workload"
+
 kill -TERM "$workload"
 wait "$workload" 2>/dev/null
 check "stopped, it stops its tunnels" fails /usr/bin/pgrep -f '^cloudflared tunnel run --protocol http2'
 
-check "and logs each lost" [ "$(tail -n 3 "$log" | grep -c ' lost$')" -eq 3 ]
-check "its state says only the token file's tunnels" [ "$("$script" state)" = "tokens prod mcp m4-1" ]
+check "its state says only the token file's tunnels, none" [ "$("$script" state)" = "tokens " ]
 finish

@@ -9,7 +9,7 @@ set -euo pipefail
 # bitview_mcp's, so servers sharing a tunnel run the same one; without, it
 # takes the newest. The first run asks for sudo, to have them start at boot.
 # The tunnels restart too when they run an older cloudflared than the one
-# installed, and the whole node when Bitcoin Core runs an older binary than the
+# installed, or tunnels.sh as it was before it changed, and the whole node when Bitcoin Core runs an older binary than the
 # one Homebrew installed, so its upgrades take effect in fleet's order rather
 # than at the next reboot.
 #
@@ -78,6 +78,14 @@ binary_stale() {
     return 1
 }
 
+# Whether the tunnels workload started before tunnels.sh last changed, as a
+# pull does: bash keeps running the script it started with.
+script_stale() {
+    local pid
+    pid="$(pgrep -f 'server/tunnels\.sh$' | head -1)" || return 1
+    [ "$(stat -f %m "$SERVER_DIR/tunnels.sh")" -gt \
+        "$(LC_ALL=C date -j -f '%a %b %d %T %Y' "$(LC_ALL=C ps -o lstart= -p "$pid" | xargs)" +%s)" ]
+}
 
 # The tunnels stop before a server restarts, so no traffic reaches it
 # meanwhile.
@@ -88,7 +96,7 @@ fi
 if stale bitview_mcp; then
     restart="$restart tunnels mcp"
 fi
-if pgrep -qf 'server/tunnels\.sh$' && binary_stale cloudflared; then
+if pgrep -qf 'server/tunnels\.sh$' && { binary_stale cloudflared || script_stale; }; then
     restart="$restart tunnels"
 fi
 # Everything else needs Bitcoin Core, so it all stops with it.
