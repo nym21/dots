@@ -417,6 +417,14 @@ converge() {
     purge_changed
 }
 
+# Have the run end failing, saying so, when the last converge left some tunnel
+# unsettled.
+settled() {
+    [ -z "$unsettled" ] && return
+    echo "Not every tunnel has the servers fleet.conf gives it; see above, and run fleet again." >&2
+    incomplete=1
+}
+
 # TUNNEL moves to another version (target) once its floor of the servers it is
 # given serve that one, those on another leaving it then. Until then it stays
 # on the version of its first server ready, or else of its first given that
@@ -923,7 +931,7 @@ lock() {
 }
 
 # Leave SERVERS as they are, for REASON, and have the run end failing.
-incomplete=''
+incomplete='' unsettled=''
 leave() {
     echo "$2; leaving $1 alone." >&2
     incomplete=1
@@ -1027,10 +1035,7 @@ update() {
         done
     fi
     converge
-    if [ -n "$unsettled" ]; then
-        echo "Not every tunnel has the servers fleet.conf gives it; see above, and run fleet update again." >&2
-        incomplete=1
-    fi
+    settled
     if [ -n "$incomplete" ]; then
         echo "Not everything was updated; see above." >&2
         exit 1
@@ -1055,6 +1060,7 @@ restart() {
         wait_serving "$server"
         converge
     done
+    settled
     [ -z "$incomplete" ]
 }
 
@@ -1109,6 +1115,7 @@ power() {
         echo "$server: back."
         [ -z "$served" ] || { wait_serving "$server"; converge; }
     done
+    settled
     [ -z "$incomplete" ]
 }
 
@@ -1151,10 +1158,8 @@ retunnel() {
     work="$(mktemp -d)"
     trap 'rm -rf "$work" "$LOCK"' EXIT
     converge
-    if [ -n "$unsettled$incomplete" ]; then
-        echo "Not every tunnel has the servers fleet.conf gives it; see above." >&2
-        exit 1
-    fi
+    settled
+    [ -z "$incomplete" ] || exit 1
     echo "Every server has its tunnels."
 }
 
