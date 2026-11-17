@@ -146,8 +146,7 @@ missing_steps() {
         echo "Turn on automatic login: System Settings, Users & Groups, Automatically log in as $(id -un)."
     # What fleet init gives, each part checked without changing it; a password
     # only for being kept, unread, as fleet update checks that it still works.
-    # With no input, tssh waits for no login, which fleet init asks for.
-    [ "$(tssh --tailscale status --json 2>/dev/null </dev/null | jq -r .BackendState)" = Running ] ||
+    [ "$(tailscale status --json 2>/dev/null | jq -r .BackendState)" = Running ] ||
         missing="$missing, the tailnet's login"
     jq -e .authenticated <<< "$(cf auth whoami 2>/dev/null)" >/dev/null 2>&1 ||
         missing="$missing, Cloudflare's login"

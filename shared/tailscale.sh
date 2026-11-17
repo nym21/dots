@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tailscale's daemon, as root, run from a copy of Homebrew's tailscaled that
-# only root can change: Homebrew's own belongs to mini, so root running it
-# would let anything running as mini become root.
+# Tailscale's daemon, as root, on every Mac: run from a copy of Homebrew's
+# tailscaled that only root can change, as Homebrew's own belongs to the login
+# user, so root running it would let anything running as that user become
+# root. The login user is its operator, so `tailscale serve` needs no sudo.
 #
 #   tailscale.sh            set Tailscale up: Homebrew's, the daemon, its login
 #   tailscale.sh --check    whether the daemon runs Homebrew's current
@@ -12,8 +13,9 @@ set -euo pipefail
 #                           changes it, and back to what it ran should it not
 #                           come back
 #
-# fleet update runs --update as a job of the server's own, lent the password,
-# as the restart drops the connection over it; ship update in a terminal.
+# fleet update runs --update on a server as a job of the server's own, lent
+# the password, as the restart drops the connection over it; ship update in a
+# terminal, on any Mac.
 
 DOTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 PLIST_DEST="/Library/LaunchDaemons/com.local.tailscaled.plist"
@@ -235,5 +237,5 @@ if [ ! -S /var/run/tailscaled.socket ]; then
 fi
 
 as_root rm -f "$COPY.previous"
-sudo "$TAILSCALE" up
+sudo "$TAILSCALE" up --operator="$(id -un)"
 sudo "$TAILSCALE" status

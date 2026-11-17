@@ -71,7 +71,7 @@ and sets it everywhere that holds it: the account, the login keychain, the
 ## Layout
 
 - `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, `trex`, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
 - `server/`: headless setup, profile, Helix and difftastic, and the workloads.
 - `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
   each run on this Mac alone with fakes for whatever it would change or reach:
@@ -135,10 +135,10 @@ Installing a daemon still asks, and macOS asks for its owner's password to
 download an update as well as to install it, so without a terminal
 `ship update` leaves it.
 
-On a server, Tailscale's daemon runs as root from `/usr/local/libexec/tailscaled`,
-a copy of Homebrew's that only root can change: Homebrew's own belongs to
-`mini`, so root running it would let anything running as `mini` become root.
-`server/tailscale.sh --update` brings the copy and the daemon onto Homebrew's
+On every Mac, Tailscale's daemon runs as root from `/usr/local/libexec/tailscaled`,
+a copy of Homebrew's that only root can change: Homebrew's own belongs to the
+login user, so root running it would let anything running as that user become
+root. `shared/tailscale.sh --update` brings the copy and the daemon onto Homebrew's
 newest, which needs root, restarting the daemon only when that changes it,
 and puts back what it ran should the daemon not come back within two minutes.
 
@@ -242,7 +242,8 @@ you, once for a new workstation and again after adding a server to
 `fleet.conf`, each part only where it is missing, so a rerun changes nothing.
 In a terminal, in turn:
 
-1. The tailnet's login: `tssh` prints the link to open on first use.
+1. The tailnet: `shared/tailscale.sh` sets up Tailscale's daemon and prints
+   the login link, when the daemon does not run.
 2. Cloudflare's: `cf auth login`, when `cf` is not logged in.
 3. Each server's own tunnel, keeping Cloudflare to the names: it gives every
    tunnel its `pc/.tunnels` name, and for each server creates its tunnel,
@@ -384,42 +385,17 @@ the [server instructions](server/README.md#cloudflare-tunnels)).
 
 ## SSH over Tailscale
 
-PC setup makes `tssh`, `tcopy`, `tscreen`, and `trex` available on your PATH,
-and `rex`, the Rex app's command-line tool, which the app keeps inside its
-bundle:
+Every Mac runs Tailscale's daemon as root, from `shared/tailscale.sh` (the
+workstation's `fleet init` runs it, a server's setup by hand), so the
+servers' Tailscale names work everywhere: `ssh mini@m6-2`,
+`rsync -avP mini@m6-1:/path/ dest/`, or Screen Sharing at `vnc://mini@m6-2`.
+Tailscale SSH stays off: the servers take OpenSSH logins with your key alone.
 
-```sh
-tssh mini@tailscale-host
-```
-
-Copy a directory in either direction using `tcopy SOURCE DESTINATION`:
-
-```sh
-tcopy mini@m6-1:/absolute/path/to/run-folder/ "$HOME/bench-m6-1-main/"
-tcopy "$HOME/bench-m6-1-main/" mini@m6-1:/absolute/path/to/run-folder/
-```
-
-It uses rsync over `tssh`, with progress and partial transfers retained for
-resuming. A trailing `/` on the source copies the directory's contents.
-
-Open Screen Sharing to a Tailscale host with `tscreen`:
-
-```sh
-tscreen mini@m6-2
-```
-
-Tailscale host names only resolve inside `tssh`, so `vnc://m6-2` does not work
-directly. When `tailscale ping` reaches the host directly at a private LAN
-address, `tscreen` opens Screen Sharing on that address, which allows High
-Performance mode. Otherwise it forwards the host's Screen Sharing port through
-`tssh` to a free local port from 5901 and opens Screen Sharing on it in Standard
-mode. The tunnel closes after Screen Sharing disconnects, or after a minute if it
-never connects. `tssh --tailscale ARGS` runs other `tailscale` commands, such as
-`status`, against the same daemon.
-
-Keep every server's Rex reachable from the Rex app with `trex`, which also
-makes each server a host of your Rex home, named after it, so the Rex app lists
-it and `rex -S SERVER` reaches it:
+PC setup also makes `trex` available on your PATH, and `rex`, the Rex app's
+command-line tool, which the app keeps inside its bundle. Keep every server's
+Rex reachable from the Rex app with `trex`, which also makes each server a host
+of your Rex home, named after it, so the Rex app lists it and `rex -S SERVER`
+reaches it:
 
 ```sh
 trex         # forward every server in pc/fleet.conf
@@ -430,16 +406,7 @@ The servers are those in `pc/fleet.conf`, by their Tailscale names. `trex`
 checks a new one once and skips it unless it accepts your SSH key as `mini` and
 runs a Rex server. Each server keeps the port it was first given, in
 `~/Library/Application Support/trex/ports`, so its host stays valid; `fleet init`
-runs `trex` after adding a server to `fleet.conf`. Each forward runs `tssh` as a
+runs `trex` after adding a server to `fleet.conf`. Each forward runs `ssh` as a
 LaunchAgent that starts at login and reconnects on its own. The Rex app only
 accepts http(s) hosts and Rex has no login on them, so any process on this Mac
 can use the ports to act as the servers' users.
-
-Concurrent sessions share one local Tailscale daemon. It stops when the last
-session closes, while authentication is retained for the next connection.
-Without a terminal, as for `fleet auto`, it waits a minute at most for a login
-no one can give, rather than forever once it expires. Its socket and lock
-live beside its login, in `~/Library/Application Support/tailscale-userspace-ssh`,
-rather than in a cache a cleaner may empty, and a daemon left running without
-them, which would take the node's connection from a new one, is stopped
-before the new one starts.

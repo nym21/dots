@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# server/tailscale.sh --check and --update: moving Tailscale's daemon onto
+# shared/tailscale.sh --check and --update: moving Tailscale's daemon onto
 # root's copy, and back should it not come back. Every system path points into
 # the scratch directory, and sudo, install, launchctl and tailscale are fakes;
 # the daemon comes back or not as COMES_BACK says.
 # shellcheck disable=SC2016 # the stand-ins' own expansions, left for them
 source "$(dirname "$0")/lib.sh"
-mkdir -p "$TMP/repo/server" "$TMP/repo/shared" "$TMP/bin" "$TMP/brew" "$TMP/libexec" \
+mkdir -p "$TMP/repo/shared" "$TMP/bin" "$TMP/brew" "$TMP/libexec" \
     "$TMP/LaunchDaemons" "$TMP/home/.config/dots"
 cp "$REPO/shared/lent.sh" "$TMP/repo/shared/"
 printf '#!/bin/bash\n:\n' > "$TMP/repo/shared/sudoers.sh"
@@ -14,7 +14,7 @@ sed -e "s#/Library/LaunchDaemons/com.local.tailscaled.plist#$TMP/LaunchDaemons/c
     -e "s#/opt/homebrew/opt/tailscale/bin/tailscale\"#$TMP/bin/tailscale\"#" \
     -e "s#/usr/local/libexec#$TMP/libexec#g" \
     -e 's#\[ "\$(stat -f .%Su. "\$1")" = root \] && .*#true#' \
-    "$REPO/server/tailscale.sh" > "$TMP/repo/server/tailscale.sh"
+    "$REPO/shared/tailscale.sh" > "$TMP/repo/shared/tailscale.sh"
 cat > "$TMP/bin/sudo" <<'EOF'
 #!/bin/bash
 while [ "${1#-}" != "$1" ]; do
@@ -52,9 +52,9 @@ case "\$*" in
 esac
 EOF
 printf '#!/bin/bash\n:\n' > "$TMP/bin/sleep"
-chmod +x "$TMP"/bin/* "$TMP/repo/server/tailscale.sh" "$TMP/repo/shared/sudoers.sh"
+chmod +x "$TMP"/bin/* "$TMP/repo/shared/tailscale.sh" "$TMP/repo/shared/sudoers.sh"
 export HOME="$TMP/home" PATH="$TMP/bin:$PATH"
-script="$TMP/repo/server/tailscale.sh"
+script="$TMP/repo/shared/tailscale.sh"
 plist="$TMP/LaunchDaemons/com.local.tailscaled.plist"
 
 # Homebrew's tailscaled of VERSION, running or not.

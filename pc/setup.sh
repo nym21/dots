@@ -77,9 +77,6 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/com.local.transmission-vp
 ~/Developer/stream/install.sh
 
 mkdir -p ~/.local/bin
-link "$ROLE_DIR/tssh" ~/.local/bin/tssh
-link "$ROLE_DIR/tcopy" ~/.local/bin/tcopy
-link "$ROLE_DIR/tscreen" ~/.local/bin/tscreen
 link "$ROLE_DIR/trex" ~/.local/bin/trex
 link "$ROLE_DIR/rex" ~/.local/bin/rex
 link "$ROLE_DIR/cf" ~/.local/bin/cf

@@ -17,7 +17,7 @@ to a protected system file. If access cannot be verified, it stops with the
 instructions above. This is a read-only probe, not a macOS permission-query API.
 Connect and verify Ethernet before setup disables Wi-Fi and Bluetooth.
 
-For initial Tailscale setup, run `./server/tailscale.sh` separately and authenticate.
+For initial Tailscale setup, run `./shared/tailscale.sh` separately and authenticate.
 It installs the system daemon so remote access does not require a desktop login,
 running as root from a copy of Homebrew's `tailscaled` that only root can change,
 which `fleet update` and `ship update` keep on Homebrew's newest (see the
@@ -26,12 +26,10 @@ Keep the server at the login screen; the workloads run in the Rex server, which
 starts at boot (see [Workloads](#workloads)). Do not enable automatic desktop
 login.
 
-From your other Mac, use `tssh mini@tailscale-host` in each terminal. Concurrent
-connections share one local userspace Tailscale daemon, which stops after the
-last SSH session closes. Authentication is saved for next time.
+From your other Mac, which runs the same daemon, use `ssh mini@tailscale-host`.
 
 Server setup keeps SSH enabled; Screen Sharing is turned on once in System
-Settings (below). File transfers use `tcopy` over SSH. It disables File Sharing
+Settings (below). File transfers use `rsync` over SSH. It disables File Sharing
 (SMB), Spotlight indexing on mounted volumes, Content Caching, printer sharing,
 and remote Apple Events. It also prevents idle sleep and enables restart after
 power loss. Setup also installs the login-aware `audiomxd` suspension
@@ -328,7 +326,7 @@ Copy it from the Rex app on your other Mac:
 
 ```sh
 plutil -extract SUFeedURL raw "/Applications/Rex Beta.app/Contents/Info.plist" |
-    tssh mini@tailscale-host 'cat > ~/Developer/dots/server/.rex-feed'
+    ssh mini@tailscale-host 'cat > ~/Developer/dots/server/.rex-feed'
 ```
 
 Then `ship update` on the mini installs it, and every later run updates it: it
@@ -355,7 +353,7 @@ updates keep it, and it applies without restarting the server.
 Run `ship locate` on the mini to loop a short sound, or start it remotely:
 
 ```sh
-tssh -t mini@m6-1 ship locate
+ssh -t mini@m6-1 ship locate
 ```
 
 The script downloads nothing. It unmutes the current output and sets its volume
@@ -374,7 +372,7 @@ After attaching a new data disk, check `mdutil -as`. Disable indexing for that
 specific volume if needed with `sudo mdutil -i off "/Volumes/your-data-disk"`.
 An idle `mds` process does not by itself indicate that indexing is enabled.
 
-After a planned reboot, verify from another machine that Tailscale, SSH, `tcopy`,
+After a planned reboot, verify from another machine that Tailscale, SSH, `rsync`,
 and Screen Sharing work while the mini remains at the login screen. Also verify
 that data volumes mount and the workloads came back; the `start` block in the
 Rex session `server` shows how, and `~/Library/Logs/workloads-boot.log` why if

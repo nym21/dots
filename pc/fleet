@@ -6,7 +6,7 @@ set -euo pipefail
 # tunnels they share. Cloudflare holds the tunnel tokens, and the git-ignored
 # pc/.tunnels keeps them at hand, fetched with cf when missing.
 # Each server also serves the tunnel named after it, if there is one, which
-# reaches it alone. fleet gives each server its part over tssh, as mini, and
+# reaches it alone. fleet gives each server its part over SSH, as mini, and
 # runs ship there. A server keeps what it was given, so it boots and serves
 # without the workstation.
 #
@@ -53,11 +53,10 @@ PASSWORD='~/.config/dots/password'
 # shellcheck disable=SC2088
 JOB='~/Developer/dots/server/job.sh'
 # shellcheck disable=SC2088
-TAILSCALE_SH='~/Developer/dots/server/tailscale.sh'
+TAILSCALE_SH='~/Developer/dots/shared/tailscale.sh'
 # shellcheck disable=SC2088
 TUNNELS_SH='~/Developer/dots/server/tunnels.sh'
 server_user=mini
-tssh="$(command -v tssh)"
 # How long a server may take to serve again: a macOS upgrade, or Bitview
 # recomputing what a new version changed, which can take hours.
 ready_timeout=$((12 * 3600))
@@ -160,7 +159,7 @@ tunnels_of() {
 # fleet.conf may be a new or renamed server.
 check_names() {
     local peers peer server self bad=0
-    peers="$("$tssh" --tailscale status --json |
+    peers="$(tailscale status --json |
         jq -r '.Peer[]? | select(.OS == "macOS") | .DNSName | split(".")[0]')"
     while read -r server _; do
         if ! grep -qx "$server" <<< "$peers"; then
@@ -187,7 +186,7 @@ check_names() {
 ssh_to() {
     local server="$1"
     shift
-    "$tssh" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+    ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
         "$server_user@$server" "$@"
 }
 
@@ -368,7 +367,7 @@ hand_over() {
 }
 
 # Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when the
-# server refuses it, and 2 when it does not answer, or tssh fails, which says
+# server refuses it, and 2 when it does not answer, or ssh fails, which says
 # nothing of the password.
 check_password() {
     local status=0
@@ -595,7 +594,7 @@ fetch() {
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only' &&
                 on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode && echo $url > ~/.config/dots/public-url'" &&
                 if [ "$mode" = local ]; then
-                    rsync -a --delete --exclude /target/ -e "$tssh -T" \
+                    rsync -a --delete --exclude /target/ -e "ssh -T" \
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
                 fi &&
                 detach "$server" "nice -n 10 $SHIP fetch" &&
@@ -1377,9 +1376,10 @@ init() {
         echo "fleet init may ask you to log in, and for passwords; run it in a terminal." >&2
         exit 1
     fi
-    # tssh logs in to the tailnet on first use, printing the link to open.
+    # Tailscale's daemon, set up and logged in, printing the link to open,
+    # when it does not run.
     echo "== The tailnet"
-    "$tssh" --tailscale status --peers=false
+    tailscale status --peers=false 2>/dev/null || "$PC_DIR/../shared/tailscale.sh"
     echo "== Cloudflare"
     if ! cf auth whoami 2>/dev/null | jq -e .authenticated >/dev/null; then
         (cd "$HOME/Library/Caches/dots" && command cf auth login)

@@ -45,13 +45,16 @@ apply() {
 
 # Last, since a restart drops the connections over it, this update's own when
 # it runs over SSH: the Tailscale daemon onto Homebrew's tailscaled, as root's
-# copy, which needs root, so a terminal; fleet update does it otherwise.
+# copy, which needs root, so a terminal; on a server, fleet update does it
+# otherwise.
 update_tailscaled() {
-    "$SERVER_DIR/tailscale.sh" --check && return 0
+    "$DOTS_DIR/shared/tailscale.sh" --check && return 0
     if [ -t 0 ]; then
-        "$SERVER_DIR/tailscale.sh" --update
-    else
+        "$DOTS_DIR/shared/tailscale.sh" --update
+    elif [ "$ROLE" = server ]; then
         echo "Tailscale's daemon is not on Homebrew's tailscaled; fleet update moves it."
+    else
+        echo "Tailscale's daemon is not on Homebrew's tailscaled; ship update in a terminal moves it."
     fi
 }
 
@@ -69,11 +72,6 @@ fi
 
 source "$DOTS_DIR/shared/setup.sh"
 link_commands
-
-binary() {
-    readlink -f "$(command -v "$1")" 2>/dev/null || true
-}
-tailscaled_before="$(binary tailscaled)"
 
 echo "Updating Homebrew..."
 brew update
@@ -116,12 +114,6 @@ case "$ROLE" in
 
         # This Mac's tunnel, onto the cloudflared just upgraded to.
         "$DOTS_DIR/pc/tunnel.sh" || echo "This Mac's tunnel was not moved onto the cloudflared installed; see above." >&2
-        # The Rex forwards keep tssh's Tailscale daemon, and its old binary,
-        # running until they restart.
-        if [ "$(binary tailscaled)" != "$tailscaled_before" ] && command -v trex >/dev/null 2>&1; then
-            trex --stop >/dev/null
-            trex
-        fi
         ;;
     server)
         if [ -r "$SERVER_DIR/.rex-feed" ]; then
@@ -142,5 +134,5 @@ if [ "$step" = fetch ]; then
 fi
 [ "$ROLE" != server ] || apply
 "$DOTS_DIR/shared/macos-update.sh"
-[ "$ROLE" != server ] || update_tailscaled
+update_tailscaled
 echo "Up to date."
