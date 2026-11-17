@@ -98,20 +98,20 @@ check "and a move that fails stops the run" fails eval '(update_tailscaled m4-1)
 
 
 # The whole of pc/fleet, end to end, against a model of the four minis: a fake
-# tssh answers for them from $SIM/m/NAME, and appends to $SIM/events, at each
+# ssh answers for them from $SIM/m/NAME, and appends to $SIM/events, at each
 # change of the tunnels a serving mini runs, who serves each, at which version.
 # With KILL_AT, the Kth change kills the run, its whole process group.
 export SIM="$TMP/sim"
 FAKES="$TMP/fakes"
 mkdir -p "$FAKES"
-cat > "$FAKES/tssh" <<'EOF'
+cat > "$FAKES/tailscale" <<'EOF'
+#!/bin/bash
+for d in "$SIM"/m/*; do printf '%s\n' "${d##*/}"; done |
+    jq -Rn '{Peer: [inputs | {key: ., value: {OS: "macOS", DNSName: (. + ".ts.net.")}}] | from_entries}'
+EOF
+cat > "$FAKES/ssh" <<'EOF'
 #!/bin/bash
 set -u
-if [ "$1" = --tailscale ]; then
-    for d in "$SIM"/m/*; do printf '%s\n' "${d##*/}"; done |
-        jq -Rn '{Peer: [inputs | {key: ., value: {OS: "macOS", DNSName: (. + ".ts.net.")}}] | from_entries}'
-    exit 0
-fi
 while [ "$1" = -o ]; do shift 2; done
 host="${1#*@}"
 shift
@@ -209,7 +209,7 @@ case "$cmd" in
     "git -C ~/Developer/dots pull -q --ff-only" | "tail -n +"* | *"tailscale.sh --check" | "rm -f ~/.config/dots/password") ;;
     *"ship status") echo "$(cut -d ' ' -f 1 "$M/mode") $(get running)" ;;
     *password* | *"sudo -S"*) cat > /dev/null ;;
-    *) echo "fake tssh: $host: $cmd" >&2; exit 1 ;;
+    *) echo "fake ssh: $host: $cmd" >&2; exit 1 ;;
 esac
 EOF
 printf '#!/bin/bash\n[ "$1" != ls-remote ] || printf "%%s\\trefs/heads/x\\n" "$(cat "$SIM/pin.${3#refs/heads/}")"\n' > "$FAKES/git"
