@@ -239,7 +239,11 @@ target directory in `~/Library/Caches/dots`, outside the copy of
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 `--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
 settings do not require a config file. An existing config file still supplies
-other settings.
+other settings. It also passes `--publicurl` with the mini's own address,
+`https://SERVER.bitview.space`, which `fleet update` writes to
+`~/.config/dots/public-url` when the mini has its own tunnel. Clients then
+stay on the server that answered, even when they reach it through a shared
+hostname.
 
 Bitcoin Core keeps its data in `/Volumes/External/bitcoin`. Its launcher passes
 no arguments, so put lasting options in `/Volumes/External/bitcoin/bitcoin.conf`,

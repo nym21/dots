@@ -14,7 +14,11 @@ source "$(dirname "$0")/external.sh"
 
 mkdir -p "$EXTERNAL_VOLUME/bitview"
 
+# This mini's own address, SERVER.bitview.space, which fleet update writes.
+public_url="$(cat ~/.config/dots/public-url 2>/dev/null || true)"
+
 RUST_BACKTRACE=1 LOG=debug exec bitviewd \
     --bitcoindir "$EXTERNAL_VOLUME/bitcoin" \
     --bitviewdir "$EXTERNAL_VOLUME/bitview" \
-    --cdn true
+    --cdn true \
+    ${public_url:+--publicurl "$public_url"}

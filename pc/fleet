@@ -574,22 +574,26 @@ download_macos() {
     fi
 }
 
-# Ready SERVER... at once, while each still serves: give each its mode and
-# the run's versions, in local mode its copy of ~/Developer/mono, and run ship
-# fetch there, which builds them, updates Homebrew, Rust, and Rex, restarting
-# nothing, then download a macOS update with its password. Each is a job of
-# the server's own, which finishes there whatever happens to this Mac or the
-# connection, as when it sleeps. The servers that fail are listed in
+# Ready SERVER... at once, while each still serves: give each its mode, the
+# run's versions, its own address if it has its own tunnel (its Bitview names
+# it in each answer from its next start, so clients reaching it through a
+# shared hostname stay on it), in local mode its copy of ~/Developer/mono, and
+# run ship fetch there, which builds them, updates Homebrew, Rust, and Rex,
+# restarting nothing, then download a macOS update with its password. Each is
+# a job of the server's own, which finishes there whatever happens to this Mac
+# or the connection, as when it sleeps. The servers that fail are listed in
 # $work/unready.
 fetch() {
-    local server mode pins note pids=() i
+    local server mode pins url note pids=() i
     echo "== Readying $* at once, while they serve..."
     for server; do
         read -r _ mode _ < <(entries "$server")
         pins="$(cat "$work/pins.$mode")"
+        url=''
+        case " $(tunnels_of "$server") " in *" $server "*) url="https://$server.$DOMAIN" ;; esac
         {
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only' &&
-                on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode'" &&
+                on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode && echo $url > ~/.config/dots/public-url'" &&
                 if [ "$mode" = local ]; then
                     rsync -a --delete --exclude /target/ -e "$tssh -T" \
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
