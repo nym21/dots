@@ -32,14 +32,15 @@ set -euo pipefail
 # An update pins one version per mode, readies every server at once, then takes
 # them in turn, those not in prod first: one that would restart anything leaves
 # its tunnels (a stand-in taking one it alone holds), restarts, and takes them
-# back (converge). A server that cannot get ready, or cannot leave, is left as
+# back (converge), so a mode's versions mix while it rolls. A version marked
+# unmixable in fleet.conf instead switches at once, with a server lent. A server that cannot get ready, or cannot leave, is left as
 # it is and the run fails; a rerun after any stop starts from what the servers
 # hold, with nothing to resume.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 FLEET_CONF="$PC_DIR/fleet.conf"
-# The run's conf: fleet.conf, or with servers lent for a version change
-# (lenders).
+# The run's conf: fleet.conf, or with servers lent for an unmixable version
+# change (lenders).
 CONF="$FLEET_CONF"
 TUNNELS="$PC_DIR/.tunnels"
 # The servers' ship, its ~ expanded there, by their shell.
@@ -246,12 +247,13 @@ follow_job() {
 }
 
 # What each server runs and holds now, read from all at once into
-# $work/live.SERVER: the builds its workloads run, as their starts recorded
-# them, then tunnels.sh state. Empty for one that does not answer.
+# $work/live.SERVER: the mode and versions it was last given, the builds its
+# workloads run, as their starts recorded them, then tunnels.sh state. Empty
+# for one that does not answer.
 probe() {
     local server pids=()
     for server in $(entries | awk '{ print $1 }'); do
-        { on "$server" "cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
+        { on "$server" "sed 's/^/mode /' ~/.config/dots/mode 2>/dev/null; cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
             : ; } >"$work/live.$server" 2>/dev/null &
         pids+=("$!")
     done
@@ -273,6 +275,26 @@ up() {
 }
 answered() {
     grep -q '^tokens' "$work/live.$1"
+}
+# Whether SERVER runs what it was last given, in the mode the run's conf gives
+# it: a server moved to another mode there takes no tunnel before it is updated.
+current() {
+    local mode pins
+    read -r mode pins < <(sed -n 's/^mode //p' "$work/live.$1")
+    [ -n "$mode" ] && [ "$mode" = "$(entries "$1" | awk '{ print $2 }')" ] &&
+        { [ -z "$pins" ] || at_pins "$1" "$pins"; }
+}
+
+# Whether the run's version of MODE is marked in fleet.conf as unable to serve
+# beside the one before it, by a line unmixable=PIN, PIN the start of a commit
+# or release it pins.
+unmixable() {
+    local pin
+    [ -s "$work/pins.$1" ] || return 1
+    for pin in $(sed -n 's/^unmixable=//p' "$FLEET_CONF"); do
+        case " $(cat "$work/pins.$1")" in *" $pin"*) return 0 ;; esac
+    done
+    return 1
 }
 
 # The servers whose token file names TUNNEL, and those on which it is in one
@@ -349,7 +371,7 @@ keeps_floor() {
 # holds, as next on m6-2, first gains a stand-in: the first other server whose
 # tunnels serve, those the run's conf gives it first, whatever version it runs,
 # as next is shown on prod's meanwhile. A tunnel with a floor of two is never
-# stood in for, which would serve it in two versions. SERVER is left as it is,
+# stood in for, which would serve it from another mode. SERVER is left as it is,
 # failing, while a tunnel would fall below its floor, or when it does not
 # answer.
 down() {
@@ -383,30 +405,8 @@ down() {
     purge_changed
 }
 
-# The version TUNNEL should serve: in an update, that of the servers WANTED...
-# (those the run's conf gives it) at the run's versions, once one is;
-# otherwise the one version they run, if they agree.
-target() {
-    local tunnel="$1" mode server versions
-    shift
-    [ "$#" -gt 0 ] || return 0
-    read -r _ mode _ < <(entries "$1")
-    if [ -s "$work/pins.$mode" ]; then
-        for server; do
-            if at_pins "$server" "$(cat "$work/pins.$mode")"; then
-                version "$server"
-                return
-            fi
-        done
-        return 0
-    fi
-    versions="$(for server; do version "$server"; done | sort -u | grep .)" || return 0
-    [ "$(wc -l <<< "$versions")" -ne 1 ] || echo "$versions"
-}
-
 # Make each tunnel's servers those the run's conf gives it, and $unsettled
-# say when some tunnel's servers holding it ready are not those, on one
-# version.
+# say when some tunnel's servers holding it ready are not those.
 converge() {
     local tunnel
     unsettled=''
@@ -425,40 +425,40 @@ settled() {
     incomplete=1
 }
 
-# TUNNEL moves to another version (target) once its floor of the servers it is
-# given serve that one, those on another leaving it then. Until then it stays
-# on the version of its first server ready, or else of its first given that
-# serves: those it is given that serve it take it, then, while it keeps its
-# floor without them, those losing it leave it together.
+# TUNNEL goes to the servers the run's conf gives it that serve what they were
+# given (current), whatever version, then, while it keeps its floor without
+# them, those losing it leave it together. When its mode's run version is
+# unmixable, those on it take it only once its floor of them serve, those on
+# another leaving it then, and until then only those on another take it.
 converge_tunnel() {
-    local tunnel="$1" wanted holders target need server new='' off='' aim='' gaining='' losing
+    local tunnel="$1" wanted holders mode pins='' new=0 switched='' on_new server gaining='' losing
     wanted="$(wanted "$tunnel" | xargs)"
     holders="$(holding "$tunnel" | xargs)"
-    # shellcheck disable=SC2086
-    target="$(target "$tunnel" $wanted)"
-    need="$(floor "$tunnel")"
-    for server in $wanted; do
-        [ -z "$target" ] || [ "$(version "$server")" != "$target" ] || ! up "$server" || new="$new $server"
-    done
-    for server in $holders; do
-        [ -z "$target" ] || [ "$(version "$server")" = "$target" ] || off="$off $server"
-    done
-    if [ -n "$target" ] && { [ -z "$off" ] || [ "$(wc -w <<< "$new")" -ge "$((need > 0 ? need : 1))" ]; }; then
-        aim="$target"
-    else
-        off=''
-        for server in $(in_state "$tunnel" ready) $wanted; do
-            grep -qx "$tunnel ready" "$work/live.$server" || up "$server" || continue
-            aim="$(version "$server")"
-            break
+    losing="$(minus "$holders" "$wanted")"
+    if [ -n "$wanted" ]; then
+        read -r _ mode _ < <(entries "${wanted%% *}")
+        ! unmixable "$mode" || pins="$(cat "$work/pins.$mode")"
+    fi
+    if [ -n "$pins" ]; then
+        for server in $wanted; do
+            ! up "$server" || ! at_pins "$server" "$pins" || new=$((new + 1))
         done
+        if [ "$new" -ge "$(floor "$tunnel")" ]; then
+            switched=1
+            for server in $holders; do
+                at_pins "$server" "$pins" || losing="$losing $server"
+            done
+        fi
     fi
     for server in $(minus "$wanted" "$holders"); do
-        if up "$server" && [ "$(version "$server")" = "$aim" ]; then
-            gaining="$gaining $server"
+        up "$server" && current "$server" || continue
+        if [ -n "$pins" ]; then
+            on_new=''
+            ! at_pins "$server" "$pins" || on_new=1
+            [ "$on_new" = "$switched" ] || continue
         fi
+        gaining="$gaining $server"
     done
-    losing="$(minus "$holders" "$wanted" | xargs) $off"
     losing="$(xargs -n 1 <<< "$losing" | sort -u | xargs)"
     if [ -n "$gaining" ]; then
         # shellcheck disable=SC2086
@@ -471,8 +471,7 @@ converge_tunnel() {
         give_all - "$tunnel" $losing
         probe
     fi
-    [ "$(in_state "$tunnel" ready | sort | xargs)" = "$(xargs -n 1 <<< "$wanted" | sort | xargs)" ] &&
-        [ "$(for server in $wanted; do version "$server"; done | sort -u | wc -l)" -le 1 ] || unsettled=1
+    [ "$(in_state "$tunnel" ready | sort | xargs)" = "$(xargs -n 1 <<< "$wanted" | sort | xargs)" ] || unsettled=1
 }
 
 # Purge the cache of each tunnel whose servers, those holding it ready or
@@ -496,7 +495,8 @@ purge_changed() {
 }
 
 # For each mode of SELECTED... whose tunnels fleet.conf gives two or three
-# servers, all among SELECTED, when its version changes: the first others of
+# servers, all among SELECTED, when its version changes to an unmixable one,
+# which three cannot roll keeping two serving one version: the first others of
 # SELECTED that answer, their tunnels all of floor one, lent to it as a
 # fourth, so two serve the old version while two ready the new, their tunnels
 # going to its servers meanwhile. The run's conf goes to $work/conf, and the
@@ -507,7 +507,7 @@ lenders() {
     for mode in $(entries "$@" | awk '{ print $2 }' | sort -u); do
         group="$(entries | awk -v mode="$mode" '$2 == mode && NF > 2 { print $1 }' | xargs)"
         case "$(wc -w <<< "$group" | xargs)" in 2 | 3) ;; *) continue ;; esac
-        [ -s "$work/pins.$mode" ] && [ -z "$(minus "$group" "$*")" ] || continue
+        unmixable "$mode" && [ -z "$(minus "$group" "$*")" ] || continue
         changed=''
         for server in $group; do
             at_pins "$server" "$(cat "$work/pins.$mode")" || changed=1
@@ -823,8 +823,7 @@ update_server() {
 }
 
 # Wait until SERVER serves again after its update. Serving is not enough: it
-# must run the run's versions, or the next servers would join it on a shared
-# tunnel with another.
+# must run the run's versions, or it would stay off its tunnels (current).
 wait_updated() {
     local server="$1" mode pins
     read -r _ mode _ < <(entries "$server")
@@ -1000,7 +999,7 @@ update() {
     # shellcheck disable=SC2086
     lent="$(lenders $kept)"
     if [ -n "$lent" ]; then
-        echo "== $lent: lent for a version change, as a fourth"
+        echo "== $lent: lent for an unmixable version change, as a fourth"
         CONF="$work/conf"
     fi
     # shellcheck disable=SC2086
@@ -1012,7 +1011,7 @@ update() {
     for server in $lent; do
         grep -qx "$server" "$work/unready" 2>/dev/null || continue
         for moved in $(awk 'NR == FNR { line[$0]; next } !/^#/ && NF >= 2 && !($0 in line) { print $1 }' "$FLEET_CONF" "$work/conf"); do
-            leave "$moved" "$server, lent for a version change, did not get ready"
+            leave "$moved" "$server, lent for an unmixable version change, did not get ready"
             kept="$(minus "$kept" "$moved" | xargs)"
         done
         CONF="$FLEET_CONF" lent=''
