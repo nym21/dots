@@ -202,7 +202,10 @@ case "$cmd" in
         esac
         ;;
     *"job.sh status") get job ;;
-    *"> ~/.config/dots/mode'") sed -E 's/.*echo (.*) > .*/\1/' <<< "$cmd" > "$M/mode" ;;
+    *"> ~/.config/dots/public-url'")
+        sed -E 's/.*echo (.*) > ~\/\.config\/dots\/mode .*/\1/' <<< "$cmd" > "$M/mode"
+        sed -E "s/.*echo (.*) > ~\/\.config\/dots\/public-url'/\1/" <<< "$cmd" > "$M/public-url"
+        ;;
     "git -C ~/Developer/dots pull -q --ff-only" | "tail -n +"* | *"tailscale.sh --check" | "rm -f ~/.config/dots/password") ;;
     *"ship status") echo "$(cut -d ' ' -f 1 "$M/mode") $(get running)" ;;
     *password* | *"sudo -S"*) cat > /dev/null ;;
@@ -273,6 +276,8 @@ check "a version change of prod and next ends as fleet.conf says" sim_fleet upda
 check "with the floors kept throughout" sim_floors
 check "and m6-2 lent to prod meanwhile" grep -q 'prod:.* m6-2@P1' "$SIM/events"
 check "back in next after" sim_final
+check "each server's Bitview gets its own address" \
+    diff <(for m in "$SIM"/m/*; do echo "https://${m##*/}.bitview.space"; done) <(cat "$SIM"/m/*/public-url)
 total="$(cat "$SIM/changes")"
 # (Eight at a time, each in its own model.)
 for at in $(seq 1 "$total"); do
