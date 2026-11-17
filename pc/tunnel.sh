@@ -5,8 +5,7 @@ set -euo pipefail
 # ~/Developer/mono, at local.bitview.space: a LaunchAgent that starts it at
 # login and again whenever it exits. ship update runs this after upgrading,
 # and fleet auto hourly, for an upgrade made otherwise, so a new cloudflared
-# takes over on its own: Mullvad's exclusion first, then the tunnel restarts
-# onto it. While the tunnel runs the cloudflared installed, nothing changes.
+# takes over on its own: the tunnel restarts onto it. While the tunnel runs the cloudflared installed, nothing changes.
 #
 #   tunnel.sh       install the LaunchAgent, restart the tunnel onto a new
 #                   cloudflared, or stop it when pc/.tunnels lacks its token
@@ -27,9 +26,6 @@ token() {
 case "$#:${1:-}" in
     0:) ;;
     1:run)
-        # However it started, excluded from Mullvad before it connects, and
-        # the binary it ran before no longer.
-        "$PC_DIR/split-tunnel.sh" || true
         token="$(token)"
         if [ -z "$token" ]; then
             echo "pc/.tunnels has no token for local." >&2
@@ -42,10 +38,6 @@ case "$#:${1:-}" in
         exit 1
         ;;
 esac
-
-# Mullvad's exclusion, onto the cloudflared installed, for any cloudflared of
-# this Mac's, and before the tunnel restarts onto it.
-"$PC_DIR/split-tunnel.sh"
 
 stop() {
     [ -e "$PLIST" ] || return 0

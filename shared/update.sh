@@ -114,8 +114,7 @@ case "$ROLE" in
         install_fleet_auto
         install_cf
 
-        # Mullvad's exclusion of cloudflared, and this Mac's tunnel, onto the
-        # version just upgraded to.
+        # This Mac's tunnel, onto the cloudflared just upgraded to.
         "$DOTS_DIR/pc/tunnel.sh" || echo "This Mac's tunnel was not moved onto the cloudflared installed; see above." >&2
         # The Rex forwards keep tssh's Tailscale daemon, and its old binary,
         # running until they restart.

@@ -127,8 +127,8 @@ missing_steps() {
     local hosts server last missing='' tunnel='' password='' forward=''
     # Each output read whole, as grep -q leaving early, or ssh -T failing even
     # when it logs in, would fail a pipeline.
-    grep -q '^Mullvad account:' <<< "$(mullvad account get 2>/dev/null)" ||
-        echo "Log in to Mullvad VPN: mullvad account login."
+    [ -e /etc/wireguard/mullvad-tx.conf ] ||
+        echo "Give Transmission its Mullvad tunnel: sudo /usr/local/sbin/transmission-vpn register."
     grep -q 'successfully authenticated' <<< "$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1)" ||
         echo "Give GitHub an SSH key: ssh-keygen -t ed25519, then add ~/.ssh/id_ed25519.pub at https://github.com/settings/keys."
     ls -d /Applications/Rex*.app >/dev/null 2>&1 ||

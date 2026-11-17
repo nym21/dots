@@ -1,0 +1,127 @@
+#!/bin/bash
+# Transmission-only Mullvad tunnel. wireguard-go carries only packets whose source is the tunnel address:
+# the system default route and DNS stay on the LAN; the tunnel gets just a default route scoped to its own
+# interface, which macOS uses for sockets bound to that address (Transmission's bind-address-ipv4).
+#
+# Kill switch, two layers:
+#  - the kernel: the address exists only on the tunnel, and a socket bound to it gets "No route to host" for
+#    any internet destination unless the tunnel's scoped route is up (tested 2026-11-17);
+#  - pf: the kernel still lets LAN-bound packets from that address out on en0 (connected and host routes win),
+#    so the anchor blocks the address everywhere but the tunnel.
+# Nothing here can cut the rest of the Mac off: the anchor's rules match only the tunnel address, and pf as a
+# whole is enabled at most once per boot (marker in /var/run, which boot clears) and its main ruleset is never
+# reloaded. A pf disabled by hand stays disabled until the next boot.
+#
+#   transmission-vpn          run every 60 s by LaunchDaemon com.local.transmission-vpn-tunnel: brings the tunnel
+#                             up when it is missing or its last handshake is over 3 minutes old; reloads a lost anchor
+#   transmission-vpn up       (re)start the tunnel now
+#   transmission-vpn down     stop the tunnel; the anchor stays, so the address still can't leave another way
+#   transmission-vpn register give this Mac its own Mullvad device (asks for the account number, which is not
+#                             kept) on the nearest Mullvad-owned relay, and write the two files below
+#
+# /etc/wireguard/mullvad-tx.conf     the device's key and relay, wg format, root only
+# /etc/wireguard/mullvad-tx.address  its tunnel address, for anyone: what Transmission binds to
+set -eu
+export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+CONF=/etc/wireguard/mullvad-tx.conf
+ADDRESS=/etc/wireguard/mullvad-tx.address
+NAME_FILE=/var/run/wireguard/mullvad-tx.name
+PID_FILE=/var/run/wireguard/mullvad-tx.pid
+BOOT_MARK=/var/run/transmission-vpn.pf-enabled
+ANCHOR=com.apple/mullvad-tx # evaluated by the stock main ruleset's `anchor "com.apple/*"`
+STALE=180
+API=https://api.mullvad.net
+
+log() { echo "$(date '+%F %T') $*"; }
+
+register() {
+	[ ! -e "$CONF" ] || { echo "$CONF exists; to register again, delete it and its device on mullvad.net" >&2; exit 1; }
+	local acct token key device relay
+	read -rsp "Mullvad account number: " acct; echo
+	token=$(curl -fsS -m 15 "$API/auth/v1/token" -H 'content-type: application/json' \
+		-d "{\"account_number\":\"$acct\"}" | jq -r .access_token)
+	key=$(wg genkey)
+	# A full account (5 devices) answers with an error saying so.
+	device=$(curl -sS --fail-with-body -m 15 "$API/accounts/v1/devices" -H "authorization: Bearer $token" \
+		-H 'content-type: application/json' -d "{\"pubkey\":\"$(wg pubkey <<<"$key")\",\"hijack_dns\":false}") ||
+		{ echo "Mullvad refused the device: $device" >&2; exit 1; }
+	# The nearest Mullvad-owned relay by round trip, so no location is written here (this repo is public).
+	relay=$(curl -fsS -m 15 "$API/www/relays/wireguard/" | jq -c '[.[] | select(.owned and .active)]')
+	nearest=$(jq -r '.[].ipv4_addr_in' <<<"$relay" |
+		xargs -P 32 -I{} sh -c 'ping -c 1 -t 1 {} 2>/dev/null | sed -n "s/.*time=\([0-9.]*\).*/\1 {}/p"' |
+		sort -n | head -1 | cut -d' ' -f2)
+	[ -n "$nearest" ] || { echo "no Mullvad-owned relay answered a ping" >&2; exit 1; }
+	relay=$(jq -c --arg ip "$nearest" '.[] | select(.ipv4_addr_in == $ip)' <<<"$relay")
+	mkdir -p /etc/wireguard
+	(umask 077; printf '[Interface]\nPrivateKey = %s\n\n[Peer]\n# %s\nPublicKey = %s\nEndpoint = %s:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n' \
+		"$key" "$(jq -r .hostname <<<"$relay")" "$(jq -r .pubkey <<<"$relay")" "$(jq -r .ipv4_addr_in <<<"$relay")" > "$CONF")
+	jq -r '.ipv4_address | sub("/.*"; "")' <<<"$device" > "$ADDRESS"
+	chmod 644 "$ADDRESS"
+	echo "Registered as Mullvad device \"$(jq -r .name <<<"$device")\", address $(cat "$ADDRESS"), relay $(jq -r .hostname <<<"$relay")."
+}
+
+case "${1:-check}" in
+register) register; exit ;;
+check) [ -r "$CONF" ] || exit 0 ;; # not registered yet: setup lists it as a step
+*) [ -r "$CONF" ] || { echo "no $CONF: run transmission-vpn register" >&2; exit 1; } ;;
+esac
+ip=$(cat "$ADDRESS")
+ifc=$(cat "$NAME_FILE" 2>/dev/null || true)
+
+load_anchor() {
+	printf '%s\n' \
+		"pass out quick on $ifc inet from $ip to any flags any keep state" \
+		"block drop out quick inet from $ip to any" \
+		"pass in quick on $ifc inet to $ip flags any keep state" |
+		pfctl -q -a "$ANCHOR" -f - 2>/dev/null
+}
+
+enable_pf_once_per_boot() {
+	[ -e "$BOOT_MARK" ] && return
+	touch "$BOOT_MARK"
+	pfctl -s info 2>/dev/null | grep -q 'Status: Enabled' && return
+	pfctl -E >/dev/null 2>&1
+	log "pf enabled for this boot"
+}
+
+down() {
+	# Its own wireguard-go only, by pid. KILL after 5 s covers a wedged one, the case the handshake check exists
+	# for; the utun and its address die with the process.
+	pkill -F "$PID_FILE" -x wireguard-go 2>/dev/null || true
+	for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -F "$PID_FILE" -x wireguard-go >/dev/null 2>&1 || break; sleep 0.5; done
+	pkill -9 -F "$PID_FILE" -x wireguard-go 2>/dev/null || true
+	rm -f "$NAME_FILE" "$PID_FILE"
+	ifc=
+}
+
+up() {
+	down
+	mkdir -p /var/run/wireguard
+	WG_TUN_NAME_FILE="$NAME_FILE" wireguard-go utun
+	ifc=$(cat "$NAME_FILE")
+	lsof -t "/var/run/wireguard/$ifc.sock" > "$PID_FILE" # it forks into the background; its control socket names it
+	load_anchor # before the address exists, so nothing leaves from it unfiltered
+	wg setconf "$ifc" "$CONF"
+	ifconfig "$ifc" inet "$ip" "$ip" netmask 255.255.255.255 mtu 1380 up
+	route -q -n add -inet default -interface "$ifc" -ifscope "$ifc" >/dev/null
+	log "tunnel up on $ifc ($ip)"
+}
+
+case "${1:-check}" in
+up) up ;;
+down) down; log "tunnel down" ;;
+check)
+	if [ -z "$ifc" ] || ! ifconfig "$ifc" >/dev/null 2>&1; then
+		log "tunnel missing, starting it"; up
+	# A wedged wireguard-go never answers wg, which would hang this run and so every later one: give it 5 s.
+	elif ! hs=$(perl -e 'alarm shift; exec @ARGV' 5 wg show "$ifc" latest-handshakes 2>/dev/null); then
+		log "wireguard-go on $ifc not answering, restarting it"; up
+	elif [ $(($(date +%s) - $(awk '{ print $2 }' <<<"$hs"))) -gt $STALE ]; then
+		log "last handshake on $ifc over ${STALE}s ago, restarting wireguard-go"; up
+	elif ! pfctl -a "$ANCHOR" -sr 2>/dev/null | grep -q "block drop out quick inet from $ip"; then
+		log "pf anchor missing, reloading it"; load_anchor
+	fi
+	enable_pf_once_per_boot
+	;;
+*) echo "usage: transmission-vpn [up|down|check|register]" >&2; exit 2 ;;
+esac

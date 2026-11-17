@@ -41,26 +41,24 @@ settings, skills, agents, plugins, memory and transcripts. Setup makes those
 links and adds it to T3 as the provider instance "Claude 2", when T3 is
 installed; its login is one of the steps setup lists.
 
-Some apps cannot come from the Brewfile:
-
-- **Mullvad VPN** updates itself, and Homebrew cannot adopt an existing copy
-  without App Management access, so setup installs it from its cask only when
-  missing.
-- **`cargo-hawk`** comes from Astral's installer, which setup and `ship update`
-  run when a newer release is out: Cargo cannot build it, and each release is
-  built against one stable Rust, so a Rust update needs its newest.
+One tool cannot come from the Brewfile: **`cargo-hawk`** comes from Astral's
+installer, which setup and `ship update` run when a newer release is out:
+Cargo cannot build it, and each release is built against one stable Rust, so a
+Rust update needs its newest.
 
 Both roles turn the firewall on and Spotlight's index off. On the workstation,
 setup keeps it from ever sleeping, on battery or with its lid closed too, and
 its display on with no screen saver, so nothing locks it, which iPhone
 Mirroring's automatic sign-in needs; with the lid closed, a display must stay
-attached (an HDMI dummy does). It leaves Mullvad at its defaults but for what
-something needs: its tunnel MTU at 1380, which Tailscale's packets need; the
-local network shared; connecting at login; and split tunneling on, with
-cloudflared, tssh's tailscaled, bitcoind and the agents (`claude`, `codex`)
-excluded, `pc/split-tunnel.sh` saying why (see [Updates](#updates)). Its DNS
-blocking stays off, as each of its lists blocks T3 Connect's relay. Its
-account is logged in by hand. Setup also runs this Mac's Bitcoin Core node
+attached (an HDMI dummy does). Mullvad carries Transmission alone, and the
+rest of this Mac goes direct: no Mullvad app, whose whole-Mac tunnel stalled
+under build load until the Mac had no internet, but a WireGuard tunnel of this
+Mac's own, `pc/transmission-vpn`, which a LaunchDaemon brings up at boot and
+restarts when its handshake goes stale. Only packets from its address use it,
+which is what Transmission binds to, and that address can leave through
+nothing else, so with the tunnel down Transmission reaches no one. Its device
+is registered by hand, once, with the account number
+(`sudo /usr/local/sbin/transmission-vpn register`). Setup also runs this Mac's Bitcoin Core node
 (`pc/bitcoin.sh`, a LaunchAgent whose first sync runs fast, then plain) and
 installs the private `stream` repo, the home video server.
 
@@ -73,7 +71,7 @@ and sets it everywhere that holds it: the account, the login keychain, the
 ## Layout
 
 - `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Mullvad, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, the Tailscale SSH commands, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
 - `server/`: headless setup, profile, Helix and difftastic, and the workloads.
 - `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
   each run on this Mac alone with fakes for whatever it would change or reach:
@@ -367,14 +365,7 @@ hour, even one it skips, as `ship update` does after upgrading. It keeps this
 Mac's own tunnel, `local`, which serves its Bitview at `local.bitview.space`,
 as a LaunchAgent that starts it at login and again whenever it exits, logging
 to `~/Library/Logs/local-tunnel.log`, and moves it onto a new cloudflared on
-its own. First `pc/split-tunnel.sh`: Mullvad's split tunneling excludes
-cloudflared by its versioned Cellar path, which an upgrade replaces, and
-Cloudflare's tunnel servers are unreachable through Mullvad, so it excludes
-the current binary, as setup has it do first, keeping the old one's while a tunnel
-started before the upgrade still runs it, as dropping it would cut that tunnel
-off until it restarts. Then the tunnel restarts onto the new binary, and its
-start, as every start of it, moves the exclusion again, dropping the old one's.
-The tunnel stops when `pc/.tunnels` lacks its token, which `fleet init`
+its own. The tunnel stops when `pc/.tunnels` lacks its token, which `fleet init`
 fetches, or when `fleet.conf` gives `local` to a server, as two machines on
 one tunnel would serve two versions.
 
