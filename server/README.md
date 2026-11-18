@@ -277,27 +277,42 @@ completion. Run `ship start` afterwards to start Bitview again.
 ## Cloudflare tunnels
 
 Cloudflare holds the tunnel tokens, and the workstation keeps them at hand in
-the Git-ignored `pc/.tunnels`. `fleet update` writes to each mini's Git-ignored
-`server/.tokens` only the tunnels that are the mini's, so a mini holds no other
-mini's tokens, and has its tunnels take them when they changed:
-`server/tunnels.sh reload` makes the running tunnels start those the token
-file gained and stop those it dropped, keeping the others connected, and
-returns once the dropped ones have ended their last requests; with `--wait`,
-once every tunnel is connected. A `tunnels.sh` from before reloads were
-possible is restarted instead.
+the Git-ignored `pc/.tunnels`. `fleet` gives each mini only the tunnels that are
+its own, with `server/tunnels.sh set NAME...`, their tokens on its input: it
+writes the Git-ignored `server/.tokens` whole and returns once the running
+tunnels have taken it, as their state shows: those named alone listed, even
+draining, the dropped ones having ended after their last requests, and each
+connected, or, while the mini waits for its servers, listed. A connection lost
+while the tokens come in leaves one missing, and nothing is written. The running `tunnels.sh` takes the token file within a
+second of any change, starting the tunnels it gained and stopping those it
+dropped, the others staying connected, so the file is never a change waiting
+to happen. `tunnels.sh state`, which `fleet` and `ship status` read, says what
+the file names and each tunnel's state, as the running `tunnels.sh` records it
+every second in `~/.config/dots/running/tunnels`: ready (connected, both
+servers answering), lost, or draining.
 
-`tunnels.sh` starts this mini's tunnels once Bitcoin Core, Bitview, and the MCP
-server run, both servers answer, and Bitview has reached Bitcoin Core's tip
-(`blocks_behind` in `/api/server/sync`; a version without it counts as at the
-tip), so a restarting node gets no public traffic. While a backend is down, it
-takes the tunnels down and waits until the node serves again. If a tunnel
-exits, it stops the others and exits, and starts again 10 seconds later,
-logged as a crash. `ship install` and `ship apply` restart them when Bitview
-changes version, when they run an older `cloudflared` than the one installed,
-and when they run on other tokens than `fleet` gave, as each start records
-them in `~/.config/dots/running/tunnels`. They restart the whole node when
+`tunnels.sh` starts this mini's tunnels, one `cloudflared` each, once Bitcoin
+Core, Bitview, and the MCP server run, both servers answer, and Bitview has
+reached Bitcoin Core's tip (`blocks_behind` in `/api/server/sync`; a version
+without it counts as at the tip), so a restarting node gets no public traffic.
+While a backend is down, it takes the tunnels down and waits until the node
+serves again. A `cloudflared` that exits starts again 10 seconds later, alone,
+the other tunnels serving on, and any running when `tunnels.sh` starts, left by
+one killed before it could stop them, are stopped first. `ship install` and
+`ship apply` restart the tunnels when Bitview changes version and when they
+run an older `cloudflared` than the one installed or `tunnels.sh` as it was
+before it changed, and the whole node when
 Bitcoin Core runs an older binary than the one Homebrew installed, so its
-upgrades take effect in `fleet`'s order, not at the next reboot.
+upgrades take effect in `fleet`'s order, not at the next reboot. `ship apply
+--pending` says what it would restart, which `fleet` reads to take the mini's
+tunnels off it first.
+
+Every change of a tunnel's state goes to `~/Library/Logs/dots/tunnels.log`,
+never trimmed, a line each, `TIME MINI TUNNEL connected|lost`, in UTC to the
+second; `TUNNEL` is `*` when `tunnels.sh` starts, as what the mini held before
+is unknown then, dated by the state the last run left, when it ended without
+stopping, as in a power loss, so the loss shows when it happened. `fleet log`
+merges the minis' logs.
 
 While serving, `tunnels.sh` checks every minute that Bitview is at the tip. One
 stuck behind it for 10 minutes would serve on what it has, so the mini's own
