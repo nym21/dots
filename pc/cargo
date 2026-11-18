@@ -34,6 +34,12 @@ if [ "${1:-}" = --one-cargo-runner ]; then
             flock($f, LOCK_UN);
             fcntl($f, F_SETFD, FD_CLOEXEC);
         }
+        if (defined(my $fd = delete $ENV{ONE_CARGO_LOG_FD})) {
+            if (open(my $notify, ">&=", $fd)) {
+                local $SIG{PIPE} = "IGNORE";
+                syswrite($notify, "\n");
+            }
+        }
         delete $ENV{ONE_CARGO_HELD};
         $ENV{CARGO} = shift;
         exec { $ARGV[0] } @ARGV or die "one-cargo runner: $ARGV[0]: $!\n";
@@ -90,10 +96,24 @@ export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
 # only for a load1 under 4.
 exec /usr/bin/perl -e '
     use Fcntl qw(:flock F_SETFD);
+    use POSIX qw(_exit);
     use Time::HiRes qw(time sleep);
+    my $queued = time;
+    my $sub = shift @ARGV;
     my $idle = 4;
     my $q = "$ENV{ONE_CARGO_LOCK}.q";
     sub lockfile { open(my $h, ">>", $_[0]) or die "one-cargo: $_[0]: $!\n"; $h }
+    sub reading {
+        local $ENV{LC_ALL} = "C";
+        my @processes = `ps -Axo %cpu=,comm=`;
+        my $cpu = $? == 0 ? 0 : "-";
+        if ($cpu ne "-") {
+            for (@processes) { $cpu += $1 if m{\A\s*([\d.]+)\s+(?:.*/)?rustc\s*\z} }
+        }
+        my $level = `sysctl -n kern.memorystatus_vm_pressure_level`;
+        my $pressure = $? == 0 && $level =~ /\A(\d+)\s*\z/ ? $1 : "-";
+        ($cpu, $pressure);
+    }
     # The live tickets, oldest first; dead ones are removed.
     sub line {
         opendir(my $d, $q) or return ();
@@ -132,5 +152,38 @@ exec /usr/bin/perl -e '
     fcntl($f, F_SETFD, 0);
     $ENV{ONE_CARGO_FD} = fileno($f);
     $ENV{ONE_CARGO_HELD} = 1;
+    my ($rustc_cpu, $pressure) = reading();
+    sub log_build {
+        my $start = time;
+        my @head = ($sub =~ /\A[a-z][a-z0-9_-]{0,31}\z/ ? $sub : "cargo");
+        # Omit arbitrary values such as registry credentials and runner args.
+        for (my $i = 1; $sub ne "hold" && $i < @ARGV && @head < 6; ++$i) {
+            my $arg = $ARGV[$i];
+            last if $arg eq "--";
+            if ($arg =~ /\A(--release|--locked|--workspace)\z/) { push @head, $arg }
+            if ($arg =~ /\A(-p|--package|--bin|--profile)\z/ && ($ARGV[$i+1] // "") =~ /\A[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}\z/) {
+                push @head, $arg, $ARGV[++$i];
+            }
+        }
+        open(my $log, ">>", "$ENV{HOME}/Library/Logs/cargo-shim.log") or return;
+        pipe(my $read, my $write) or return;
+        fcntl($write, F_SETFD, 0) or return;
+        my $pid = fork();
+        return unless defined $pid;
+        if ($pid) { $ENV{ONE_CARGO_LOG_FD} = fileno($write); return $write }
+        # Keep the Cargo PID and finish the record when it exits or its runner unlocks.
+        $SIG{$_} = "IGNORE" for qw(HUP INT TERM);
+        close $f;
+        close $write;
+        close STDIN;
+        close STDOUT;
+        close STDERR;
+        sysread($read, my $done, 1);
+        my $line = sprintf("start=%.3f end=%.3f slot=%d wait=%.3f rustc_cpu=%s pressure=%s args=\"%s\"\n",
+            $start, time, $ENV{ONE_CARGO_SLOT}, $start - $queued, $rustc_cpu, $pressure, join(" ", @head));
+        syswrite($log, $line);
+        _exit(0);
+    }
+    my $notify = log_build() or warn "one-cargo: cannot log build: $!\n";
     exec { "nice" } "nice", "-n", "10", @ARGV or die "one-cargo: nice: $!\n";
-' "$real" "$@"
+' "$sub" "$real" "$@"
