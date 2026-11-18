@@ -80,6 +80,8 @@ mkdir -p ~/.local/bin
 link "$ROLE_DIR/trex" ~/.local/bin/trex
 link "$ROLE_DIR/rex" ~/.local/bin/rex
 link "$ROLE_DIR/cf" ~/.local/bin/cf
+# Ahead of rustup's proxy in every PATH (brew shellenv puts it first).
+link "$ROLE_DIR/cargo" /opt/homebrew/bin/cargo
 echo "Installing Cloudflare's cf..."
 install_cf
 # Cloned over HTTPS, as by bootstrap, dots pushes over SSH: the workstation

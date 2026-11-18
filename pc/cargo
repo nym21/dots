@@ -1,0 +1,34 @@
+#!/bin/sh
+# One compiling cargo at a time on this Mac, at low priority. One build already
+# takes every core, so two at once finish no sooner and only double load and
+# memory (a Mac at load 190 stalls its network). Linked ahead of rustup's
+# proxy as /opt/homebrew/bin/cargo, first in every shell's PATH.
+#
+# Listing and formatting pass straight through, and so does a cargo started
+# under a held lock (a build script or alias calling cargo would otherwise
+# wait on its own parent). lockf frees the lock when its holder exits, crash
+# included.
+real="$HOME/.cargo/bin/cargo"
+lock="$HOME/Library/Caches/cargo-build.lock"
+
+# The subcommand: the first word that isn't an option, a toolchain or an
+# option's value.
+sub=
+skip=
+for arg in "$@"; do
+    if [ -n "$skip" ]; then skip=; continue; fi
+    case "$arg" in
+    --config | --color | -Z | -C) skip=1 ;;
+    -* | +*) ;;
+    *) sub=$arg; break ;;
+    esac
+done
+
+case "$sub" in
+"" | metadata | tree | fmt | version | help | locate-project | pkgid | search | owner | login | logout | yank | read-manifest | verify-project | clean)
+    exec "$real" "$@" ;;
+esac
+[ -n "$ONE_CARGO_HELD" ] && exec "$real" "$@"
+
+lockf -k -t 0 "$lock" true 2>/dev/null || echo "waiting for another cargo build" >&2
+ONE_CARGO_HELD=1 exec lockf -k "$lock" nice -n 10 "$real" "$@"
