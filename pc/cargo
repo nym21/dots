@@ -127,11 +127,9 @@ exec /usr/bin/perl -e '
         for my $i (0, 1) {
             my ($mine, $other) = @slots[$i, 1 - $i];
             next unless flock($mine, LOCK_EX | LOCK_NB);
-            my $alone = flock($other, LOCK_EX | LOCK_NB);
+            if (flock($other, LOCK_EX | LOCK_NB)) { flock($other, LOCK_UN); return ($i + 1, "-", "-") }
             my ($cpu, $pressure) = reading();
-            flock($other, LOCK_UN) if $alone;
-            return ($i + 1, $cpu, $pressure)
-                if $alone || ($cpu ne "-" && $cpu < 300 && $pressure eq "1");
+            return ($i + 1, $cpu, $pressure) if $cpu ne "-" && $cpu < 300 && $pressure eq "1";
             flock($mine, LOCK_UN);
             last;
         }
