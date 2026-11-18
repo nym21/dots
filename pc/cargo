@@ -54,20 +54,41 @@ esac
 
 : "${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER:=$self --one-cargo-runner}"
 export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
-# A waiter blocks on the slot, but every 15 s takes a second slot (its own
-# lock, non-blocking, so only one waiter wins it) if the Mac is idle: a release
-# build's fat-LTO link runs ~7 min on one core while the rest wait (2026-11-18).
-# Two builds compiling flat out at once loaded the Mac to 106-188, so the
-# second slot is only for a load1 under 4.
+# Waiters go first come, first served: each leaves a ticket (arrival time and
+# pid) in $ONE_CARGO_LOCK.q, and only the oldest live ticket tries the lock. A
+# freed flock goes to any blocked waiter, so with every waiter blocked on it a
+# build waited 2 h 38 min while newer ones went first (2026-11-18, 20 waiting).
+# A ticket whose process is gone (killed, crashed) is skipped and removed.
+# The oldest waiter blocks on the slot, but every 15 s takes a second slot (its
+# own lock, non-blocking) if the Mac is idle: a release build's fat-LTO link
+# runs ~7 min on one core while the rest wait (2026-11-18). Two builds
+# compiling flat out at once loaded the Mac to 106-188, so the second slot is
+# only for a load1 under 4.
 exec /usr/bin/perl -e '
     use Fcntl qw(:flock F_SETFD);
+    use Time::HiRes qw(time sleep);
     my $idle = 4;
+    my $q = "$ENV{ONE_CARGO_LOCK}.q";
     sub lockfile { open(my $h, ">>", $_[0]) or die "one-cargo: $_[0]: $!\n"; $h }
+    # The live tickets, oldest first; dead ones are removed.
+    sub line {
+        opendir(my $d, $q) or return ();
+        my @live;
+        for (sort grep { /^\d+-\d+$/ } readdir $d) {
+            my ($pid) = /-(\d+)$/;
+            if (kill 0, $pid) { push @live, $_ } else { unlink "$q/$_" }
+        }
+        @live;
+    }
     my $f = lockfile($ENV{ONE_CARGO_LOCK});
-    unless (flock($f, LOCK_EX | LOCK_NB)) {
+    unless (!line() && flock($f, LOCK_EX | LOCK_NB)) {
+        mkdir $q;
+        my $mine = sprintf("%017.0f-%d", time * 1e6, $$);
+        open(my $t, ">", "$q/$mine") or die "one-cargo: $q/$mine: $!\n"; close $t;
         print STDERR "waiting for another cargo build\n";
         $SIG{ALRM} = sub {};
         while (1) {
+            if ((line())[0] ne $mine) { sleep 2; next }
             alarm 15; my $got = flock($f, LOCK_EX); alarm 0;
             if ($got) { print STDERR "cargo slot 1\n"; last }
             my ($load) = `sysctl -n vm.loadavg` =~ /([\d.]+)/;
@@ -75,6 +96,7 @@ exec /usr/bin/perl -e '
             my $g = lockfile("$ENV{ONE_CARGO_LOCK}.2");
             if (flock($g, LOCK_EX | LOCK_NB)) { $f = $g; print STDERR "cargo slot 2 (load $load)\n"; last }
         }
+        unlink "$q/$mine";
     }
     fcntl($f, F_SETFD, 0);
     $ENV{ONE_CARGO_FD} = fileno($f);
