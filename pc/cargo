@@ -40,11 +40,22 @@ if [ "${1:-}" = --one-cargo-runner ]; then
     ' "$self" "$@"
 fi
 
-# The subcommand: the first word that isn't an option, a toolchain or an
-# option's value.
+# `cargo --one-cargo-hold COMMAND...` runs a whole script as one build, queued
+# like any other, its cargo calls passing straight through: a script that took
+# the lock itself jumped the queue each step, and the oldest waiter starved
+# 27 min (2026-11-18).
 sub=
 skip=
-for arg in "$@"; do
+if [ "${1:-}" = --one-cargo-hold ]; then
+    shift
+    if [ -n "${ONE_CARGO_HELD:-}" ]; then exec "$@"; fi
+    real=$1
+    shift
+    sub=hold
+fi
+# The subcommand: the first word that isn't an option, a toolchain or an
+# option's value.
+[ -n "$sub" ] || for arg in "$@"; do
     if [ -n "$skip" ]; then skip=; continue; fi
     case "$arg" in
     --config | --color | -Z | -C) skip=1 ;;
