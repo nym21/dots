@@ -80,6 +80,9 @@ export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
 # freed flock goes to any blocked waiter, so with every waiter blocked on it a
 # build waited 2 h 38 min while newer ones went first (2026-11-18, 20 waiting).
 # A ticket whose process is gone (killed, crashed) is skipped and removed.
+# A waiter knows its ticket by pid, so renaming one to an earlier time moves it
+# up (once the head rechecks, within 15 s); a renamed ticket stranded its
+# waiter when they matched by name (2026-11-18).
 # The oldest waiter blocks on the slot, but every 15 s takes a second slot (its
 # own lock, non-blocking) if the Mac is idle: a release build's fat-LTO link
 # runs ~7 min on one core while the rest wait (2026-11-18). Two builds
@@ -111,7 +114,12 @@ exec /usr/bin/perl -e '
         print STDERR "waiting for another cargo build\n";
         $SIG{ALRM} = sub {};
         while (1) {
-            if ((line())[0] ne $mine) { sleep 2; next }
+            # By pid, not by name: a ticket renamed to move it up the line still counts as ours.
+            my @line = line();
+            # A ticket removed by hand comes back at its old place.
+            unless (grep { /-$$\z/ } @line) { open(my $t, ">", "$q/$mine"); close $t; @line = line() }
+            if ($line[0] !~ /-$$\z/) { sleep 2; next }
+            $mine = $line[0];
             alarm 15; my $got = flock($f, LOCK_EX); alarm 0;
             if ($got) { print STDERR "cargo slot 1\n"; last }
             my ($load) = `sysctl -n vm.loadavg` =~ /([\d.]+)/;
