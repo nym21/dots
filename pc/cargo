@@ -11,7 +11,8 @@
 # for hours (2026-11-18). The runner also points CARGO at this script, so a
 # program that builds again (bindgen --run building bitviewd) queues like any
 # other build. A cargo started while the lock is held (a build script or alias
-# calling cargo) passes straight through, or it would wait on its own parent.
+# calling cargo) passes straight through, or it would wait on its own parent,
+# and its runner keeps the lock (a nested cargo test let other builds in).
 # Listing and formatting pass straight through too. The lock goes when the
 # last process holding the descriptor exits, crash included.
 real="$HOME/.cargo/bin/cargo"
@@ -20,6 +21,12 @@ export ONE_CARGO_LOCK="${ONE_CARGO_LOCK:-$HOME/Library/Caches/cargo-build.lock}"
 
 if [ "${1:-}" = --one-cargo-runner ]; then
     shift
+    # A cargo nested in a held build (a one-turn build script) keeps the lock:
+    # unlocking the shared descriptor would free it for the whole script.
+    if [ -n "${ONE_CARGO_NESTED:-}" ]; then
+        export CARGO="$self"
+        exec "$@"
+    fi
     exec /usr/bin/perl -e '
         use Fcntl qw(:flock F_SETFD FD_CLOEXEC);
         if (defined(my $fd = delete $ENV{ONE_CARGO_FD})) {
@@ -50,7 +57,10 @@ case "$sub" in
 "" | metadata | tree | fmt | version | help | locate-project | pkgid | search | owner | login | logout | yank | read-manifest | verify-project | clean)
     exec "$real" "$@" ;;
 esac
-[ -n "${ONE_CARGO_HELD:-}" ] && exec "$real" "$@"
+if [ -n "${ONE_CARGO_HELD:-}" ]; then
+    export ONE_CARGO_NESTED=1
+    exec "$real" "$@"
+fi
 
 : "${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER:=$self --one-cargo-runner}"
 export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
