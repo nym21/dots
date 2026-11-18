@@ -100,7 +100,7 @@ check "and a move that fails stops the run" fails eval '(update_tailscaled m4-1)
 # The whole of pc/fleet, end to end, against a model of the four minis: a fake
 # ssh answers for them from $SIM/m/NAME, and appends to $SIM/events, at each
 # change of the tunnels a serving mini runs, who serves each, at which version.
-# With KILL_AT, the Kth change kills the run, its whole process group.
+# KILL_AT and KILL_WHEN stop the run's process group at a selected change.
 export SIM="$TMP/sim"
 FAKES="$TMP/fakes"
 mkdir -p "$FAKES"
@@ -133,15 +133,20 @@ changed() {
     done
     n=$(($(cat "$SIM/changes" 2>/dev/null || echo 0) + 1))
     echo "$n" > "$SIM/changes"
-    [ "$n" != "${KILL_AT:-}" ] || { kill -9 -- -"$(cat "$SIM/pgid")"; exit 255; }
+    if [ "$n" = "${KILL_AT:-}" ] || { [ -n "${KILL_WHEN:-}" ] && [[ "$line" =~ $KILL_WHEN ]]; }; then
+        kill -9 -- -"$(cat "$SIM/pgid")"
+        exit 255
+    fi
 }
 pending() {
-    { [ "$(get running)" = "$(get installed)" ] && [ "$(get running_mode)" = "$(cut -d ' ' -f 1 "$M/mode")" ] || echo bitviewd
+    { [ "$(get running)" = "$(get installed)" ] && [ "$(get running_mode)" = "$(cut -d ' ' -f 1 "$M/mode")" ] &&
+        cmp -s "$M/cache_running" "$M/cache_installed" || echo bitviewd
       [ "$(get cf_running)" = "$(get cf_installed)" ] && [ ! -e "$M/old" ] || echo tunnels; } | xargs
 }
 restart() {
     get installed > "$M/running"
     cut -d ' ' -f 1 "$M/mode" > "$M/running_mode"
+    get cache_installed > "$M/cache_running"
     get cf_installed > "$M/cf_running"
     rm -f "$M/old"
     get tokens > "$M/applied"
@@ -159,10 +164,13 @@ case "$cmd" in
         read -r running < "$M/running"
         read -r down < "$M/down"
         read -r mode < "$M/running_mode"
-        echo "mode $mode"
-        echo "bitviewd v0.1.0 (https://x/mono?rev=$running#x):"
-        echo "mode $mode"
-        echo "bitview_mcp v0.1.0 (https://x/mono?rev=$running#x):"
+        read -r cache < "$M/cache_running"
+        if [ -e "$M/missing-record" ]; then
+            rm "$M/missing-record"
+        else
+            printf 'mode %s\nbitviewd v0.1.0 (https://x/mono?rev=%s#x):\ncache %s\n' "$mode" "$running" "$cache"
+        fi
+        printf 'mode %s\nbitview_mcp v0.1.0 (https://x/mono?rev=%s#x):\n' "$mode" "$running"
         tokens='' applied=''
         while read -r t; do tokens="$tokens $t"; done 2> /dev/null < "$M/tokens"
         while read -r t; do applied="$applied $t"; done < "$M/applied"
@@ -208,6 +216,7 @@ case "$cmd" in
                     read -r _ pin _ < "$M/mode"
                     echo "$pin" > "$M/installed"
                     cat "$SIM/cf_version" > "$M/cf_installed"
+                    if [ -e "$M/restart-on-fetch" ]; then echo "$pin" > "$M/running"; fi
                 fi
                 ;;
             *"ship apply"*) [ -z "$(pending)" ] || restart ;;
@@ -225,8 +234,34 @@ case "$cmd" in
 esac
 EOF
 printf '#!/bin/bash\n[ "$1" != ls-remote ] || printf "%%s\\trefs/heads/x\\n" "$(cat "$SIM/pin.${3#refs/heads/}")"\n' > "$FAKES/git"
-printf '#!/bin/bash\ncase "$*" in "auth whoami"*) echo %s ;; "tunnels config get"*) echo %s ;; esac\n' \
-    "'{\"authenticated\":true}'" "'{\"config\":{\"ingress\":[{\"hostname\":\"h\"}]}}'" > "$FAKES/cf"
+cat > "$FAKES/cf" <<'EOF'
+#!/bin/bash
+case "$1 $2" in
+    'auth whoami') echo '{"authenticated":true}' ;;
+    'tunnels list') echo '[]' ;;
+    'tunnels config')
+        if [ -e "$SIM/empty-ingress.${4#id-}" ]; then
+            echo '{"config":{"ingress":[{"service":"http_status:404"}]}}'
+        else
+            printf '{"config":{"ingress":[{"hostname":"%s.invalid"}]}}\n' "${4#id-}"
+        fi
+        ;;
+    'cache purge')
+        while [ "$1" != --body ]; do shift; done
+        tunnel="$(jq -er '.hosts[0] | rtrimstr(".invalid")' <<< "$2")" || exit 1
+        echo "$tunnel" >> "$SIM/purges"
+        [ ! -e "$SIM/fail-purge.$tunnel" ] || exit 1
+        states="$(for holder in "$SIM"/m/*; do
+            if [ "$(cat "$holder/down")" = 0 ] && grep -qx "$tunnel" "$holder/applied"; then
+                paste "$holder/running" "$holder/cache_running"
+            fi
+        done | sort -u)"
+        [ "$(wc -l <<< "$states")" -eq 1 ] || echo "$tunnel" >> "$SIM/premature-purges"
+        echo '{"id":"fixture"}'
+        ;;
+    *) exit 1 ;;
+esac
+EOF
 printf '#!/bin/bash\necho %s >&2\n' "'password: \"pw\"'" > "$FAKES/security"
 printf '#!/bin/bash\n' > "$FAKES/sleep"
 chmod +x "$FAKES"/*
@@ -250,11 +285,13 @@ sim_setup() {
         echo "$mode $(cat "$SIM/pin.$mode") $(cat "$SIM/pin.$mode")" > "$m/mode"
         echo "$mode" > "$m/running_mode"
         tee "$m/installed" < "$SIM/pin.$mode" > "$m/running"
+        echo default | tee "$m/cache_installed" > "$m/cache_running"
         echo cf1 | tee "$m/cf_installed" > "$m/cf_running"
         echo 0 | tee "$m/down" > "$m/job"
         printf '%s\n' $tunnels "$server" | tee "$m/tokens" > "$m/applied"
     done < "$SIM/pc/fleet.conf"
     : > "$SIM/events"
+    : > "$SIM/purges"
     rm -f "$SIM/changes"
 }
 # Run fleet ARGS... as a process group of its own.
@@ -282,6 +319,15 @@ sim_final() {
     done < "$SIM/pc/fleet.conf"
 }
 
+# The exact set of attempted purges, including duplicates if any, since reset.
+sim_purged() {
+    diff <(printf '%s\n' "$@" | sed '/^$/d' | sort) <(sort "$SIM/purges") && [ ! -e "$SIM/premature-purges" ]
+}
+
+sim_clean() {
+    sim_fleet update && : > "$SIM/purges"
+}
+
 sim_setup P0 N0
 echo P1 > "$SIM/pin.prod"
 echo N1 > "$SIM/pin.next"
@@ -307,6 +353,74 @@ for at in $(seq 1 "$total"); do
 done
 wait
 check "killed after any of its $total changes, a rerun ends the same, with the floors kept" [ ! -e "$TMP/broken" ]
+
+# Interrupted rolls expose the new build before fleet finishes observing the
+# attachment. Returning to the original pins must still clear the cache.
+sim_abort() {
+    local status="$1" first second
+    sim_setup P0 N0
+    first="$(awk 'NR == 1 { print $1 }' "$SIM/pc/fleet.conf")"
+    second="$(awk 'NR == 2 { print $1 }' "$SIM/pc/fleet.conf")"
+    sim_clean || return 1
+    echo P1 > "$SIM/pin.prod"
+    KILL_WHEN='prod:[^|]*@P1' status_is 137 sim_fleet update || return 1
+    ! grep -qxE 'prod|mcp' "$SIM/purges" || return 1
+    : > "$SIM/purges"
+    # After losing its connection, the changed holder restarts as soon as
+    # fetch installs the old build. The first probe must still spot the change.
+    echo 1 > "$SIM/m/$first/down"
+    touch "$SIM/m/$first/restart-on-fetch"
+    echo P0 > "$SIM/pin.prod"
+    [ "$status" = 0 ] || touch "$SIM/m/$second/fetch_fails"
+    status_is "$status" sim_fleet update && sim_floors && sim_final && sim_purged "$first" prod mcp
+}
+check "a probe before fetch remembers the changed build on an interrupted roll" sim_abort 0
+check "a failed build during that abort still purges once the old build is uniform" sim_abort 1
+
+sim_flags() {
+    local first server ledger holders=()
+    sim_setup P0 N0
+    while read -r server; do holders+=("$server"); done < <(awk '$2 == "prod" { print $1 }' "$SIM/pc/fleet.conf")
+    first="${holders[0]}"
+    sim_clean || return 1
+    for server in "${holders[@]}"; do echo changed > "$SIM/m/$server/cache_installed"; done
+    sim_fleet update && sim_purged "${holders[@]}" prod mcp || return 1
+    : > "$SIM/purges"
+    touch "$SIM/m/$first/missing-record"
+    sim_fleet restart "$first" && sim_purged || return 1
+    ledger="$SIM/home/Library/Application Support/dots/purged"
+    : > "$ledger/$first"
+    printf '%s' "$(cat "$ledger/mcp")" > "$ledger/mcp"
+    sim_fleet tunnels && sim_purged "$first" mcp
+}
+check "flag changes purge at the same build, incomplete ledgers retry, and a missing live record leaves a clean cache alone" sim_flags
+
+sim_purge_retry() {
+    local own
+    # Start the stand-in and the next holder on the same build, so this case
+    # isolates retries from purges caused by switching to a different stand-in.
+    sim_setup P0 P0
+    own="$(awk '$2 == "next" { print $1 }' "$SIM/pc/fleet.conf")"
+    sim_clean || return 1
+    echo N1 > "$SIM/pin.next"
+    touch "$SIM/fail-purge.$own" "$SIM/empty-ingress.next"
+    status_is 1 sim_fleet update && grep -q "Could not purge the cache of $own" "$SIM/out" &&
+        grep -q 'Could not get ingress hostnames for next' "$SIM/out" && sim_final && sim_purged "$own" || return 1
+    rm "$SIM/fail-purge.$own" "$SIM/empty-ingress.next"
+    : > "$SIM/purges"
+    sim_fleet update && sim_purged "$own" next || return 1
+    : > "$SIM/purges"
+    echo P0 > "$SIM/pin.next"
+    sim_fleet update && sim_final && sim_purged "$own" next
+}
+check "command failure and missing ingress fail the run and retry, and rollback purges again" sim_purge_retry
+
+sim_setup P0 N0
+first="$(awk 'NR == 1 { print $1 }' "$SIM/pc/fleet.conf")"
+touch "$SIM/m/$first/unreachable"
+check "an unobserved holder blocks only its tunnels from purging" eval \
+    'status_is 1 sim_fleet tunnels && grep -q "Skipping the cache purge of prod" "$SIM/out" &&
+     ! grep -qxE "prod|mcp" "$SIM/purges" && grep -qx next "$SIM/purges"'
 
 sim_setup P0 N0
 echo P1 > "$SIM/pin.prod"

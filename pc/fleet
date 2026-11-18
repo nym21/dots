@@ -68,8 +68,9 @@ DOMAIN=bitview.space
 SITE=http://localhost:3110
 export CF_QUIET=1
 # Where fleet keeps its state, which a cache cleaner leaves alone: the lock,
-# and fleet auto's last success and alerts.
+# the tunnel cache records, and fleet auto's last success and alerts.
 STATE_DIR="$HOME/Library/Application Support/dots"
+PURGED="$STATE_DIR/purged"
 
 # cf caches the account in .cloudflare where it runs, so it runs in fleet's
 # cache rather than wherever fleet was. Quiet, as on a terminal it prints a
@@ -246,24 +247,41 @@ follow_job() {
 # What each server runs and holds now, read from all at once into
 # $work/live.SERVER: the mode and build each of its workloads runs, as their
 # starts recorded them, then tunnels.sh state. Empty for one that does not
-# answer.
+# answer. Keep each tunnel's observations even if its connection has since
+# dropped. It can reconnect with those builds without fleet doing anything.
 probe() {
-    local server pids=()
+    local server file state tunnel status pids=()
     for server in $(entries | awk '{ print $1 }'); do
         { on "$server" "cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
             : ; } >"$work/live.$server" 2>/dev/null &
         pids+=("$!")
     done
     wait "${pids[@]}"
+    : > "$work/serving"
+    for file in "$work"/live.*; do
+        state="$(serving_state "$file")"
+        while read -r tunnel status; do
+            remember "$tunnel" "$state"
+            printf '%s\t%s\t%s\n' "$tunnel" "$state" "$status" >> "$work/serving"
+        done < <(awk '
+            /^tokens( |$)/ { for (i = 2; i <= NF; i++) tunnels[$i] }
+            NF == 2 && ($2 == "ready" || $2 == "draining") { tunnels[$1] = 1 }
+            END { for (t in tunnels) print t, tunnels[t] + 0 }' "$file")
+    done
 }
 
-# From the last probe: the version SERVER runs, its builds' records on one
-# line, empty when unknown; the tunnels its token file names; whether its
-# tunnels serve, rather than wait for its servers; and whether it answered at
-# all, as what one that did not holds is unknown, never nothing.
-version() {
-    sed -n '/^bitview/H; ${ x; s/\n/ /g; s/^ //; p; }' "$work/live.$1"
+# The cache identity from running records. Local builds are named by their
+# digests. Older records differ from those with a cache key.
+serving_state() {
+    awk '
+        /^tokens( |$)/ { exit }
+        NF > 1 && ($1 == "bitviewd" || $1 == "bitview_mcp") { build[$1] = $0 }
+        /^cache / { cache = $0 }
+        END { if (build["bitviewd"] && build["bitview_mcp"])
+            print build["bitviewd"] " " build["bitview_mcp"] (cache ? " " cache : "") }' "$1"
 }
+# From the last probe: the tunnels SERVER's token file names; whether its
+# tunnels serve; and whether it answered, as what it holds is otherwise unknown.
 tokens() {
     sed -n 's/^tokens //p' "$work/live.$1"
 }
@@ -437,24 +455,48 @@ converge_tunnel() {
     [ "$(in_state "$tunnel" ready | sort | xargs)" = "$(xargs -n 1 <<< "$wanted" | sort | xargs)" ] || unsettled=1
 }
 
-# Purge the cache of each tunnel whose servers, those holding it ready or
-# draining, run one version, other than the one its cache was last purged for,
-# so none serves what an earlier version left there. The version purged for is
-# kept in STATE_DIR, so a run stopped before its purge leaves it to the next.
+# All writes happen under the fleet lock. Rename within the state directory
+# so a killed run leaves either the previous record or the whole new one.
+write_purge_record() {
+    if ! { mkdir -p "$PURGED" && printf '%s\n' "$2" > "$PURGED/.new.$$" && mv -f "$PURGED/.new.$$" "$PURGED/$1"; }; then
+        echo "Could not save the cache record for $1; stopping here." >&2
+        exit 1
+    fi
+}
+
+# One different identity is enough to require a purge, even if the tunnel
+# later returns to the old identity. A missing record already needs a purge.
+remember() {
+    local tunnel="$1" state="$2" previous
+    [ -n "$state" ] && read -r previous 2>/dev/null < "$PURGED/$tunnel" || return 0
+    [ -z "$previous" ] || [ "$previous" = pending ] || [ "$previous" = "$state" ] ||
+        write_purge_record "$tunnel" pending
+}
+
+# Purge once a tunnel serves and its holders report one known identity. A
+# failed purge leaves the record pending and is attempted again on a new run.
 purge_changed() {
-    local tunnel server versions
-    mkdir -p "$STATE_DIR/purged"
-    for tunnel in $(sed -nE 's/^([^ ]+) (ready|draining)$/\1/p' "$work"/live.* | sort -u); do
-        versions="$(for server in $(in_state "$tunnel" 'ready|draining'); do version "$server"; done | sort -u)"
-        [ "$(wc -l <<< "$versions")" -eq 1 ] && [ -n "$versions" ] &&
-            [ "$versions" != "$(cat "$STATE_DIR/purged/$tunnel" 2>/dev/null)" ] || continue
+    local tunnel state previous server
+    while IFS=$'\t' read -r tunnel state; do
+        [ -n "$state" ] && [ ! -e "$work/failed-purge.$tunnel" ] || continue
+        if read -r previous 2>/dev/null < "$PURGED/$tunnel" && [ "$previous" = "$state" ]; then continue; fi
+        for server in $(wanted "$tunnel"); do
+            answered "$server" && continue
+            echo "Skipping the cache purge of $tunnel because $server did not answer." >&2
+            incomplete=1
+            continue 2
+        done
         if purge "$tunnel"; then
-            echo "$versions" > "$STATE_DIR/purged/$tunnel"
+            write_purge_record "$tunnel" "$state"
         else
             echo "Could not purge the cache of $tunnel; the next run tries again." >&2
+            : > "$work/failed-purge.$tunnel"
             incomplete=1
         fi
-    done
+    done < <(awk -F '\t' '
+        $1 in states && states[$1] != $2 { mixed[$1] = 1 }
+        { states[$1] = $2; if ($3) serving[$1] = 1 }
+        END { for (t in serving) if (!(t in mixed)) print t "\t" states[t] }' "$work/serving")
 }
 
 # Whether PASSWORD is server_user's on SERVER: status 0 when it is, 1 when the
@@ -818,11 +860,17 @@ at_pins() {
 purge() {
     local tunnel hosts
     hosts="$(for tunnel in $(printf '%s\n' "$@" | sort -u); do
-        cf tunnels config get "$(tunnel_id "$tunnel")" | jq -r '.config.ingress[]?.hostname // empty' || exit 1
+        if ! cf tunnels config get "$(tunnel_id "$tunnel")" |
+            jq -ers '.[] | .config.ingress[]? | .hostname? | strings | select(length > 0)'; then
+            echo "Could not get ingress hostnames for $tunnel." >&2
+            exit 1
+        fi
     done | sort -u)" || return 1
-    [ -n "$hosts" ] || return 0
+    [ -n "$hosts" ] || return 1
     echo "Purging Cloudflare's cache of" $hosts
-    cf cache purge --zone "$DOMAIN" --force --body "$(jq -Rnc '{hosts: [inputs]}' <<< "$hosts")" >/dev/null
+    # cf checks the API envelope before unwrapping it to the purge receipt.
+    cf cache purge --zone "$DOMAIN" --force --body "$(jq -Rnc '{hosts: [inputs]}' <<< "$hosts")" |
+        jq -es 'length == 1 and (.[0].id | type == "string" and length > 0)' >/dev/null
 }
 
 # One fleet update or restart at a time, as two would take servers down at
@@ -917,6 +965,7 @@ update() {
     [ -n "$kept" ] || exit 1
     # shellcheck disable=SC2086
     check_passwords $kept
+    probe
     # shellcheck disable=SC2086
     fetch $kept
     for server in $kept; do
