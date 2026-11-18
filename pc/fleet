@@ -276,7 +276,8 @@ answered() {
 # Whether SERVER's Bitview and MCP server both started in the mode fleet.conf
 # gives it, whatever version: a server moved to another mode there takes no
 # tunnel before it runs that mode's builds, and one whose build failed takes
-# its tunnels on the last that built.
+# its tunnels on the last that built. Each record's mode line is
+# build_record()'s, in server/crate.sh.
 current() {
     local mode
     mode="$(entries "$1" | awk '{ print $2 }')"
@@ -670,8 +671,8 @@ download_macos() {
 # the run's versions, which builds them, recording the mode once they built,
 # updates Homebrew, Rust, and Rex, restarting nothing, then download a macOS
 # update with its password. Each is a job of the server's own, which finishes
-# there whatever happens to this Mac or the connection, as when it sleeps. The servers that fail are listed in
-# $work/unready.
+# there whatever happens to this Mac or the connection, as when it sleeps. The
+# servers that fail are listed in $work/unready.
 fetch() {
     local server mode pins url note pids=() i
     echo "== Readying $* at once, while they serve..."

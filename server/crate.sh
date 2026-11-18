@@ -4,8 +4,8 @@
 # take their native-CPU flags from shared/home/.cargo/config.toml, linked
 # during setup.
 
-# The mode the builds installed were built in, followed by the versions fleet
-# pinned for it, bitviewd's then bitview_mcp's: a crates.io release in
+# The mode the builds installed were built in, followed by the versions of the
+# last build of both, bitviewd's then bitview_mcp's: a crates.io release in
 # release, a commit on a branch. ship install writes it once both built, and
 # removes it before building another mode, so it never names a mode a build
 # installed lacks.
@@ -32,7 +32,7 @@ built_mode() {
 # What a start of CRATE records in RUNNING_DIR: the mode of the builds
 # installed, on a line of its own, then the build of CRATE, as cargo lists it:
 # its version and, from git, its commit. A local build lists no change, so its
-# binary's digest instead.
+# binary's digest instead. fleet's current() reads the mode lines.
 build_record() {
     local line
     echo "mode $(built_mode)"
