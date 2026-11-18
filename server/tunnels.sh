@@ -14,7 +14,8 @@ set -euo pipefail
 # dated by the state the last run left, when it ended without stopping, as in
 # a power loss. It looks each second while something changes (it waits for
 # the servers, a tunnel it runs is not ready, or one drains or waits to start
-# again), each minute once all is steady, and at once when woken.
+# again), each minute once all is steady, and at once when woken or when a
+# cloudflared ends.
 #
 #   tunnels.sh set NAME...   take NAME..., their tokens on input as NAME TOKEN
 #                            lines, as this mini's tunnels, and return once the
@@ -331,6 +332,14 @@ log() {
     printf '%s %s %s %s\n' "$(date -u -r "${3:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)" "${self:-?}" "$1" "$2" >> "$LOG"
 }
 
+# Whether every tunnel's cloudflared still runs.
+cloudflareds_run() {
+    local index
+    for index in "${!PIDS[@]}"; do
+        kill -0 "${PIDS[$index]}" 2>/dev/null || return 1
+    done
+}
+
 # Forget the drained tunnels whose cloudflared has ended.
 reap() {
     local index
@@ -345,6 +354,8 @@ reap() {
 cleanup() {
     local index
     trap - EXIT HUP INT TERM
+    # First, so state answers at once while the tunnels drain.
+    rm -f "$STATE_FILE" "$WAKE"
     for name in $connected; do
         log "$name" lost
     done
@@ -356,7 +367,6 @@ cleanup() {
             wait "${DRAINING[$index]}" 2>/dev/null || true
         done
     done
-    rm -f "$STATE_FILE" "$WAKE"
 }
 
 # This mini's own tunnel, the one named after it on the tailnet, as fleet
@@ -375,8 +385,9 @@ find_own() {
 }
 
 mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LOG")"
-rm -f "$WAKE"
-mkfifo -m 600 "$WAKE"
+# Made aside and moved in, as a wake meanwhile would make it a plain file.
+mkfifo -m 600 "$WAKE.$$"
+mv -f "$WAKE.$$" "$WAKE"
 exec 3<>"$WAKE"
 if [ -f "$LOG" ]; then
     tail -n 10000 "$LOG" > "$LOG.new" && mv "$LOG.new" "$LOG"
@@ -396,9 +407,12 @@ rm -f "$OLD_PID_FILE" # (TEMPORARY, with OLD_PID_FILE.)
 find_own
 log '*' lost "$lost_at"
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+# Noted, and acted on after the read in the loop: bash 3.2 times read -t with
+# an alarm, which, when a trap exits mid-read, fires during cleanup and spins.
+stop=''
+trap 'stop=129' HUP
+trap 'stop=130' INT
+trap 'stop=143' TERM
 
 # How long Bitview may stay behind the tip, in seconds, checked every minute,
 # before this mini's own tunnel goes down. Steady, the workload looks as often.
@@ -471,14 +485,15 @@ while :; do
     [ -n "$self" ] || find_own
     reap
     record_state
-    # Woken by a line on the pipe: from set, state or a server ending, or from
-    # the timer, after a second while something changes, a minute once
-    # steady. (Not read -t: bash 3.2 times it with an alarm, which, when TERM
-    # ends the workload mid-read, fires during cleanup and spins. The timer is
-    # its own sh, as a subshell would match $WORKLOAD for up to a minute.)
+    # A second while something changes, a minute once steady, cut short by a
+    # line on the pipe (set, state, a server ending) or a cloudflared ending,
+    # looked for each second with kill -0, which starts no process.
     if [ -n "$steady" ]; then pause=$CHECK_EVERY; else pause=1; fi
-    sh -c 'sleep "$0" && echo' "$pause" >&3 &
-    timer=$!
-    read -r -u 3 _
-    kill "$timer" 2>/dev/null || true
+    while [ "$pause" -gt 0 ] && cloudflareds_run; do
+        woken=''
+        read -r -t 1 -u 3 _ && woken=1
+        [ -z "$stop" ] || exit "$stop"
+        [ -z "$woken" ] || break
+        pause=$((pause - 1))
+    done
 done
