@@ -1062,7 +1062,9 @@ tunnels_log() {
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     for server in $(entries | awk '{ print $1 }'); do
-        on "$server" 'cat ~/Library/Logs/dots/tunnels.log' >"$work/$server" 2>/dev/null ||
+        # (Each line as the server it came from, whatever name it wrote.)
+        on "$server" 'cat ~/Library/Logs/dots/tunnels.log' 2>/dev/null |
+            awk -v server="$server" '{ $2 = server; print }' >"$work/$server" ||
             echo "$server does not answer; its log is left out." >&2 &
     done
     wait

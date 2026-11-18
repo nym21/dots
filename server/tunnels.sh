@@ -284,7 +284,7 @@ record_state() {
 
 # Log TUNNEL's STATE, now, or at the epoch second WHEN.
 log() {
-    printf '%s %s %s %s\n' "$(date -u -r "${3:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)" "$self" "$1" "$2" >> "$LOG"
+    printf '%s %s %s %s\n' "$(date -u -r "${3:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)" "${self:-?}" "$1" "$2" >> "$LOG"
 }
 
 # Forget the drained tunnels whose cloudflared has ended.
@@ -316,12 +316,15 @@ cleanup() {
 }
 
 # This mini's own tunnel, the one named after it on the tailnet, as fleet
-# names it: its index in NAMES, if it has one.
-self="$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName | split(".")[0]' 2>/dev/null || true)"
-self="${self:-$(hostname -s)}"
+# names it: its index in NAMES, if it has one. tailscaled may not know the name
+# yet, as at boot, so it is asked again until it does.
+self=''
 find_own() {
     local index
+    [ -n "$self" ] || self="$(tailscale status --json 2>/dev/null |
+        jq -r '.Self.DNSName // "" | split(".")[0] // empty' 2>/dev/null)" || self=''
     OWN=''
+    [ -n "$self" ] || return 0
     for index in "${!NAMES[@]}"; do
         [ "${NAMES[$index]}" != "$self" ] || OWN="$index"
     done
@@ -340,6 +343,7 @@ if grep -qxE 'serving|waiting' "$STATE_FILE" 2>/dev/null; then
     lost_at="$(stat -f %m "$STATE_FILE")"
 fi
 rm -f "$OLD_PID_FILE" # (TEMPORARY, with OLD_PID_FILE.)
+find_own
 log '*' lost "$lost_at"
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -414,6 +418,7 @@ while :; do
             fi
         fi
     fi
+    [ -n "$self" ] || find_own
     reap
     record_state
     sleep 1
