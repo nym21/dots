@@ -138,6 +138,9 @@ supervise() {
             status=0
             wait "$pid" || status=$?
         done
+        # The tunnels look again at once, not at their next minute, so none
+        # routes to a server that has ended.
+        [ "$name" = tunnels ] || "$SERVER_DIR/tunnels.sh" wake || true
         if [ "$stopping" -eq 1 ] || [ "$status" -eq 0 ]; then
             exit "$status"
         fi

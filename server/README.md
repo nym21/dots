@@ -286,13 +286,15 @@ writes the Git-ignored `server/.tokens` whole and returns once the running
 tunnels have taken it, as their state shows: those named alone listed, even
 draining, the dropped ones having ended after their last requests, and each
 connected, or, while the mini waits for its servers, listed. A connection lost
-while the tokens come in leaves one missing, and nothing is written. The running `tunnels.sh` takes the token file within a
-second of any change, starting the tunnels it gained and stopping those it
-dropped, the others staying connected, so the file is never a change waiting
-to happen. `tunnels.sh state`, which `fleet` and `ship status` read, says what
+while the tokens come in leaves one missing, and nothing is written. The
+running `tunnels.sh`, woken by `set`, takes the token file at once, starting
+the tunnels it gained and stopping those it dropped, the others staying
+connected, so the file is never a change waiting to happen. `tunnels.sh
+state`, which `fleet` and `ship status` read, says what
 the file names and each tunnel's state, as the running `tunnels.sh` records it
-every second in `~/.config/dots/running/tunnels`: ready (connected, both
-servers answering), lost, or draining.
+in `~/.config/dots/running/tunnels` when asked (each second while something
+changes, each minute once steady): ready (connected, both servers answering),
+lost, or draining.
 
 `tunnels.sh` starts this mini's tunnels, one `cloudflared` each, once Bitcoin
 Core, Bitview, and the MCP server run, both servers answer, and Bitview has
