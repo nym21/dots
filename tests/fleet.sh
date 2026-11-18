@@ -309,6 +309,12 @@ wait
 check "killed after any of its $total changes, a rerun ends the same, with the floors kept" [ ! -e "$TMP/broken" ]
 
 sim_setup P0 N0
+echo P1 > "$SIM/pin.prod"
+echo 1 > "$SIM/m/m6-1/down"
+check "with only two prod holders ready, neither can restart" eval \
+    '! sim_fleet update m4-1 m4-2 && grep -q "below its floor of 2" "$SIM/out" && [ ! -s "$SIM/events" ]'
+
+sim_setup P0 N0
 for server in m4-1 m4-2 m6-1; do echo next | tee -a "$SIM/m/$server/tokens" >> "$SIM/m/$server/applied"; done
 printf 'm6-2\n' | tee "$SIM/m/m6-2/tokens" > "$SIM/m/m6-2/applied"
 check "fleet tunnels hands next back to m6-2 across modes" eval 'sim_fleet tunnels && sim_floors && sim_final'
