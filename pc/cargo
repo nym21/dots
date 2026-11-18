@@ -1,8 +1,8 @@
 #!/bin/sh
-# One compiling cargo at a time on this Mac, at low priority. One build already
-# takes every core, so two at once finish no sooner and only double load and
-# memory (a Mac at load 190 stalls its network). Linked ahead of rustup's
-# proxy as /opt/homebrew/bin/cargo, first in every shell's PATH.
+# Queue Cargo builds at low priority. One build already takes every core.
+# Two flat-out builds drove load to 106-188. At 190 the network stalls.
+# Linked ahead of rustup's proxy as /opt/homebrew/bin/cargo, first in every
+# shell's PATH.
 #
 # The lock covers compiling only. It's a flock on a file descriptor that cargo
 # and its children inherit, and cargo starts whatever it runs (cargo run, test,
@@ -87,20 +87,18 @@ export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
 # build waited 2 h 38 min while newer ones went first (2026-11-18, 20 waiting).
 # A ticket whose process is gone (killed, crashed) is skipped and removed.
 # A waiter knows its ticket by pid, so renaming one to an earlier time moves it
-# up (once the head rechecks, within 15 s); a renamed ticket stranded its
+# up (once the head rechecks, within 2 s); a renamed ticket stranded its
 # waiter when they matched by name (2026-11-18).
-# The oldest waiter blocks on the slot, but every 15 s takes a second slot (its
-# own lock, non-blocking) if the Mac is idle: a release build's fat-LTO link
-# runs ~7 min on one core while the rest wait (2026-11-18). Two builds
-# compiling flat out at once loaded the Mac to 106-188, so the second slot is
-# only for a load1 under 4.
+# A release build can spend ~7 min linking on one core (2026-11-18). load1
+# read 91 with only one rustc because of fseventsd. The head tries the slots
+# every 2 s. Either slot can start alongside an existing build when rustc
+# uses under three cores and memory pressure is normal.
 exec /usr/bin/perl -e '
     use Fcntl qw(:flock F_SETFD);
     use POSIX qw(_exit);
     use Time::HiRes qw(time sleep);
     my $queued = time;
     my $sub = shift @ARGV;
-    my $idle = 4;
     my $q = "$ENV{ONE_CARGO_LOCK}.q";
     sub lockfile { open(my $h, ">>", $_[0]) or die "one-cargo: $_[0]: $!\n"; $h }
     sub reading {
@@ -112,7 +110,7 @@ exec /usr/bin/perl -e '
         }
         my $level = `sysctl -n kern.memorystatus_vm_pressure_level`;
         my $pressure = $? == 0 && $level =~ /\A(\d+)\s*\z/ ? $1 : "-";
-        ($cpu, $pressure);
+        ($cpu eq "-" ? $cpu : sprintf("%.1f", $cpu), $pressure);
     }
     # The live tickets, oldest first; dead ones are removed.
     sub line {
@@ -124,35 +122,47 @@ exec /usr/bin/perl -e '
         }
         @live;
     }
-    my $f = lockfile($ENV{ONE_CARGO_LOCK});
-    # Which slot this build holds (2 below), so a script can keep one build tree per slot.
-    $ENV{ONE_CARGO_SLOT} = 1;
-    unless (!line() && flock($f, LOCK_EX | LOCK_NB)) {
-        mkdir $q;
-        my $mine = sprintf("%017.0f-%d", time * 1e6, $$);
-        open(my $t, ">", "$q/$mine") or die "one-cargo: $q/$mine: $!\n"; close $t;
-        print STDERR "waiting for another cargo build\n";
-        $SIG{ALRM} = sub {};
-        while (1) {
-            # By pid, not by name: a ticket renamed to move it up the line still counts as ours.
-            my @line = line();
-            # A ticket removed by hand comes back at its old place.
-            unless (grep { /-$$\z/ } @line) { open(my $t, ">", "$q/$mine"); close $t; @line = line() }
-            if ($line[0] !~ /-$$\z/) { sleep 2; next }
-            $mine = $line[0];
-            alarm 15; my $got = flock($f, LOCK_EX); alarm 0;
-            if ($got) { print STDERR "cargo slot 1\n"; last }
-            my ($load) = `sysctl -n vm.loadavg` =~ /([\d.]+)/;
-            next unless $load < $idle;
-            my $g = lockfile("$ENV{ONE_CARGO_LOCK}.2");
-            if (flock($g, LOCK_EX | LOCK_NB)) { $f = $g; $ENV{ONE_CARGO_SLOT} = 2; print STDERR "cargo slot 2 (load $load)\n"; last }
+    my @slots = map { lockfile($_) } $ENV{ONE_CARGO_LOCK}, "$ENV{ONE_CARGO_LOCK}.2";
+    sub take {
+        for my $i (0, 1) {
+            my ($mine, $other) = @slots[$i, 1 - $i];
+            next unless flock($mine, LOCK_EX | LOCK_NB);
+            my $alone = flock($other, LOCK_EX | LOCK_NB);
+            my ($cpu, $pressure) = reading();
+            flock($other, LOCK_UN) if $alone;
+            return ($i + 1, $cpu, $pressure)
+                if $alone || ($cpu ne "-" && $cpu < 300 && $pressure eq "1");
+            flock($mine, LOCK_UN);
+            last;
         }
-        unlink "$q/$mine";
+        ();
     }
+    mkdir $q;
+    my $mine = sprintf("%017.0f-%d", time * 1e6, $$);
+    my ($slot, $rustc_cpu, $pressure, $waiting);
+    while (1) {
+        # Match by pid so a rename keeps its place and a removed ticket comes back.
+        my @line = line();
+        unless (grep { /-$$\z/ } @line) {
+            open(my $ticket, ">", "$q/$mine") or die "one-cargo: $q/$mine: $!\n";
+            close $ticket;
+            @line = line();
+        }
+        if ($line[0] =~ /-$$\z/) {
+            $mine = $line[0];
+            ($slot, $rustc_cpu, $pressure) = take();
+            last if $slot;
+        }
+        print STDERR "waiting for another cargo build\n" unless $waiting++;
+        sleep 2;
+    }
+    unlink "$q/$mine";
+    print STDERR "cargo slot $slot\n" if $waiting;
+    my $f = $slots[$slot - 1];
+    $ENV{ONE_CARGO_SLOT} = $slot;
     fcntl($f, F_SETFD, 0);
     $ENV{ONE_CARGO_FD} = fileno($f);
     $ENV{ONE_CARGO_HELD} = 1;
-    my ($rustc_cpu, $pressure) = reading();
     sub log_build {
         my $start = time;
         my @head = ($sub =~ /\A[a-z][a-z0-9_-]{0,31}\z/ ? $sub : "cargo");
