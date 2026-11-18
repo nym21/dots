@@ -102,6 +102,8 @@ exec /usr/bin/perl -e '
         @live;
     }
     my $f = lockfile($ENV{ONE_CARGO_LOCK});
+    # Which slot this build holds (2 below), so a script can keep one build tree per slot.
+    $ENV{ONE_CARGO_SLOT} = 1;
     unless (!line() && flock($f, LOCK_EX | LOCK_NB)) {
         mkdir $q;
         my $mine = sprintf("%017.0f-%d", time * 1e6, $$);
@@ -115,7 +117,7 @@ exec /usr/bin/perl -e '
             my ($load) = `sysctl -n vm.loadavg` =~ /([\d.]+)/;
             next unless $load < $idle;
             my $g = lockfile("$ENV{ONE_CARGO_LOCK}.2");
-            if (flock($g, LOCK_EX | LOCK_NB)) { $f = $g; print STDERR "cargo slot 2 (load $load)\n"; last }
+            if (flock($g, LOCK_EX | LOCK_NB)) { $f = $g; $ENV{ONE_CARGO_SLOT} = 2; print STDERR "cargo slot 2 (load $load)\n"; last }
         }
         unlink "$q/$mine";
     }
