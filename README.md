@@ -201,9 +201,9 @@ updates nothing, as when a tunnel moves to other servers in an outage, or back
 to a server of another mode: the servers gaining a tunnel take it, waiting
 until it is connected, then those losing it leave it together. A server takes
 a tunnel once it serves what it was last given, in the mode `fleet.conf` gives
-it, whatever the version, so a mode's versions mix while it rolls (ETags carry
-the release, so a client sees at most a moment of mixed modules, which a
-reload ends). The run ends failing while a tunnel's servers holding it ready
+it, whatever the version, so a mode's versions mix for the whole of its roll
+(each ETag carries the release, so caches never hand one version's file to
+the other). The run ends failing while a tunnel's servers holding it ready
 are not those `fleet.conf` gives it, as when one was moved to another mode
 there but not yet updated.
 Each tunnel's cache is purged once the servers holding it run one version
@@ -243,10 +243,9 @@ without committing, so `fleet auto` skips, `pc/fleet reboot m6-2`, and
 m6-2 comes to `next`'s newest version, however long Bitview takes on the data
 the borrow left, and takes `next` back, the prod minis leaving it.
 
-While m6-2 is lent, a prod version marked unmixable has no fourth server (see
-[Updates](#updates)), so `fleet update` leaves prod's minis at their version,
-past the first of them, rather than let prod fall to one. A prod mini is lent
-the same way, its line removed, which leaves prod two servers.
+A prod mini is lent the same way, its line removed, which leaves prod two
+servers, so `fleet update` then leaves prod's minis at their version rather
+than let prod fall to one.
 
 ### Setting up
 
@@ -310,23 +309,8 @@ newest version of their mode:
    Prod's three minis so roll one at a time, two serving throughout. Caches
    are purged as there.
 
-A version that cannot serve beside the one before it, marked in `fleet.conf`
-by a line `unmixable=PIN` (the start of the commit or release; none is marked
-today), needs a fourth server, as three cannot keep two serving the old
-version while two ready the new: it switches at once, those on it taking a
-tunnel only once its floor of them serve, the others leaving it together. When
-the run takes all of a mode's two or three minis, as prod's, and its version
-changes to a marked one, the first other mini
-whose tunnels have a floor of one, m6-2, serves prod in prod's mode meanwhile, its own tunnels going to the prod minis, which serve
-`next` on prod's version. It readies prod's version with the others, comes up
-on it first, then a prod mini follows, and the two take prod and `mcp` while
-the other two leave them together; those two then update and take them back,
-and m6-2 goes back to `next`, readied again, taking `next` back. Nobody edits
-`fleet.conf` for it. One that fails to get ready stops the lend: every server
-it would move is left as it is, and the run ends failing. `fleet update
-SERVER...` of only some of prod's minis, or with m6-2 off, updates them
-without a fourth: those on the marked version wait without prod's tunnels
-until the rest follow, prod staying on two, and the run ends failing.
+A release that cannot serve beside the one before it is switched by hand that
+day; `fleet` has no such mode.
 
 (Temporary, with the shim in `tunnels.sh`: delete both once no mini has
 `~/.config/dots/running/tunnels.pid`.) `tunnels.sh` changed how it reports its

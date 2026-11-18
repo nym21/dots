@@ -111,7 +111,7 @@ mkdir -p "$agents" "$HOME/Library/Logs" "$(dirname "$ports")"
 touch "$ports"
 
 if [ "$stop" -eq 0 ]; then
-    hosts="$(awk '!/^#/ && NF >= 2 { print $1 }' "$(dirname "$(readlink -f "$0")")/fleet.conf")"
+    hosts="$(awk '!/^#/ && NF { print $1 }' "$(dirname "$(readlink -f "$0")")/fleet.conf")"
 fi
 
 # Stop every forward whose settings changed before starting any, so hosts can

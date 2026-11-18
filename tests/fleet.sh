@@ -128,6 +128,9 @@ changed() {
         done
     done
     echo "$line" >> "$SIM/events"
+    for d in "$SIM"/m/*; do
+        [ "$(cat "$d/down")" != 0 ] || grep -qx "${d##*/}" "$d/applied" || echo "$host: ${d##*/}" >> "$SIM/own_lost"
+    done
     n=$(($(cat "$SIM/changes" 2>/dev/null || echo 0) + 1))
     echo "$n" > "$SIM/changes"
     [ "$n" != "${KILL_AT:-}" ] || { kill -9 -- -"$(cat "$SIM/pgid")"; exit 255; }
@@ -264,54 +267,37 @@ sim_floors() {
 sim_final() {
     local server mode tunnels
     while read -r server mode tunnels; do
-        [ -n "$mode" ] || continue
         [ "$(printf '%s\n' $tunnels "$server" | sort | xargs)" = "$(sort "$SIM/m/$server/applied" | xargs)" ] &&
             [ "$(cat "$SIM/m/$server/running")" = "$(cat "$SIM/pin.$mode")" ] &&
             [ "$(cat "$SIM/m/$server/down")" = 0 ] && [ ! -e "$SIM/m/$server/old" ] || return 1
     done < "$SIM/pc/fleet.conf"
 }
 
-# A version change of prod and next, from P0 N0, with fleet.conf's extra LINE.
-sim_change() {
-    sim_setup P0 N0
-    [ -z "$1" ] || echo "$1" >> "$SIM/pc/fleet.conf"
-    echo P1 > "$SIM/pin.prod"
-    echo N1 > "$SIM/pin.next"
-}
-# Killed after each of the changes the last run made, a rerun ends the same,
-# with the floors kept: the changes it was not, eight models at a time.
-sim_kills() {
-    local total at
-    total="$(cat "$SIM/changes")"
-    rm -f "$TMP/broken"
-    for at in $(seq 1 "$total"); do
-        (
-            SIM="$TMP/sim.$at"
-            sim_change "$1"
-            KILL_AT="$at" sim_fleet update
-            rm -f "$SIM/changes"
-            sim_fleet update && sim_floors && sim_final || echo "$at" >> "$TMP/broken"
-        ) 2> /dev/null &
-        [ $((at % 8)) -ne 0 ] || wait
-    done
-    wait
-    [ ! -e "$TMP/broken" ]
-}
-
-sim_change ''
+sim_setup P0 N0
+echo P1 > "$SIM/pin.prod"
+echo N1 > "$SIM/pin.next"
 check "a version change of prod and next ends as fleet.conf says" sim_fleet update
 check "with the floors kept throughout" sim_floors
-check "and m6-2 never lent" fails grep -q 'prod:[^|]* m6-2@' "$SIM/events"
+check "prod rolling one mini at a time, m6-2 never lent" fails grep -q 'prod:[^|]* m6-2@' "$SIM/events"
+check "each mini keeping its own tunnel except while it restarts" [ ! -e "$SIM/own_lost" ]
 check "each server's Bitview gets its own address" \
     diff <(for m in "$SIM"/m/*; do echo "https://${m##*/}.bitview.space"; done) <(cat "$SIM"/m/*/public-url)
-check "killed after any change, a rerun ends the same, with the floors kept" sim_kills ''
-
-sim_change unmixable=P1
-check "a version marked unmixable ends as fleet.conf says" sim_fleet update
-check "with the floors kept throughout" sim_floors
-check "and m6-2 lent to prod meanwhile" grep -q 'prod:[^|]* m6-2@P1' "$SIM/events"
-check "back in next after" sim_final
-check "killed after any change, a rerun ends the same, with the floors kept" sim_kills unmixable=P1
+total="$(cat "$SIM/changes")"
+# (Eight at a time, each in its own model.)
+for at in $(seq 1 "$total"); do
+    (
+        SIM="$TMP/sim.$at"
+        sim_setup P0 N0
+        echo P1 > "$SIM/pin.prod"
+        echo N1 > "$SIM/pin.next"
+        KILL_AT="$at" sim_fleet update
+        rm -f "$SIM/changes"
+        sim_fleet update && sim_floors && sim_final || echo "$at" >> "$TMP/broken"
+    ) 2> /dev/null &
+    [ $((at % 8)) -ne 0 ] || wait
+done
+wait
+check "killed after any of its $total changes, a rerun ends the same, with the floors kept" [ ! -e "$TMP/broken" ]
 
 sim_setup P0 N0
 for server in m4-1 m4-2 m6-1; do echo next | tee -a "$SIM/m/$server/tokens" >> "$SIM/m/$server/applied"; done
@@ -338,13 +324,6 @@ for server in "$SIM"/m/*; do touch "$server/old"; done
 sim_fleet update
 check "the workloads from before tunnels.sh's state restart in turn, behind the floors, within two runs" eval \
     'sim_floors && { sim_final || { sim_fleet update && sim_floors && sim_final; }; }'
-
-sim_change unmixable=P1
-echo N0 > "$SIM/pin.next"
-touch "$SIM/m/m6-2/fetch_fails"
-sim_fleet update
-check "a lender that does not get ready stops the lend" eval \
-    'sim_floors && [ "$(cat "$SIM/m/m4-1/running")" = P0 ] && grep -qx next "$SIM/m/m6-2/applied"'
 
 # m6-2 given prod in fleet.conf, but not yet updated to it.
 sim_setup P0 N0
