@@ -54,12 +54,27 @@ esac
 
 : "${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER:=$self --one-cargo-runner}"
 export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
+# A waiter blocks on the slot, but every 15 s takes a second slot (its own
+# lock, non-blocking, so only one waiter wins it) if the Mac is idle: a release
+# build's fat-LTO link runs ~7 min on one core while the rest wait (2026-11-18).
+# Two builds compiling flat out at once loaded the Mac to 106-188, so the
+# second slot is only for a load1 under 4.
 exec /usr/bin/perl -e '
     use Fcntl qw(:flock F_SETFD);
-    open(my $f, ">>", $ENV{ONE_CARGO_LOCK}) or die "one-cargo: $ENV{ONE_CARGO_LOCK}: $!\n";
+    my $idle = 4;
+    sub lockfile { open(my $h, ">>", $_[0]) or die "one-cargo: $_[0]: $!\n"; $h }
+    my $f = lockfile($ENV{ONE_CARGO_LOCK});
     unless (flock($f, LOCK_EX | LOCK_NB)) {
         print STDERR "waiting for another cargo build\n";
-        flock($f, LOCK_EX) or die "one-cargo: lock: $!\n";
+        $SIG{ALRM} = sub {};
+        while (1) {
+            alarm 15; my $got = flock($f, LOCK_EX); alarm 0;
+            if ($got) { print STDERR "cargo slot 1\n"; last }
+            my ($load) = `sysctl -n vm.loadavg` =~ /([\d.]+)/;
+            next unless $load < $idle;
+            my $g = lockfile("$ENV{ONE_CARGO_LOCK}.2");
+            if (flock($g, LOCK_EX | LOCK_NB)) { $f = $g; print STDERR "cargo slot 2 (load $load)\n"; last }
+        }
     }
     fcntl($f, F_SETFD, 0);
     $ENV{ONE_CARGO_FD} = fileno($f);
