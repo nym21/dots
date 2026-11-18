@@ -280,7 +280,7 @@ answered() {
 current() {
     local mode
     mode="$(entries "$1" | awk '{ print $2 }')"
-    [ "$(sed -n 's/^mode //p' "$work/live.$1" | xargs)" = "$mode $mode" ]
+    [ "$(sed -n 's/^mode //p' "$work/live.$1" | paste -sd ' ' -)" = "$mode $mode" ]
 }
 
 # The servers whose token file names TUNNEL, and those on which it is in one
@@ -411,8 +411,8 @@ settled() {
     incomplete=1
 }
 
-# TUNNEL goes to the servers fleet.conf gives it that serve what they were
-# given (current), whatever version, then, while it keeps its floor without
+# TUNNEL goes to the servers fleet.conf gives it that serve in the mode it
+# gives them (current), whatever version, then, while it keeps its floor without
 # them, those losing it leave it together.
 converge_tunnel() {
     local tunnel="$1" wanted holders server gaining='' losing
@@ -669,9 +669,8 @@ download_macos() {
 # mode its copy of ~/Developer/mono, and run ship fetch there in its mode at
 # the run's versions, which builds them, recording the mode once they built,
 # updates Homebrew, Rust, and Rex, restarting nothing, then download a macOS
-# update with its password. Each is
-# a job of the server's own, which finishes there whatever happens to this Mac
-# or the connection, as when it sleeps. The servers that fail are listed in
+# update with its password. Each is a job of the server's own, which finishes
+# there whatever happens to this Mac or the connection, as when it sleeps. The servers that fail are listed in
 # $work/unready.
 fetch() {
     local server mode pins url note pids=() i
@@ -1312,8 +1311,8 @@ alert() {
 
 # Skip this hour for REASON, and notify once no run has succeeded for a day.
 TIMED_LOCK="$HOME/Developer/brain/bin/m6-2-lock"
-# Whether an update would give m6-2 another version than it was last given,
-# or that is unknown.
+# Whether an update would give m6-2 another version than it last built, or
+# that is unknown.
 timed_moves() {
     local mode given
     read -r mode given < <(on m6-2 'cat ~/.config/dots/mode' 2>/dev/null) || return 0

@@ -47,7 +47,6 @@ case "$ROLE:$command" in
     *:clean) exec "$DOTS_DIR/shared/clean.sh" "$@" ;;
     pc:status) exec "$DOTS_DIR/pc/status.sh" "$@" ;;
     server:fetch)
-        [ "$#" -le 3 ] || usage
         exec "$DOTS_DIR/shared/update.sh" --fetch "$@"
         ;;
     server:apply)

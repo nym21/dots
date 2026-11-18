@@ -16,9 +16,7 @@ fi
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SERVER_DIR/crate.sh"
 
-mode=''
-[ ! -r "$MODE_FILE" ] || read -r mode _ < "$MODE_FILE" || true
-case "$mode" in
+case "$(built_mode)" in
     release | prod) api=https://bitview.space ;;
     next) api=https://next.bitview.space ;;
     *) api=http://127.0.0.1:3110 ;;

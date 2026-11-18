@@ -63,7 +63,7 @@ if [ "$check" -eq 1 ]; then
     exit 1
 fi
 
-mode="$(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true)"
+mode="$(built_mode)"
 mode="${mode:-$(bitview_mode)}"
 version="$(cargo install --list | awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }')"
 crashed=''

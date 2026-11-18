@@ -164,8 +164,8 @@ the workstation's `~/Developer/mono`, which `fleet` copies to the mini
 `ship install` installs both servers in the mini's mode, restarts a workload
 that runs another build than the one installed, and starts whatever is not
 running, so a run with nothing new leaves a running mini alone. Each start of
-Bitview or the MCP server records the build it runs in `~/.config/dots/running`;
-its version and commit decide a restart, so a rebuild of the same one needs
+Bitview or the MCP server records the mode and build it runs in
+`~/.config/dots/running`; its mode, version and commit decide a restart, so a rebuild of the same one needs
 none, and cargo builds a version only once, the crate's own binary alone, as
 one behind a feature, such as bitviewd 0.12.2's `bitview-bindgen`, would have
 it build the package again on every install. `ship update` runs it, taking the newest crates.io release in release and a

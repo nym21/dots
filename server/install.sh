@@ -53,6 +53,7 @@ if [ "$step" = all ] || [ "$step" = build ]; then
     fi
 
     rustup update
+    [ "$mode" = "$(built_mode)" ] || rm -f "$MODE_FILE"
     install_crate bitviewd "$mode" "$pin"
     install_crate bitview_mcp "$mode" "$mcp_pin"
     mkdir -p "$(dirname "$MODE_FILE")"
@@ -64,7 +65,7 @@ fi
 # mode: another version, or commit of a branch, which a rebuild of the same one
 # keeps; or one unrecorded, started before records were.
 stale() {
-    pgrep -x "$1" >/dev/null && [ "$(installed "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
+    pgrep -x "$1" >/dev/null && [ "$(build_record "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
 }
 
 # Whether NAME runs from another binary than the one installed, as after

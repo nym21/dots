@@ -86,7 +86,7 @@ case "$ROLE" in
         ;;
     server)
         source "$DOTS_DIR/server/crate.sh"
-        if [ "$(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null)" != local ]; then
+        if [ "$(built_mode)" != local ]; then
             rm -rf "$HOME/Library/Caches/dots/mono-target"
         fi
         find "$(dirname "$CRASH_LOG")" -name '*-*.log' -mtime +90 -delete 2>/dev/null || true

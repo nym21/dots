@@ -111,8 +111,8 @@ trim_window() {
 # Run workload $1 until it exits, logging a failing exit; only the tunnels
 # start again, 10 seconds later. TERM, which stop sends, passes on to the
 # workload and ends the loop once it has exited. Each start of Bitview or the
-# MCP server records the mode and build it runs in RUNNING_DIR. Meanwhile its window is
-# kept small.
+# MCP server records the mode and build it runs in RUNNING_DIR. Meanwhile its
+# window is kept small.
 supervise() {
     local name="$1" command crate='' pid='' status stopping=0 trimmer
     command="$SERVER_DIR/$(script "$name")"
@@ -127,7 +127,7 @@ supervise() {
     while :; do
         mkdir -p "$RUNNING_DIR"
         if [ -n "$crate" ]; then
-            installed "$crate" > "$RUNNING_DIR/$crate" || true
+            build_record "$crate" > "$RUNNING_DIR/$crate" || true
         fi
         "$command" &
         pid=$!

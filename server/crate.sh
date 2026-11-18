@@ -6,15 +6,16 @@
 
 # The mode the builds installed were built in, followed by the versions fleet
 # pinned for it, bitviewd's then bitview_mcp's: a crates.io release in
-# release, a commit on a branch. ship install writes it once both built, so a
-# build that fails leaves it naming what is installed.
+# release, a commit on a branch. ship install writes it once both built, and
+# removes it before building another mode, so it never names a mode a build
+# installed lacks.
 MODE_FILE="$HOME/.config/dots/mode"
 
-# The mode and build each of Bitview's workloads runs, as installed() named
+# The mode and build each of Bitview's workloads runs, as build_record() named
 # them when its supervisor started it, one file per crate. ship apply restarts
-# a workload whose installed differs, and fleet reads them for what each
-# server runs and in which mode. The tunnels keep their state there too
-# (tunnels.sh).
+# a workload whose record differs from the one it would write now, and fleet
+# reads them for what each server runs and in which mode. The tunnels keep
+# their state there too (tunnels.sh).
 RUNNING_DIR="$HOME/.config/dots/running"
 
 # Each workload's failing exits, one line each, and beside it the end of its
@@ -22,12 +23,19 @@ RUNNING_DIR="$HOME/.config/dots/running"
 # the last week's.
 CRASH_LOG="$HOME/Library/Logs/dots/crashes.log"
 
-# The mode of the builds installed, on a line of its own, then the build of
-# CRATE, as cargo lists it: its version and, from git, its commit. A local
-# build lists no change, so its binary's digest instead.
-installed() {
+# The mode the builds installed were built in, MODE_FILE's first word: empty
+# when none is, as while a build changes the mode.
+built_mode() {
+    awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true
+}
+
+# What a start of CRATE records in RUNNING_DIR: the mode of the builds
+# installed, on a line of its own, then the build of CRATE, as cargo lists it:
+# its version and, from git, its commit. A local build lists no change, so its
+# binary's digest instead.
+build_record() {
     local line
-    echo "mode $(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null)"
+    echo "mode $(built_mode)"
     line="$(cargo install --list | awk -v crate="$1" '$1 == crate { print; exit }')"
     case "$line" in
         *" (/"*) shasum "$HOME/.cargo/bin/$1" ;;
