@@ -136,11 +136,12 @@ changed() {
     [ "$n" != "${KILL_AT:-}" ] || { kill -9 -- -"$(cat "$SIM/pgid")"; exit 255; }
 }
 pending() {
-    { [ "$(get running)" = "$(get installed)" ] || echo bitviewd
+    { [ "$(get running)" = "$(get installed)" ] && [ "$(get running_mode)" = "$(cut -d ' ' -f 1 "$M/mode")" ] || echo bitviewd
       [ "$(get cf_running)" = "$(get cf_installed)" ] && [ ! -e "$M/old" ] || echo tunnels; } | xargs
 }
 restart() {
     get installed > "$M/running"
+    cut -d ' ' -f 1 "$M/mode" > "$M/running_mode"
     get cf_installed > "$M/cf_running"
     rm -f "$M/old"
     get tokens > "$M/applied"
@@ -157,8 +158,10 @@ case "$cmd" in
         [ "$states" != "$fail" ] || exit 255
         read -r running < "$M/running"
         read -r down < "$M/down"
-        case "$cmd" in *dots/mode*) read -r given < "$M/mode"; echo "mode $given" ;; esac
+        read -r mode < "$M/running_mode"
+        echo "mode $mode"
         echo "bitviewd v0.1.0 (https://x/mono?rev=$running#x):"
+        echo "mode $mode"
         echo "bitview_mcp v0.1.0 (https://x/mono?rev=$running#x):"
         tokens='' applied=''
         while read -r t; do tokens="$tokens $t"; done 2> /dev/null < "$M/tokens"
@@ -196,10 +199,16 @@ case "$cmd" in
         echo 0 > "$M/job"
         case "$cmd" in
             *"ship fetch"*)
-                [ ! -e "$M/fetch_fails" ] || echo 1 > "$M/job"
-                read -r _ pin _ < "$M/mode"
-                echo "$pin" > "$M/installed"
-                cat "$SIM/cf_version" > "$M/cf_installed"
+                # The mode and its pins, recorded once they built.
+                if [ -e "$M/fetch_fails" ]; then
+                    echo 1 > "$M/job"
+                else
+                    args="${cmd#*ship fetch }"
+                    echo "${args%\'}" > "$M/mode"
+                    read -r _ pin _ < "$M/mode"
+                    echo "$pin" > "$M/installed"
+                    cat "$SIM/cf_version" > "$M/cf_installed"
+                fi
                 ;;
             *"ship apply"*) [ -z "$(pending)" ] || restart ;;
             *"ship stop && "*) restart ;;
@@ -207,7 +216,6 @@ case "$cmd" in
         ;;
     *"job.sh status") get job ;;
     *"> ~/.config/dots/public-url'")
-        sed -E 's/.*echo (.*) > ~\/\.config\/dots\/mode .*/\1/' <<< "$cmd" > "$M/mode"
         sed -E "s/.*echo (.*) > ~\/\.config\/dots\/public-url'/\1/" <<< "$cmd" > "$M/public-url"
         ;;
     "git -C ~/Developer/dots pull -q --ff-only" | "tail -n +"* | *"tailscale.sh --check" | "rm -f ~/.config/dots/password") ;;
@@ -240,6 +248,7 @@ sim_setup() {
         m="$SIM/m/$server"
         mkdir -p "$m"
         echo "$mode $(cat "$SIM/pin.$mode") $(cat "$SIM/pin.$mode")" > "$m/mode"
+        echo "$mode" > "$m/running_mode"
         tee "$m/installed" < "$SIM/pin.$mode" > "$m/running"
         echo cf1 | tee "$m/cf_installed" > "$m/cf_running"
         echo 0 | tee "$m/down" > "$m/job"
@@ -324,6 +333,16 @@ for server in "$SIM"/m/*; do touch "$server/old"; done
 sim_fleet update
 check "the workloads from before tunnels.sh's state restart in turn, behind the floors, within two runs" eval \
     'sim_floors && { sim_final || { sim_fleet update && sim_floors && sim_final; }; }'
+
+# A mini whose build failed keeps the mode of what it runs, so restarted it
+# takes its tunnels back.
+sim_setup P0 N0
+echo P1 > "$SIM/pin.prod"
+touch "$SIM/m/m4-1/fetch_fails"
+sim_fleet update
+rm "$SIM/m/m4-1/fetch_fails"
+check "a mini whose fetch failed, restarted, takes its tunnels back on its old build" eval \
+    'sim_fleet restart m4-1 && sim_floors && grep -qx prod "$SIM/m/m4-1/applied" && grep -qx mcp "$SIM/m/m4-1/applied"'
 
 # m6-2 given prod in fleet.conf, but not yet updated to it.
 sim_setup P0 N0

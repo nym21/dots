@@ -4,15 +4,17 @@
 # take their native-CPU flags from shared/home/.cargo/config.toml, linked
 # during setup.
 
-# The mode this mini was given, which ship install records, followed by the
-# versions fleet pinned for it, bitviewd's then bitview_mcp's: a crates.io
-# release in release, a commit on a branch.
+# The mode the builds installed were built in, followed by the versions fleet
+# pinned for it, bitviewd's then bitview_mcp's: a crates.io release in
+# release, a commit on a branch. ship install writes it once both built, so a
+# build that fails leaves it naming what is installed.
 MODE_FILE="$HOME/.config/dots/mode"
 
-# The build each of Bitview's workloads runs, as installed() named it when its
-# supervisor started it, one file per crate. ship apply restarts a workload
-# whose build installed differs, and fleet reads them for what each server
-# runs. The tunnels keep their state there too (tunnels.sh).
+# The mode and build each of Bitview's workloads runs, as installed() named
+# them when its supervisor started it, one file per crate. ship apply restarts
+# a workload whose installed differs, and fleet reads them for what each
+# server runs and in which mode. The tunnels keep their state there too
+# (tunnels.sh).
 RUNNING_DIR="$HOME/.config/dots/running"
 
 # Each workload's failing exits, one line each, and beside it the end of its
@@ -20,10 +22,12 @@ RUNNING_DIR="$HOME/.config/dots/running"
 # the last week's.
 CRASH_LOG="$HOME/Library/Logs/dots/crashes.log"
 
-# The build of CRATE installed, as cargo lists it: its version and, from git,
-# its commit. A local build lists no change, so its binary's digest instead.
+# The mode of the builds installed, on a line of its own, then the build of
+# CRATE, as cargo lists it: its version and, from git, its commit. A local
+# build lists no change, so its binary's digest instead.
 installed() {
     local line
+    echo "mode $(awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null)"
     line="$(cargo install --list | awk -v crate="$1" '$1 == crate { print; exit }')"
     case "$line" in
         *" (/"*) shasum "$HOME/.cargo/bin/$1" ;;

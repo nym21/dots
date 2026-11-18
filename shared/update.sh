@@ -11,7 +11,8 @@ set -euo pipefail
 #
 #   update.sh --fetch     ship fetch: ready everything, restarting nothing:
 #                         Homebrew, Rust, the Cargo tools, Rex's newest build,
-#                         Bitview and the MCP server in the mini's mode, the
+#                         Bitview and the MCP server in the mini's mode, or
+#                         in MODE [PIN [MCP_PIN]] when given, as fleet does, the
 #                         cleanup, Apple's updates but macOS, and macOS's
 #                         downloaded
 #   update.sh --apply     ship apply: restart only what runs something other
@@ -26,11 +27,11 @@ ROLE="$(cat "$HOME/.config/dots/role")"
 step=all
 case "$#:${1:-}" in
     0:) ;;
-    1:--fetch) step=fetch ;;
+    [1-4]:--fetch) step=fetch ;;
     1:--apply) step=apply ;;
     1:--pending) step=pending ;;
     *)
-        echo "Usage: $0 [--fetch | --apply | --pending]" >&2
+        echo "Usage: $0 [--fetch [MODE [PIN [MCP_PIN]]] | --apply | --pending]" >&2
         exit 1
         ;;
 esac
@@ -130,8 +131,8 @@ case "$ROLE" in
         if [ -r "$SERVER_DIR/.rex-feed" ]; then
             "$SERVER_DIR/rex.sh" --download
         fi
-        # Within the mode this mini has, which fleet sets.
-        if ! "$SERVER_DIR/install.sh" --build; then
+        # Within the mode this mini has, or the one fleet gives with --fetch.
+        if ! "$SERVER_DIR/install.sh" --build "${@:2}"; then
             [ "$step" = all ] || exit 1
             echo "Bitview is not installed; fleet update gives this mini its mode."
         fi

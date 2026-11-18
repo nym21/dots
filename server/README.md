@@ -228,7 +228,10 @@ It runs `start` there because reaching Bitcoin Core needs the Rex server's acces
 to the volume.
 
 The workloads only run the installed binaries, so a restart keeps the version
-installed last. `cargo install --list` shows each installed version, with the
+installed last, and `~/.config/dots/mode` names its mode and versions, written
+once both built. Each start of Bitview and the MCP server records that mode
+and its build in `~/.config/dots/running`; `ship apply` restarts one whose
+record differs. `cargo install --list` shows each installed version, with the
 branch and commit or the checkout's path. Builds use the native-CPU settings in
 `shared/home/.cargo/config.toml`, linked during setup. A local build uses its own
 target directory in `~/Library/Caches/dots`, outside the copy of

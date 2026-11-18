@@ -60,9 +60,9 @@ if [ "$step" = all ] || [ "$step" = build ]; then
 fi
 [ "$step" != build ] || exit 0
 
-# Whether CRATE's binary runs, but not the build installed: another version,
-# or commit of a branch, which a rebuild of the same one keeps; or one
-# unrecorded, started before records were.
+# Whether CRATE's binary runs, but not the build installed, or in another
+# mode: another version, or commit of a branch, which a rebuild of the same one
+# keeps; or one unrecorded, started before records were.
 stale() {
     pgrep -x "$1" >/dev/null && [ "$(installed "$1")" != "$(cat "$RUNNING_DIR/$1" 2>/dev/null)" ]
 }

@@ -244,13 +244,13 @@ follow_job() {
 }
 
 # What each server runs and holds now, read from all at once into
-# $work/live.SERVER: the mode and versions it was last given, the builds its
-# workloads run, as their starts recorded them, then tunnels.sh state. Empty
-# for one that does not answer.
+# $work/live.SERVER: the mode and build each of its workloads runs, as their
+# starts recorded them, then tunnels.sh state. Empty for one that does not
+# answer.
 probe() {
     local server pids=()
     for server in $(entries | awk '{ print $1 }'); do
-        { on "$server" "sed 's/^/mode /' ~/.config/dots/mode 2>/dev/null; cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
+        { on "$server" "cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
             : ; } >"$work/live.$server" 2>/dev/null &
         pids+=("$!")
     done
@@ -273,13 +273,14 @@ up() {
 answered() {
     grep -q '^tokens' "$work/live.$1"
 }
-# Whether SERVER runs what it was last given, in the mode fleet.conf gives
-# it: a server moved to another mode there takes no tunnel before it is updated.
+# Whether SERVER's Bitview and MCP server both started in the mode fleet.conf
+# gives it, whatever version: a server moved to another mode there takes no
+# tunnel before it runs that mode's builds, and one whose build failed takes
+# its tunnels on the last that built.
 current() {
-    local mode pins
-    read -r mode pins < <(sed -n 's/^mode //p' "$work/live.$1")
-    [ -n "$mode" ] && [ "$mode" = "$(entries "$1" | awk '{ print $2 }')" ] &&
-        { [ -z "$pins" ] || at_pins "$1" "$pins"; }
+    local mode
+    mode="$(entries "$1" | awk '{ print $2 }')"
+    [ "$(sed -n 's/^mode //p' "$work/live.$1" | xargs)" = "$mode $mode" ]
 }
 
 # The servers whose token file names TUNNEL, and those on which it is in one
@@ -662,12 +663,13 @@ download_macos() {
     fi
 }
 
-# Ready SERVER... at once, while each still serves: give each its mode, the
-# run's versions, its own address if it has its own tunnel (its Bitview names
-# it in each answer from its next start, so clients reaching it through a
-# shared hostname stay on it), in local mode its copy of ~/Developer/mono, and
-# run ship fetch there, which builds them, updates Homebrew, Rust, and Rex,
-# restarting nothing, then download a macOS update with its password. Each is
+# Ready SERVER... at once, while each still serves: give each its own address
+# if it has its own tunnel (its Bitview names it in each answer from its next
+# start, so clients reaching it through a shared hostname stay on it), in local
+# mode its copy of ~/Developer/mono, and run ship fetch there in its mode at
+# the run's versions, which builds them, recording the mode once they built,
+# updates Homebrew, Rust, and Rex, restarting nothing, then download a macOS
+# update with its password. Each is
 # a job of the server's own, which finishes there whatever happens to this Mac
 # or the connection, as when it sleeps. The servers that fail are listed in
 # $work/unready.
@@ -681,12 +683,12 @@ fetch() {
         case " $(tunnels_of "$server") " in *" $server "*) url="https://$server.$DOMAIN" ;; esac
         {
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only' &&
-                on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $mode $pins > ~/.config/dots/mode && echo $url > ~/.config/dots/public-url'" &&
+                on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $url > ~/.config/dots/public-url'" &&
                 if [ "$mode" = local ]; then
                     rsync -a --delete --exclude /target/ -e "ssh -T" \
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
                 fi &&
-                detach "$server" "nice -n 10 $SHIP fetch" &&
+                detach "$server" "nice -n 10 $SHIP fetch $mode $pins" &&
                 follow_job "$server" "$fetch_timeout" &&
                 download_macos "$server"
         } >"$work/fetch.$server" 2>&1 &
@@ -741,7 +743,7 @@ update_server() {
 }
 
 # Wait until SERVER serves again after its update. Serving is not enough: it
-# must run the run's versions, or it would stay off its tunnels (current).
+# must run the run's versions, or its update did not take.
 wait_updated() {
     local server="$1" mode pins
     read -r _ mode _ < <(entries "$server")
