@@ -82,17 +82,20 @@ link "$ROLE_DIR/rex" ~/.local/bin/rex
 link "$ROLE_DIR/cf" ~/.local/bin/cf
 # Ahead of rustup's proxy in every PATH (brew shellenv puts it first).
 link "$ROLE_DIR/cargo" /opt/homebrew/bin/cargo
-link "$ROLE_DIR/bitview-prune" ~/.local/bin/bitview-prune
-prune_label=com.local.bitview-prune
-prune_domain="gui/$(id -u)"
-prune_plist="$HOME/Library/LaunchAgents/$prune_label.plist"
-mkdir -p "${prune_plist%/*}" "$HOME/Library/Logs"
-if ! cmp -s "$ROLE_DIR/$prune_label.plist" "$prune_plist" ||
-    ! launchctl print "$prune_domain/$prune_label" >/dev/null 2>&1; then
-    launchctl bootout "$prune_domain/$prune_label" 2>/dev/null || true
-    install -m 644 "$ROLE_DIR/$prune_label.plist" "$prune_plist"
-    launchctl bootstrap "$prune_domain" "$prune_plist"
-fi
+agent_domain="gui/$(id -u)"
+agent_dir="$HOME/Library/LaunchAgents"
+mkdir -p "$agent_dir" "$HOME/Library/Logs"
+for job in bitview-prune bitview-reap; do
+    link "$ROLE_DIR/$job" "$HOME/.local/bin/$job"
+    label=com.local.$job
+    plist="$agent_dir/$label.plist"
+    if ! cmp -s "$ROLE_DIR/$label.plist" "$plist" ||
+        ! launchctl print "$agent_domain/$label" >/dev/null 2>&1; then
+        launchctl bootout "$agent_domain/$label" 2>/dev/null || true
+        install -m 644 "$ROLE_DIR/$label.plist" "$plist"
+        launchctl bootstrap "$agent_domain" "$plist"
+    fi
+done
 echo "Installing Cloudflare's cf..."
 install_cf
 # Cloned over HTTPS, as by bootstrap, dots pushes over SSH: the workstation

@@ -1,0 +1,77 @@
+#!/bin/sh
+# Reap idle Cargo targets from the agent archive roots.
+set -u
+export TZ=UTC0
+archive=/private/tmp/claude-501
+notes=$HOME/Developer/brain/notes
+stamp() { date +%Y-%m-%dT%H:%M:%SZ; }
+same_target() { [ "$(pwd -P)" = "$parent" ] && [ "$(stat -f '%d:%i:%c' "$target")" = "$identity" ]; }
+
+reap() {
+    root=$1 target=./$2
+    case "$root" in "$archive"|"$notes") ;; *) return 2 ;; esac
+    case "$target" in ./*/*) return 2 ;; ./target|./target-*) ;; *) return 2 ;; esac
+    parent=$(pwd -P) || return 2
+    case "$parent/" in "$root/"*) ;; *) return 2 ;; esac
+    path=$parent/${target#./}
+    case "$path/" in "$HOME/Library/Caches/bitview-build/"*|"$HOME/Developer/mono/target/"*) return 1 ;; esac
+    [ ! -L "$target" ] && [ -d "$target" ] || return 1
+    identity=$(stat -f '%d:%i:%c' "$target") && device=$(stat -f %d .) || return 2
+    [ "${identity%%:*}" = "$device" ] || return 1
+    recent=$(find -P -x "$target" -newermt '3 hours ago' -print -quit) || return 2
+    [ -z "$recent" ] || return 1
+    blocks=$(du -Pskx "$target") || return 2
+    newest=$(
+        { find -P -x "$target" -exec stat -f '%d %m' {} + || printf 'error\n'; } |
+            awk -v device="$device" '
+                NF != 2 { failed = 1 }
+                $1 != device { mounted = 1 }
+                NR == 1 || $2 > mtime { mtime = $2 }
+                END { if (failed || !NR) exit 1; if (!mounted) printf "%.0f\n", mtime }
+            '
+    ) || return 2
+    cutoff=$(date -v-3H +%s) || return 2
+    [ -n "$newest" ] && [ "$newest" -le "$cutoff" ] || return 1
+    newest=$(date -r "$newest" +%Y-%m-%dT%H:%M:%SZ) || return 2
+    shown=$(printf '%s' "$path" | vis -cw) || return 2
+
+    same_target || return 1
+    status=0
+    opened=$(/usr/sbin/lsof -nP -Fp +D "$target" 2>&1) || status=$?
+    case "$status:$opened" in
+        1:) ;;
+        [01]:p[0-9]*) return 1 ;; # Some matches still produce exit 1.
+        *) printf '%s\n' "$opened" >&2; return 2 ;;
+    esac
+    same_target || return 1
+    # Keep rm inside the root even if the parent moves after the check.
+    /usr/bin/sandbox-exec -D "ROOT=$root" -p '(version 1) (allow default)
+        (deny file-write*) (allow file-write* (subpath (param "ROOT")))' /bin/rm -rfx -- "$target" || return 2
+    printf '%s deleted %s KiB newest=%s path=%s\n' "$(stamp)" "${blocks%%[!0-9]*}" "$newest" "$shown"
+}
+
+if [ "$#" -eq 2 ]; then
+    result=0
+    reap "$@" || result=$?
+    case "$result" in 0|1) exit "$result" ;; esac
+    printf 'bitview-reap: cannot check or remove %s\n' "${path:-$2}" >&2
+    printf 'error\n'
+    exit 1
+fi
+
+case "$0" in /*) self=$0 ;; *) self=$PWD/$0 ;; esac
+for root in "$archive" "$notes"; do
+    [ -e "$root" ] || [ -L "$root" ] || continue
+    ( [ ! -L "$root" ] && cd -P "$root" && [ "$(pwd -P)" = "$root" ] &&
+        find -P -x . -type d \( -name target -o -name 'target-*' \) \
+            -execdir "$self" "$root" {} \; -prune
+    ) || { printf 'bitview-reap: cannot scan %s\n' "$root" >&2; printf 'error\n'; }
+done | awk '
+    $1 == "error" { errors++; next }
+    { print; fflush(); deleted++; kib += $3 }
+    END {
+        "date +%Y-%m-%dT%H:%M:%SZ" | getline time
+        printf "%s summary deleted=%d freed_kib=%.0f errors=%d\n", time, deleted, kib, errors
+        exit (errors != 0)
+    }
+'
