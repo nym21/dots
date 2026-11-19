@@ -9,12 +9,6 @@ if [ "$#" -gt 2 ]; then
     exit 1
 fi
 
-# The benchmark reuses and writes Bitview's data.
-if pgrep -x bitviewd >/dev/null; then
-    echo "Stop bitviewd first: ship stop tunnels bitviewd" >&2
-    exit 1
-fi
-
 source "$SERVER_DIR/crate.sh"
 
 rustup update
