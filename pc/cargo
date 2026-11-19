@@ -11,8 +11,8 @@
 # for hours (2026-11-18). The runner also points CARGO at this script, so a
 # program that builds again (bindgen --run building bitviewd) queues like any
 # other build. A cargo started while the lock is held (a build script or alias
-# calling cargo) passes straight through, or it would wait on its own parent,
-# and its runner keeps the lock (a nested cargo test let other builds in).
+# calling cargo) skips the queue, or it would wait on its own parent, and its
+# runner keeps the lock (a nested cargo test let other builds in).
 # Listing and formatting pass straight through too. The lock goes when the
 # last process holding the descriptor exits, crash included.
 real="$HOME/.cargo/bin/cargo"
@@ -64,7 +64,7 @@ fi
 [ -n "$sub" ] || for arg in "$@"; do
     if [ -n "$skip" ]; then skip=; continue; fi
     case "$arg" in
-    --config | --color | -Z | -C) skip=1 ;;
+    --config | --color | --manifest-path | -m | -Z | -C) skip=1 ;;
     -* | +*) ;;
     *) sub=$arg; break ;;
     esac
@@ -74,11 +74,6 @@ case "$sub" in
 "" | metadata | tree | fmt | version | help | locate-project | pkgid | search | owner | login | logout | yank | read-manifest | verify-project | clean)
     exec "$real" "$@" ;;
 esac
-if [ -n "${ONE_CARGO_HELD:-}" ]; then
-    export ONE_CARGO_NESTED=1
-    exec "$real" "$@"
-fi
-
 : "${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER:=$self --one-cargo-runner}"
 export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
 # Waiters go first come, first served: each leaves a ticket (arrival time and
@@ -97,8 +92,58 @@ exec /usr/bin/perl -e '
     use Fcntl qw(:flock F_SETFD);
     use POSIX qw(_exit);
     use Time::HiRes qw(time sleep);
-    my $queued = time;
     my $sub = shift @ARGV;
+    # Cargo config, CARGO_BUILD_TARGET_DIR and target overrides inside aliases are outside this check.
+    sub own_target {
+        return if $sub =~ /\A(?:hold|fetch|install|update|generate-lockfile|add|remove|rm|init|new|config|info|uninstall|report|install-update|install-update-config)\z/;
+        my ($target, $manifest, $directory);
+        my @global = ($ARGV[1] // "") =~ /^\+/ ? ($ARGV[1]) : ();
+        for (my $i = 1; $i < @ARGV; ++$i) {
+            my $arg = $ARGV[$i];
+            last if $arg eq "--";
+            return if $arg eq "--help" || $arg eq "-h";
+            next unless $arg =~ /\A(--target-dir|--manifest-path|-[CmZ])(?:=(.*))?\z/s || $arg =~ /\A(-[CmZ])(.+)\z/s;
+            my ($key, $value) = ($1, $2 // $ARGV[++$i]);
+            defined $value && length $value or die "one-cargo: missing value for $key\n";
+            if ($key eq "--target-dir") { $target = $value }
+            elsif ($key eq "--manifest-path" || $key eq "-m") { $manifest = $value }
+            else { push @global, $key, $value; $directory = $value if $key eq "-C" }
+        }
+        push @global, "locate-project", "--workspace", "--message-format", "plain";
+        push @global, "--manifest-path", $manifest if defined $manifest;
+        open(my $pipe, "-|", $ARGV[0], @global) or die "one-cargo: cannot inspect workspace: $!\n";
+        my $project = do { local $/; <$pipe> };
+        close($pipe) && defined $project && length $project or die "one-cargo: cannot locate workspace\n";
+        chomp $project;
+        require Cwd;
+        require File::Basename;
+        my $root = Cwd::abs_path(File::Basename::dirname($project)) or die "one-cargo: cannot resolve workspace root\n";
+        $target //= $ENV{CARGO_TARGET_DIR} // "$root/target";
+        length $target or die "one-cargo: empty target path\n";
+        $target = "$directory/$target" if defined $directory && $target !~ m{\A/};
+        unless (-d $target) { require File::Path; File::Path::make_path($target) }
+        $target = Cwd::abs_path($target) or die "one-cargo: cannot resolve $target\n";
+        my $marker = "$target/.owner";
+        unless (-e $marker) {
+            require File::Temp;
+            my ($out, $temp) = File::Temp::tempfile(".owner.XXXXXXXX", DIR => $target, UNLINK => 1);
+            print {$out} "$root\n" or die "one-cargo: cannot write $temp: $!\n";
+            close($out) or die "one-cargo: cannot close $temp: $!\n";
+            link($temp, $marker) || $!{EEXIST} or die "one-cargo: cannot claim $target: $!\n";
+            unlink($temp) or die "one-cargo: cannot remove $temp: $!\n";
+        }
+        open(my $record, "<", $marker) or die "one-cargo: cannot read $marker: $!\n";
+        my $owner = <$record> // die "one-cargo: empty owner record at $marker\n";
+        chomp $owner;
+        die "one-cargo: target $target belongs to workspace $owner; workspace $root must use its own CARGO_TARGET_DIR\n"
+            if $owner ne $root;
+    }
+    own_target();
+    if (length($ENV{ONE_CARGO_HELD} // "")) {
+        $ENV{ONE_CARGO_NESTED} = 1;
+        exec { $ARGV[0] } @ARGV or die "one-cargo: $ARGV[0]: $!\n";
+    }
+    my $queued = time;
     my $q = "$ENV{ONE_CARGO_LOCK}.q";
     sub lockfile { open(my $h, ">>", $_[0]) or die "one-cargo: $_[0]: $!\n"; $h }
     sub reading {
