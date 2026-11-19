@@ -9,7 +9,7 @@
 # SHA not in mono        Request arrives       Report the unknown commit before queueing.
 
 fail() { printf 'bitview-bin: %s\n' "$*" >&2; exit 1; }
-usage() { fail 'usage: bitview-bin <sha> [--bin name]'; }
+usage() { fail 'usage: bitview-bin <sha> [--bin name] [--profile regtest|release]'; }
 
 mode=
 case "${1:-}" in --queue|--build|--compile) mode=$1; shift ;; esac
@@ -18,17 +18,21 @@ ref=$1
 shift
 case "$ref" in ''|*[!0-9a-fA-F]*) usage ;; esac
 bin=bitviewd
-if [ "$#" -ne 0 ]; then
-    [ "$#" -eq 2 ] && [ "$1" = --bin ] || usage
-    bin=$2
-fi
+# regtest for checks; release for a binary that indexes mainnet.
+profile=regtest
+while [ "$#" -ne 0 ]; do
+    [ "$#" -ge 2 ] || usage
+    case "$1" in --bin) bin=$2 ;; --profile) profile=$2 ;; *) usage ;; esac
+    shift 2
+done
 case "$bin" in ''|[-.]*|*[!a-zA-Z0-9_.-]*) usage ;; esac
+case "$profile" in regtest|release) ;; *) usage ;; esac
 
 mono=$HOME/Developer/mono
 sha=$(git -C "$mono" rev-parse --verify --quiet "$ref^{commit}") ||
     fail "commit $ref is not in mono"
 root=$HOME/Library/Caches/bitview-bins
-dest=$root/$sha-regtest
+dest=$root/$sha-$profile
 file=$dest/$bin
 if [ -f "$file" ] && [ -x "$file" ] && [ -f "$file.sha256" ]; then
     printf '%s/\n' "$dest"
@@ -40,10 +44,10 @@ mkdir -p "$locks" || fail "cannot create cache for $sha"
 # Coalesce top-level requests for this SHA before queueing. A nested request
 # can already own the Cargo slot the queued request is waiting for.
 if [ -z "$mode" ] && [ -z "${ONE_CARGO_HELD:-}" ]; then
-    exec lockf -k "$locks/$sha.request" "$0" --queue "$sha" --bin "$bin"
+    exec lockf -k "$locks/$sha.request" "$0" --queue "$sha" --bin "$bin" --profile "$profile"
 fi
 case "$mode" in
-    ''|--queue) exec cargo --one-cargo-hold lockf -k "$locks/$sha.build" "$0" --build "$sha" --bin "$bin" ;;
+    ''|--queue) exec cargo --one-cargo-hold lockf -k "$locks/$sha.build" "$0" --build "$sha" --bin "$bin" --profile "$profile" ;;
 esac
 [ -n "${ONE_CARGO_HELD:-}" ] || fail 'build must run inside cargo --one-cargo-hold'
 case "${ONE_CARGO_SLOT:-}" in 1|2) ;; *) fail 'cargo hold must assign slot 1 or 2' ;; esac
@@ -52,7 +56,7 @@ tree=$HOME/Library/Caches/bitview-build/slot$ONE_CARGO_SLOT
 mkdir -p "${tree%/*}" || fail "cannot create build directory for $sha"
 # Nested commands can share a hold. Serialize writers to this slot's tree.
 if [ "$mode" = --build ]; then
-    exec lockf -k "$tree.lock" "$0" --compile "$sha" --bin "$bin"
+    exec lockf -k "$tree.lock" "$0" --compile "$sha" --bin "$bin" --profile "$profile"
 fi
 src=$tree
 target=$tree-target
@@ -69,9 +73,9 @@ source_git read-tree --reset -u "$sha" && source_git clean -fdx >&2 ||
     fail "cannot sync mono source for $sha"
 
 cd "$src" || fail "cannot enter source tree for $sha"
-CARGO_TARGET_DIR="$target" cargo build --locked --profile regtest --bin "$bin" >&2 ||
+CARGO_TARGET_DIR="$target" cargo build --locked --profile "$profile" --bin "$bin" >&2 ||
     fail "cargo build failed for $sha ($bin)"
-artifact=$target/regtest/$bin
+artifact=$target/$profile/$bin
 [ -f "$artifact" ] && [ -x "$artifact" ] && cp -p "$artifact" "$stage" ||
     fail "cannot stage $bin for $sha"
 digest=$(shasum -a 256 "$stage") && printf '%s  %s\n' "${digest%% *}" "$bin" >"$stage.sha256" ||
@@ -85,10 +89,12 @@ root=$1 dest=$2 file=$3 stage=$4
     mv -f "$stage.sha256" "$file.sha256" && mv -f "$stage" "$file" || exit 1
 prune() {
     cd "$root" || return 1
-    entries=$(ls -1dt -- *-regtest/) || return 1
+    entries=$(ls -1dt -- */) || return 1
     kept=0
     while IFS= read -r entry; do
-        case "${entry%-regtest/}" in ''|*[!0-9a-f]*) continue ;; esac
+        case "$entry" in *-regtest/|*-release/) ;; *) continue ;; esac
+        entry_sha=${entry%-*/}
+        case "$entry_sha" in ''|*[!0-9a-f]*) continue ;; esac
         kept=$((kept + 1))
         [ "$kept" -le 5 ] || rm -rf -- "$entry" || return 1
     done <<EOF
