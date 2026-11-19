@@ -1,0 +1,48 @@
+#!/bin/sh
+# A weekly pass removes stale Cargo entries only while their slot is idle.
+root=$HOME/Library/Caches/bitview-build
+result=0
+for slot in 1 2; do
+    tree=$root/slot$slot
+    target=$tree-target
+    [ -d "$target" ] || continue
+    status=0
+    lockf -k -s -t 0 "$tree.lock" sh -s "$target" <<'PRUNE' || status=$?
+set -eu
+target=$1
+[ ! -L "$target" ] || { printf 'bitview-prune: target is a symlink at %s\n' "$target" >&2; exit 1; }
+[ -d "$target" ] || exit 0
+cd "$target"
+for profile in *; do
+    [ -d "$profile" ] && [ ! -L "$profile" ] || continue
+    [ -d "$profile/build" ] || [ -d "$profile/incremental" ] || continue
+    # A direct Cargo invocation can use the target outside the slot helper.
+    profile_status=0
+    lockf -k -s -t 0 "$profile/.cargo-lock" sh -s "$profile" <<'PROFILE' || profile_status=$?
+set -eu
+cd "$1"
+find -E . -mindepth 2 -maxdepth 3 -type d \( \
+    -regex '[.]/build/[^/]+/[0-9a-f]{16}' -o \
+    -regex '[.]/incremental/[^/]+' \) -mmin +2880 -prune \
+    -exec sh -c '
+        for entry do
+            recent=$(find "$entry" -mmin -2880 -print -quit) || exit 1
+            [ -n "$recent" ] || rm -rf -- "$entry" || exit 1
+        done
+    ' sh {} +
+PROFILE
+    case "$profile_status" in
+        0) ;;
+        75) printf 'bitview-prune: %s/%s is busy\n' "$target" "$profile" ;;
+        *) exit "$profile_status" ;;
+    esac
+done
+du -sk "$target"
+PRUNE
+    case "$status" in
+        0) ;;
+        75) printf 'bitview-prune: slot %s is busy\n' "$slot" ;;
+        *) printf 'bitview-prune: slot %s failed (%s)\n' "$slot" "$status" >&2; result=1 ;;
+    esac
+done
+exit "$result"
