@@ -30,12 +30,16 @@ set -euo pipefail
 # fleet.conf gives it two or more, one otherwise: a server leaves a tunnel only
 # while the others holding it ready, counted just before, number at least that.
 # An update pins one version per mode, readies every server at once, then takes
-# them in turn, those not in prod first: one that would restart anything leaves
-# its tunnels (a stand-in taking one it alone holds), restarts, and takes them
-# back (converge), so a mode's versions mix while it rolls. A server that
-# cannot get ready, or cannot leave, is left as it is and the run fails; a
-# rerun after any stop starts from what the servers hold, with nothing to
-# resume.
+# them in turn, those not in prod first and, in each group, those with fewer
+# tunnels first: one that would restart anything leaves its tunnels, restarts,
+# and takes them back (converge), so a mode's versions mix while it rolls. A
+# tunnel that would fall below its floor first gains lenders: where the floor
+# is two, servers of that mode already on the run's versions (a worker, which
+# holds no tunnel of its own), where one, any other server (a stand-in); they
+# hold it until converge takes it back. A server that cannot get ready, or
+# cannot leave, is left as it is and the run fails, as does one with no lender
+# to be found; a rerun after any stop, with a tunnel still lent, starts from
+# what the servers hold, with nothing to resume, and converges it back.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
@@ -97,11 +101,13 @@ entries() {
     done
 }
 
-# The servers given, or all, in fleet.conf's order, those not in prod first, so
-# a bad version shows there before prod.
+# The servers given, or all, those not in prod first, so a bad version shows
+# there before prod, and in each group those with fewer tunnels first, in
+# fleet.conf's order otherwise: a worker updated before the servers it lends
+# tunnels to (down).
 order() {
-    entries "$@" | awk '$2 != "prod" { print $1 }'
-    entries "$@" | awk '$2 == "prod" { print $1 }'
+    entries "$@" | awk '$2 != "prod" { print NF, $1 }' | sort -s -n -k1,1 | cut -d ' ' -f 2
+    entries "$@" | awk '$2 == "prod" { print NF, $1 }' | sort -s -n -k1,1 | cut -d ' ' -f 2
 }
 
 # The tunnels two or more of the servers given share.
@@ -372,32 +378,37 @@ keeps_floor() {
 }
 
 # Take every tunnel but its own off SERVER before it stops, each only while it
-# keeps its floor without it, counted just before. A tunnel no other server
-# holds, as next on m6-2, first gains a stand-in: the first other server whose
-# tunnels serve, those fleet.conf gives it first, whatever version it runs,
-# as next is shown on prod's meanwhile. A tunnel with a floor of two is never
-# stood in for, which would serve it from another mode. SERVER is left as it is,
-# failing, while a tunnel would fall below its floor, or when it does not
-# answer.
+# keeps its floor without it, counted just before. A tunnel left short of its
+# floor first gains lenders, until it has it: servers that serve, not holding
+# it ready, and, where the floor is two, of SERVER's mode and already on the
+# run's versions (as a worker of prod, which holds no tunnel itself). Where it
+# is one, any other server serves, those fleet.conf gives the tunnel first,
+# whatever version, as next is shown on prod's meanwhile. A lender keeps the
+# tunnel until converge takes it back, which a failed run leaves to a rerun,
+# fleet tunnels or the next update. SERVER is left as it is, failing, while a
+# tunnel would still fall below its floor, or when it does not answer.
 down() {
-    local server="$1" tunnel shared stand_in
+    local server="$1" tunnel shared lender mode pins have need
     probe
     if ! answered "$server"; then
         echo "$server did not answer, so what it holds is unknown." >&2
         return 1
     fi
+    read -r _ mode _ < <(entries "$server")
+    pins="$(cat "$work/pins.$mode" 2>/dev/null || :)"
     shared="$(minus "$(tokens "$server")" "$server" | xargs)"
     for tunnel in $shared; do
-        if [ "$(floor "$tunnel")" -ne 1 ] || [ -n "$(minus "$(in_state "$tunnel" ready)" "$server")" ]; then
-            continue
-        fi
-        for stand_in in $(wanted "$tunnel") $(entries | awk '{ print $1 }'); do
-            if [ "$stand_in" != "$server" ] && up "$stand_in"; then
-                echo "$stand_in: standing in for $server on $tunnel"
-                give_all + "$tunnel" "$stand_in"
-                probe
-                break
-            fi
+        need="$(floor "$tunnel")"
+        have="$(minus "$(in_state "$tunnel" ready)" "$server" | wc -w)"
+        for lender in $(wanted "$tunnel") $(entries | awk '{ print $1 }'); do
+            [ "$have" -lt "$need" ] || break
+            { [ "$lender" != "$server" ] && up "$lender"; } || continue
+            [ -n "$(minus "$lender" "$(in_state "$tunnel" ready | xargs)")" ] || continue
+            [ "$need" -lt 2 ] || { current "$lender" && at_pins "$lender" "$pins" && [ "$(entries "$lender" | awk '{ print $2 }')" = "$mode" ]; } || continue
+            echo "$lender: lent $tunnel while $server restarts"
+            give_all + "$tunnel" "$lender"
+            probe
+            have=$((have + 1))
         done
     done
     for tunnel in $shared; do

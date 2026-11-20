@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pc/fleet's functions, taken from it, with ssh, the keychain, and the servers
 # faked: what they record of their calls in $calls says what they did.
-# shellcheck disable=SC2034,SC2088,SC2218,SC2329 # pc/fleet's globals and functions, taken by eval, and stand-ins
+# shellcheck disable=SC2016,SC2031,SC2034,SC2088,SC2218,SC2329 # pc/fleet's globals and functions, taken by eval, and stand-ins
 source "$(dirname "$0")/lib.sh"
 fleet="$REPO/pc/fleet"
 eval "$(sed -n '/^check_password() {/,/^}/p; /^detach() {/,/^}/p;
@@ -469,5 +469,35 @@ sim_setup P0 N0
 printf '%s\n' 'm4-1 prod prod mcp' 'm4-2 prod prod mcp' 'm6-1 prod prod mcp' 'm6-2 prod prod mcp next' > "$SIM/pc/fleet.conf"
 check "a mini moved to another mode takes none of its tunnels before it is updated" eval \
     '! sim_fleet tunnels && sim_floors && ! grep -qx prod "$SIM/m/m6-2/applied"'
+
+# m6-1 a worker: it holds no shared tunnel, and is lent them while m4-1 and m4-2
+# restart in turn. Its line and tokens are changed after the setup.
+sim_worker() {
+    sim_setup P0 N0
+    sed -i.bak 's/^m6-1 .*/m6-1 prod/' "$SIM/pc/fleet.conf"
+    printf '%s\n' m6-1 | tee "$SIM/m/m6-1/tokens" > "$SIM/m/m6-1/applied"
+    echo P1 > "$SIM/pin.prod"
+}
+# Whether m6-1 held prod and mcp in some snapshot, and holds neither at the end.
+sim_lent() {
+    grep -q 'prod: .*m6-1@' "$SIM/events" && ! grep -qxE 'prod|mcp' "$SIM/m/m6-1/applied"
+}
+sim_worker
+check "m6-1 rolls first, then is lent prod and mcp while m4-1 and m4-2 restart, and holds them no longer" eval \
+    'sim_fleet update m4-1 m4-2 m6-1 && sim_floors && sim_final && sim_lent'
+sim_worker
+check "with no worker on the run's version to lend them, neither m4 restarts" eval \
+    '! sim_fleet update m4-1 m4-2 && grep -q "below its floor of 2" "$SIM/out" && [ ! -s "$SIM/events" ]'
+broken=''
+sim_worker
+sim_fleet update m4-1 m4-2 m6-1
+total="$(cat "$SIM/changes")"
+for at in $(seq 1 "$total"); do
+    sim_worker
+    KILL_AT="$at" sim_fleet update m4-1 m4-2 m6-1
+    rm -f "$SIM/changes"
+    sim_fleet update m4-1 m4-2 m6-1 && sim_floors && sim_final || broken="$broken $at"
+done
+check "killed after any change of a lent roll, a rerun ends right, with the floors kept" [ -z "$broken" ]
 
 finish
