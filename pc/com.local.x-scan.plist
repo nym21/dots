@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.local.x-scan</string>
+	<!-- Bitview's reactive X lane (brain notes/mono/x-posts/reactive/README.md): three scans a day, each after a
+	     random wait of up to 50 minutes, so the times differ every day. Reads Safari: bun needs Automation of Safari. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin" exec "$HOME/Developer/brain/tools/x-scan" --jitter 3000 &gt;&gt;"$HOME/Library/Logs/x-scan.log" 2&gt;&amp;1</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>10</integer></dict>
+	</array>
+</dict>
+</plist>
