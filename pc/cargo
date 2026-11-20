@@ -15,6 +15,11 @@
 # runner keeps the lock (a nested cargo test let other builds in).
 # Listing and formatting pass straight through too. The lock goes when the
 # last process holding the descriptor exits, crash included.
+# A hold is the exception: its parent keeps the descriptor and waits for the
+# script, which runs without it, so a daemon the script leaves running (a
+# regtest bitcoind held every build from 18:40 on 2026-11-20) can't keep the
+# lock: it frees when the script exits. A plain build still shares the
+# descriptor with its children, so a build script that leaves one running would.
 real="$HOME/.cargo/bin/cargo"
 self=/opt/homebrew/bin/cargo
 export ONE_CARGO_LOCK="${ONE_CARGO_LOCK:-$HOME/Library/Caches/cargo-build.lock}"
@@ -203,9 +208,12 @@ exec /usr/bin/perl -e '
     print STDERR "cargo slot $slot\n" if $waiting;
     my $f = $slots[$slot - 1];
     $ENV{ONE_CARGO_SLOT} = $slot;
-    fcntl($f, F_SETFD, 0);
-    $ENV{ONE_CARGO_FD} = fileno($f);
     $ENV{ONE_CARGO_HELD} = 1;
+    # A hold script never gets the descriptor (it stays close-on-exec); see the header.
+    unless ($sub eq "hold") {
+        fcntl($f, F_SETFD, 0);
+        $ENV{ONE_CARGO_FD} = fileno($f);
+    }
     sub log_build {
         my $start = time;
         my @head = ($sub =~ /\A[a-z][a-z0-9_-]{0,31}\z/ ? $sub : "cargo");
@@ -238,5 +246,18 @@ exec /usr/bin/perl -e '
         _exit(0);
     }
     my $notify = log_build() or warn "one-cargo: cannot log build: $!\n";
+    if ($sub eq "hold") {
+        my $pid;
+        $SIG{$_} = sub { kill $_[0], $pid if $pid } for qw(HUP INT TERM);
+        $pid = fork // die "one-cargo: fork: $!\n";
+        unless ($pid) {
+            $SIG{$_} = "DEFAULT" for qw(HUP INT TERM);
+            close $notify if $notify;
+            delete $ENV{ONE_CARGO_LOG_FD};
+            exec { "nice" } "nice", "-n", "10", @ARGV or die "one-cargo: nice: $!\n";
+        }
+        while (waitpid($pid, 0) != $pid) { $!{EINTR} or die "one-cargo: waiting for $ARGV[0]: $!\n" }
+        exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+    }
     exec { "nice" } "nice", "-n", "10", @ARGV or die "one-cargo: nice: $!\n";
 ' "$sub" "$real" "$@"
