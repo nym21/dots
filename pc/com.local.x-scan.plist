@@ -5,10 +5,12 @@
 	<key>Label</key>
 	<string>com.local.x-scan</string>
 	<!-- Bitview's reactive X lane (brain notes/mono/x-posts/reactive/README.md): three scans a day, each after a
-	     random wait of up to 50 minutes, so the times differ every day. Reads Safari: bun needs Automation of Safari. -->
+	     random wait of up to 50 minutes, so the times differ every day. The job's program is /bin/zsh, so macOS asks
+	     for Automation of Safari in zsh's name, a grant that survives updates (the scanner keeps bun out of osascript's
+	     ancestry). -->
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/sh</string>
+		<string>/bin/zsh</string>
 		<string>-c</string>
 		<string>PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin" exec "$HOME/Developer/brain/tools/x-scan" --jitter 3000 &gt;&gt;"$HOME/Library/Logs/x-scan.log" 2&gt;&amp;1</string>
 	</array>
