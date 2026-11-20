@@ -9,7 +9,7 @@
 # SHA not in mono        Request arrives       Report the unknown commit before queueing.
 
 fail() { printf 'bitview-bin: %s\n' "$*" >&2; exit 1; }
-usage() { fail 'usage: bitview-bin <sha> [--bin name] [--profile regtest|release]'; }
+usage() { fail 'usage: bitview-bin <sha> [--bin name] [--profile regtest|release|dev]'; }
 
 mode=
 case "${1:-}" in --queue|--build|--compile) mode=$1; shift ;; esac
@@ -18,7 +18,7 @@ ref=$1
 shift
 case "$ref" in ''|*[!0-9a-fA-F]*) usage ;; esac
 bin=bitviewd
-# regtest for checks; release for a binary that indexes mainnet.
+# regtest for checks; release for a binary that indexes mainnet; dev for a debug build.
 profile=regtest
 while [ "$#" -ne 0 ]; do
     [ "$#" -ge 2 ] || usage
@@ -26,7 +26,7 @@ while [ "$#" -ne 0 ]; do
     shift 2
 done
 case "$bin" in ''|[-.]*|*[!a-zA-Z0-9_.-]*) usage ;; esac
-case "$profile" in regtest|release) ;; *) usage ;; esac
+case "$profile" in regtest|release|dev) ;; *) usage ;; esac
 
 mono=$HOME/Developer/mono
 sha=$(git -C "$mono" rev-parse --verify --quiet "$ref^{commit}") ||
@@ -75,7 +75,8 @@ source_git read-tree --reset -u "$sha" && source_git clean -fdx >&2 ||
 cd "$src" || fail "cannot enter source tree for $sha"
 CARGO_TARGET_DIR="$target" cargo build --locked --profile "$profile" --bin "$bin" >&2 ||
     fail "cargo build failed for $sha ($bin)"
-artifact=$target/$profile/$bin
+# Cargo writes the dev profile to target/debug.
+artifact=$target/$([ "$profile" = dev ] && echo debug || echo "$profile")/$bin
 [ -f "$artifact" ] && [ -x "$artifact" ] && cp -p "$artifact" "$stage" ||
     fail "cannot stage $bin for $sha"
 digest=$(shasum -a 256 "$stage") && printf '%s  %s\n' "${digest%% *}" "$bin" >"$stage.sha256" ||
@@ -92,7 +93,7 @@ prune() {
     entries=$(ls -1dt -- */) || return 1
     kept=0
     while IFS= read -r entry; do
-        case "$entry" in *-regtest/|*-release/) ;; *) continue ;; esac
+        case "$entry" in *-regtest/|*-release/|*-dev/) ;; *) continue ;; esac
         entry_sha=${entry%-*/}
         case "$entry_sha" in ''|*[!0-9a-f]*) continue ;; esac
         kept=$((kept + 1))
