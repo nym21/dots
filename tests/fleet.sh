@@ -6,7 +6,8 @@ source "$(dirname "$0")/lib.sh"
 fleet="$REPO/pc/fleet"
 eval "$(sed -n '/^check_password() {/,/^}/p; /^detach() {/,/^}/p;
     /^follow_job() {/,/^}/p; /^kept_password() {/,/^}/p; /^check_passwords() {/,/^}/p; /^macos_note() {/,/^}/p;
-    /^update_macos() {/,/^}/p; /^update_tailscaled() {/,/^}/p' "$fleet")"
+    /^update_macos() {/,/^}/p; /^update_tailscaled() {/,/^}/p;
+    /^alert() {/,/^}/p; /^overdue() {/,/^}/p; /^recovered() {/,/^}/p' "$fleet")"
 work="$TMP/work" STATE_DIR="$TMP/state"
 mkdir -p "$work"
 server_user=mini ready_timeout=43200 fetch_timeout=3600 incomplete=''
@@ -95,6 +96,38 @@ reset; update_tailscaled m4-1 > /dev/null
 check "--check answering 1 moves the daemon, as a job" called "job on m4-1: tailscale.sh --update"
 follow_job() { return 1; }
 check "and a move that fails stops the run" fails eval '(update_tailscaled m4-1) > /dev/null 2>&1'
+
+# A skipped update's alert: once per streak, which only a success ends, and
+# again then. Each row is a run of its own, as launchd starts one each hour,
+# so a restart mid-streak (nothing kept in memory) and a rotated log (never
+# read) change nothing.
+notify() { record "notify $1"; }
+notified() { grep -c "^notify $1" "$calls"; }
+last_success() { echo $(($(date +%s) - $1)) > "$STATE_DIR/fleet-auto"; }
+rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"; reset
+last_success 3600
+(overdue "dots has uncommitted changes") > /dev/null
+check "a skip an hour after a success notifies none" [ "$(notified fleet)" -eq 0 ]
+last_success 7300
+(HOME="$TMP/no-log" overdue "dots has uncommitted changes") > /dev/null
+check "a skip past 2 hours notifies once" [ "$(notified 'fleet update skipped')" -eq 1 ]
+(overdue "dots has uncommitted changes") > /dev/null
+check "and the next hour's skip, in a new run, notifies none again" [ "$(notified 'fleet update skipped')" -eq 1 ]
+(alert serve.m6-1 "fleet: m6-1 does not serve") > /dev/null
+(alert serve.m6-1 "fleet: m6-1 does not serve") > /dev/null
+check "a server's alert notifies once, apart from the skip's" [ "$(notified 'fleet: m6-1')" -eq 1 ]
+(recovered) > /dev/null
+check "a success after the streak notifies it runs again" [ "$(notified 'fleet update runs again')" -eq 1 ]
+(recovered) > /dev/null
+check "and a success without a streak notifies none" [ "$(notified 'fleet update runs again')" -eq 1 ]
+last_success 7300
+(overdue "dots's main is not origin's") > /dev/null
+check "a new streak notifies again" [ "$(notified 'fleet update skipped')" -eq 2 ]
+reset; rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
+(alert serve.m6-1 "fleet: m6-1 does not serve") > /dev/null
+last_success 7300
+(overdue "dots has uncommitted changes") > /dev/null
+check "a server's alert never hides a skip streak" [ "$(notified 'fleet update skipped')" -eq 1 ]
 
 
 # The whole of pc/fleet, end to end, against a model of the four minis: a fake

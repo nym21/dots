@@ -1360,15 +1360,21 @@ init() {
 # servers pull, and with a server in reach, so a closed or travelling Mac skips its
 # hours, and the next one it is open for catches up. It keeps the Mac awake
 # meanwhile, logs why it skips an hour, and notifies once when runs start
-# failing, or none has run for 3 hours; ship status says when none succeeded for
-# over 3 days.
+# failing, or none has run for 2 hours, and again when runs succeed; ship status
+# says when none succeeded for over 3 days.
 
-# Notify with TITLE, once until a run succeeds again.
-alert() {
-    [ ! -e "$STATE_DIR/fleet-auto-failed" ] || return 0
-    mkdir -p "$STATE_DIR"
-    touch "$STATE_DIR/fleet-auto-failed"
+notify() {
     osascript -e "display notification \"See ~/Library/Logs/fleet-auto.log.\" with title \"$1\"" || true
+}
+
+# Notify with TITLE, once per KIND until it is cleared: each kind has its own
+# marker, as one shared by all hid a skip streak behind a server's answer.
+alert() {
+    local marker="$STATE_DIR/alerted.$1"
+    [ ! -e "$marker" ] || return 0
+    mkdir -p "$STATE_DIR"
+    touch "$marker"
+    notify "$2"
 }
 
 TIMED_LOCK="$HOME/Developer/brain/bin/m6-2-lock"
@@ -1381,13 +1387,23 @@ timed_moves() {
 }
 
 # Skip this hour's update for REASON, and notify once no run has succeeded for
-# 3 hours, naming the reason it skips now: the last success is the one record
+# 2 hours, naming the reason it skips now: the last success is the one record
 # of a streak, which only a successful update ends, so nothing else is kept.
 overdue() {
     echo "$(date '+%Y-%m-%d %H:%M') skipped: $1"
-    if [ $(($(date +%s) - $(cat "$STATE_DIR/fleet-auto" 2>/dev/null || echo 0))) -ge 10800 ]; then
-        alert "fleet update skipped for 3 hours: $1"
+    if [ $(($(date +%s) - $(cat "$STATE_DIR/fleet-auto" 2>/dev/null || echo 0))) -ge 7200 ]; then
+        alert skip "fleet update skipped for 2 hours: $1"
     fi
+}
+
+# A run succeeded: end the streak the update's alerts began, saying so.
+recovered() {
+    local kind had=''
+    for kind in skip failed long; do
+        [ ! -e "$STATE_DIR/alerted.$kind" ] || had=1
+        rm -f "$STATE_DIR/alerted.$kind"
+    done
+    [ -z "$had" ] || notify "fleet update runs again"
 }
 
 # Check every server serves, saying and notifying about one that answers but
@@ -1403,7 +1419,9 @@ health() {
         answered=1
         if [ "$status" -ne 0 ]; then
             echo "$(date '+%Y-%m-%d %H:%M') $server does not serve, which ship status there explains"
-            alert "fleet: $server does not serve"
+            alert "serve.$server" "fleet: $server does not serve"
+        else
+            rm -f "$STATE_DIR/alerted.serve.$server"
         fi
     done
     [ -n "$answered" ]
@@ -1472,7 +1490,7 @@ auto() {
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         if [ -z "$long" ] && [ "$SECONDS" -ge 86400 ]; then
-            alert "fleet update has run for a day"
+            alert long "fleet update has run for a day"
             long=1
         fi
         sleep 60
@@ -1482,13 +1500,13 @@ auto() {
         0)
             mkdir -p "$STATE_DIR"
             date +%s > "$STATE_DIR/fleet-auto"
-            rm -f "$STATE_DIR/fleet-auto-failed"
+            recovered
             ;;
         # Another run holds the lock, as one by hand: this hour's turn, unless
         # that one hangs, which a day without a run says.
         3) overdue "another fleet update or restart runs" ;;
         *)
-            alert "fleet update failed"
+            alert failed "fleet update failed"
             return 1
             ;;
     esac
