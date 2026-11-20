@@ -1,5 +1,5 @@
 #!/bin/sh
-# A weekly pass removes stale Cargo entries only while their slot is idle.
+# A daily pass removes stale Cargo entries only while their slot is idle.
 root=$HOME/Library/Caches/bitview-build
 result=0
 for slot in 1 2; do
