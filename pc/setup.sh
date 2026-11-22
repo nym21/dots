@@ -88,8 +88,7 @@ mkdir -p "$agent_dir" "$HOME/Library/Logs"
 for job in bitview-prune bitview-reap; do
     link "$ROLE_DIR/$job" "$HOME/.local/bin/$job"
 done
-# x-scan's script lives in the private brain repo; its agent runs it from there.
-for job in bitview-prune bitview-reap x-scan; do
+for job in bitview-prune bitview-reap; do
     label=com.local.$job
     plist="$agent_dir/$label.plist"
     if ! cmp -s "$ROLE_DIR/$label.plist" "$plist" ||
