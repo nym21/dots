@@ -38,8 +38,8 @@ esac
 
 # Restart what runs something other than what is installed, each for the
 # seconds it takes, and start what is not running: the Rex server, which
-# restarts the workloads too; Bitview and the MCP server, with the tunnels; and
-# the tunnels, for a new cloudflared.
+# restarts the workloads too; Bitview, with the tunnels; and the tunnels, for a
+# new cloudflared.
 rex_pending() {
     [ -r "$SERVER_DIR/.rex-feed" ] && [ -n "$("$SERVER_DIR/rex.sh" --pending)" ]
 }

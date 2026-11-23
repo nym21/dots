@@ -191,7 +191,7 @@ calls itself that; `fleet status` also names a Mac on the tailnet that
 ### Tunnels
 
 A tunnel is named after what it serves: a site (`prod`, `next`, `local`),
-`mcp`, or a server, which serves the tunnel named after it too, to
+or a server, which serves the tunnel named after it too, to
 reach that server alone, at a hostname such as `m4-1.bitview.space`. Cloudflare
 holds the tokens; `fleet` keeps them at hand in the Git-ignored `pc/.tunnels`,
 one `NAME TOKEN` per line, fetching any it lacks with `cf`, so a new
@@ -199,7 +199,7 @@ workstation needs only Cloudflare's login. Each server gets only its own
 tunnels' tokens.
 
 A shared tunnel keeps a floor of servers holding it ready, a whole group for
-prod's (`prod`, `mcp`), one for `next`, at every step of every `fleet`
+`prod`, one for `next`, at every step of every `fleet`
 command: a server leaves a tunnel only while the others holding it ready,
 counted just before, number at least its floor, so prod has two servers
 throughout a swap, and a prod server never restarts. Desired is the roles
@@ -370,7 +370,7 @@ whose tunnels differ from its role's, a tunnel that serves more than one
 version, a role whose servers do not run its newest commit, and a macOS
 update downloaded for `fleet update` to install.
 
-Cloudflare emails when the shared `prod` or `mcp` tunnel goes down, comes
+Cloudflare emails when the shared `prod` tunnel goes down, comes
 back, or degrades. Each server's own tunnel, `next` and `local` send no email.
 Their state, which shows a deliberate restart, a crash, a server down or Bitview
 stuck behind the tip, is in Cloudflare's dashboard and in `fleet status` (see

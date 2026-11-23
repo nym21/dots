@@ -44,7 +44,7 @@ EOF
 # The servers run unless $TMP/down exists.
 cat > "$TMP/bin/pgrep" <<EOF
 #!/bin/bash
-case "\$*" in "-x bitcoind" | "-x bitviewd" | "-x bitview_mcp") [ ! -e "$TMP/down" ]; exit ;; esac
+case "\$*" in "-x bitcoind" | "-x bitviewd") [ ! -e "$TMP/down" ]; exit ;; esac
 exec /usr/bin/pgrep "\$@"
 EOF
 # Only the stand-ins: this Mac's own cloudflared is not the test's.
@@ -84,7 +84,7 @@ ready_count() {
     "$script" state | grep -c ' ready$'
 }
 
-check "set writes the token file while no workload runs" eval 'tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" | "$script" set prod mcp m4-1'
+check "set writes the token file while no workload runs" eval 'tokens "prod tok-prod" "next tok-next" "m4-1 tok-own" | "$script" set prod next m4-1'
 "$TMP/bin/cloudflared" &
 stray=$!
 "$script" > "$TMP/workload.log" 2>&1 &
@@ -102,9 +102,9 @@ own="${own% }"
 check "the own tunnel keeps its process" contains "$before" "$own"
 check "the log has prod lost" grep -q ' m4-1 prod lost$' "$log"
 
-check "set returns once those gained are ready" eval 'tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" | "$script" set prod mcp m4-1'
+check "set returns once those gained are ready" eval 'tokens "prod tok-prod" "next tok-next" "m4-1 tok-own" | "$script" set prod next m4-1'
 check "so all three are ready by then" [ "$(ready_count)" -eq 3 ]
-check "a set missing a token fails" fails eval 'tokens "prod tok-prod" | "$script" set prod mcp m4-1'
+check "a set missing a token fails" fails eval 'tokens "prod tok-prod" | "$script" set prod next m4-1'
 check "and changes nothing" [ "$(wc -l < "$TMP/server/.tokens")" -eq 3 ]
 
 prod="$(tunnels)"
@@ -117,7 +117,7 @@ check "it starts again 10 seconds later" until_true eval '[ "$(ready_count)" -eq
 kill -9 "$(/usr/bin/pgrep -n -P "$workload" -x cloudflared)"
 until_true eval '[ "$(ready_count)" -eq 2 ]'
 start=$SECONDS
-tokens "prod tok-prod" "mcp tok-mcp" "m4-1 tok-own" | "$script" set prod mcp m4-1
+tokens "prod tok-prod" "next tok-next" "m4-1 tok-own" | "$script" set prod next m4-1
 check "set returns at once while a tunnel it keeps is down" [ $((SECONDS - start)) -lt 5 ]
 until_true eval '[ "$(ready_count)" -eq 3 ]'
 

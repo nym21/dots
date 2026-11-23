@@ -155,7 +155,7 @@ get() { cat "$M/$1" 2>/dev/null; }
 names() { get "$1" | sort | xargs; }
 changed() {
     local line="$host: $1" t d n
-    for t in prod mcp next; do
+    for t in prod next; do
         line="$line | $t:"
         for d in "$SIM"/m/*; do
             [ "$(cat "$d/down")" != 0 ] || ! grep -qx "$t" "$d/applied" || line="$line ${d##*/}@$(cat "$d/running")"
@@ -310,14 +310,14 @@ sim_setup() {
     rm -rf "$SIM"
     mkdir -p "$SIM/pc" "$SIM/home"
     cp "$REPO/pc/fleet" "$REPO/pc/fleet.conf" "$SIM/pc/"
-    for name in prod mcp next m4-1 m4-2 m6-1 m6-2; do
+    for name in prod next m4-1 m4-2 m6-1 m6-2; do
         echo "$name $(printf '{"t":"id-%s"}' "$name" | base64)"
     done > "$SIM/pc/.tunnels"
     echo cf1 > "$SIM/cf_version"
     echo "$1" > "$SIM/pin.prod"
     echo "$2" > "$SIM/pin.next"
-    sim_mini m4-1 prod "$1" prod mcp
-    sim_mini m6-1 prod "$1" prod mcp
+    sim_mini m4-1 prod "$1" prod
+    sim_mini m6-1 prod "$1" prod
     sim_mini m4-2 next "$2" next
     sim_mini m6-2 next "$2" next
     : > "$SIM/events"
@@ -348,18 +348,18 @@ sim_fleet() {
     set +m
     return "$status"
 }
-# Whether every snapshot kept prod and mcp at two servers and next at one.
+# Whether every snapshot kept prod at two servers and next at one.
 sim_floors() {
     awk -F ' [|] ' '{ for (i = 2; i <= NF; i++) { split($i, f, ":"); if (split(f[2], h, " ") < (f[1] == "next" ? 1 : 2)) bad = 1 } }
         END { exit bad }' "$SIM/events"
 }
-# Whether the servers of group PROD serve prod and mcp at prod's pin, and the
+# Whether the servers of group PROD serve prod at prod's pin, and the
 # others next at NEXT, each serving and with its own tunnel.
 sim_final() {
     local prod="$1" next="$2" group servers server want version
     while read -r _ group servers; do
         for server in $servers; do
-            if [ "$group" = "$prod" ]; then want="mcp prod" version="$(cat "$SIM/pin.prod")"; else want=next version="$next"; fi
+            if [ "$group" = "$prod" ]; then want=prod version="$(cat "$SIM/pin.prod")"; else want=next version="$next"; fi
             [ "$(printf '%s\n' $want "$server" | sort | xargs)" = "$(sort "$SIM/m/$server/applied" | xargs)" ] &&
                 [ "$(cat "$SIM/m/$server/running")" = "$version" ] &&
                 [ "$(cat "$SIM/m/$server/down")" = 0 ] && [ ! -e "$SIM/m/$server/old" ] || return 1
@@ -393,8 +393,8 @@ check "prod's branch moved to what the next group runs swaps the groups" eval 's
 check "with nothing built anywhere, the group that left prod keeping its version (the soak)" \
     eval '[ ! -s "$SIM/fetched" ] && grep -q "keeps what it runs" "$SIM/out"'
 check "and the floors kept throughout" sim_floors
-check "prod's and mcp's caches purged once, after the swap" eval \
-    '[ "$(grep -cx prod "$SIM/purges")" = 1 ] && [ "$(grep -cx mcp "$SIM/purges")" = 1 ] && [ ! -e "$SIM/premature-purges" ]'
+check "prod's cache purged once, after the swap" eval \
+    '[ "$(grep -cx prod "$SIM/purges")" = 1 ] && [ ! -e "$SIM/premature-purges" ]'
 check "fleet role names the new roles" eval \
     'sim_fleet role && [ "$(sort "$SIM/out" | xargs)" = "m4-1 next m4-2 prod m6-1 next m6-2 prod" ]'
 echo N2 > "$SIM/pin.next"
@@ -500,7 +500,7 @@ first=m4-1
 touch "$SIM/m/$first/unreachable"
 check "an unobserved holder blocks only its tunnels from purging" eval \
     'status_is 1 sim_fleet tunnels && grep -q "Skipping the cache purge of prod" "$SIM/out" &&
-     ! grep -qxE "prod|mcp" "$SIM/purges" && grep -qx next "$SIM/purges"'
+     ! grep -qx prod "$SIM/purges" && grep -qx next "$SIM/purges"'
 
 broken=''
 for at in 1 2 3 4 5 6; do

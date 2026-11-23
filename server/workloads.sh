@@ -2,9 +2,8 @@
 
 set -euo pipefail
 
-# Start or stop Bitcoin Core, Bitview, the MCP server, and this mini's
-# Cloudflare tunnels. Each runs in its own block of the Rex session "server",
-# under the Rex server, whose Full Disk Access reaches the external volume and
+# Start or stop Bitcoin Core, Bitview, and this mini's Cloudflare tunnels.
+# Each runs in its own block of the Rex session "server", under the Rex server, whose Full Disk Access reaches the external volume and
 # survives Rex updates. A workload that fails is logged, with the end of its
 # output, and stays down to be looked at. Meanwhile the tunnels are down, so
 # the other servers serve and Cloudflare's alert about this mini's own tunnel
@@ -17,7 +16,7 @@ set -euo pipefail
 #   workloads.sh boot             wait for the Rex server and the external
 #                                 volume, then run start in its own block
 #
-# NAMEs are bitcoind, bitviewd, mcp, and tunnels.
+# NAMEs are bitcoind, bitviewd, and tunnels.
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION=server
@@ -26,7 +25,7 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/
 source "$SERVER_DIR/crate.sh"
 
 usage() {
-    echo "Usage: $0 start | stop [bitcoind | bitviewd | mcp | tunnels]... | boot" >&2
+    echo "Usage: $0 start | stop [bitcoind | bitviewd | tunnels]... | boot" >&2
     exit 1
 }
 
@@ -38,7 +37,6 @@ script() {
     case "$1" in
         bitcoind) echo bitcoin.sh ;;
         bitviewd) echo bitview.sh ;;
-        mcp) echo mcp.sh ;;
         tunnels) echo tunnels.sh ;;
         *) usage ;;
     esac
@@ -49,7 +47,6 @@ pids() {
     case "$1" in
         bitcoind) pgrep -x bitcoind ;;
         bitviewd) pgrep -x bitviewd ;;
-        mcp) pgrep -x bitview_mcp ;;
         tunnels) pgrep -f 'server/tunnels\.sh$' ;;
     esac || true
 }
@@ -110,24 +107,19 @@ trim_window() {
 
 # Run workload $1 until it exits, logging a failing exit; only the tunnels
 # start again, 10 seconds later. TERM, which stop sends, passes on to the
-# workload and ends the loop once it has exited. Each start of Bitview or the
-# MCP server records the mode and build it runs in RUNNING_DIR. Meanwhile its
-# window is kept small.
+# workload and ends the loop once it has exited. Each start of Bitview records
+# the mode and build it runs in RUNNING_DIR. Meanwhile its window is kept small.
 supervise() {
-    local name="$1" command crate='' pid='' status stopping=0 trimmer
+    local name="$1" command pid='' status stopping=0 trimmer
     command="$SERVER_DIR/$(script "$name")"
-    case "$name" in
-        bitviewd) crate=bitviewd ;;
-        mcp) crate=bitview_mcp ;;
-    esac
     trim_window "$name" &
     trimmer=$!
     trap 'kill "$trimmer" 2>/dev/null || true' EXIT
     trap 'stopping=1; kill -TERM "$pid" 2>/dev/null || true' TERM INT HUP
     while :; do
         mkdir -p "$RUNNING_DIR"
-        if [ -n "$crate" ]; then
-            build_record "$crate" > "$RUNNING_DIR/$crate" || true
+        if [ "$name" = bitviewd ]; then
+            build_record bitviewd > "$RUNNING_DIR/bitviewd" || true
         fi
         "$command" &
         pid=$!
@@ -248,7 +240,6 @@ start() {
         done
     fi
     start_one bitviewd
-    start_one mcp
     # The tunnels wait in their block until Bitview reaches the tip, or report
     # that none runs on this mini.
     start_one tunnels no-check
@@ -283,13 +274,13 @@ stop_one() {
 }
 
 stop() {
-    local names="${*:-bitcoind bitviewd mcp tunnels}" name
+    local names="${*:-bitcoind bitviewd tunnels}" name
     for name in $names; do
         script "$name" >/dev/null
     done
     # The tunnels first, so no traffic reaches a stopping server, Bitcoin Core
     # last.
-    for name in tunnels mcp bitviewd bitcoind; do
+    for name in tunnels bitviewd bitcoind; do
         case " $names " in
             *" $name "*) stop_one "$name" ;;
         esac

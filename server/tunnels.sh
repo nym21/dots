@@ -3,7 +3,7 @@ set -euo pipefail
 
 # This mini's Cloudflare tunnels, those fleet gave it in server/.tokens, one
 # cloudflared each, as the tunnels workload, which its supervisor runs. They
-# serve while Bitcoin Core, Bitview and the MCP server run, starting once
+# serve while Bitcoin Core and Bitview run, starting once
 # Bitview has reached Bitcoin Core's tip. The workload takes the token file
 # when set writes it: a tunnel gained starts, one dropped stops after its last
 # requests, and the others stay connected. A cloudflared that exits starts
@@ -25,7 +25,7 @@ set -euo pipefail
 #   tunnels.sh state         the tunnels the token file names, then, while the
 #                            workload runs, whether it serves or waits for the
 #                            servers, and each tunnel's state: ready (connected,
-#                            both servers answering), lost, or draining, as
+#                            Bitview answering), lost, or draining, as
 #                            the workload finds them when asked
 #   tunnels.sh wake          have the workload look again at once, as when a
 #                            server it routes to ended
@@ -198,18 +198,16 @@ command -v cloudflared >/dev/null || {
 
 backends_running() {
     pgrep -x bitcoind >/dev/null &&
-        pgrep -x bitviewd >/dev/null &&
-        pgrep -x bitview_mcp >/dev/null
+        pgrep -x bitviewd >/dev/null
 }
 
-# Whether both servers answer, on the ports the tunnels route to.
+# Whether Bitview answers, on the port the tunnels route to.
 answering() {
-    curl -sf -m 2 -o /dev/null http://127.0.0.1:3110/ &&
-        curl -sf -m 2 -o /dev/null http://127.0.0.1:3111/
+    curl -sf -m 2 -o /dev/null http://127.0.0.1:3110/
 }
 
 # The tunnels send public traffic here as soon as they connect, so they start
-# only once both servers answer and Bitview has reached Bitcoin Core's tip.
+# only once Bitview answers and has reached Bitcoin Core's tip.
 at_tip() {
     local response body
     response="$(curl -s -m 5 -w '\n%{http_code}' http://127.0.0.1:3110/api/server/sync)" || return 1
@@ -439,7 +437,7 @@ while :; do
     fi
     if ! backends_running; then
         if [ -n "$serving" ]; then
-            echo "bitcoind, bitviewd, or bitview_mcp is down; the tunnels wait for it." >&2
+            echo "bitcoind or bitviewd is down; the tunnels wait for it." >&2
             for index in "${!NAMES[@]}"; do
                 stop_tunnel "$index"
             done
@@ -452,7 +450,7 @@ while :; do
                 start_tunnel "$index"
             done
         elif [ -z "$waiting" ]; then
-            echo "Waiting for Bitview to reach the tip and both servers to answer..."
+            echo "Waiting for Bitview to answer and reach the tip..."
             waiting=1
         fi
     else

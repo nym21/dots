@@ -27,7 +27,7 @@ source "$SERVER_DIR/crate.sh"
 
 workloads=0
 down=''
-for name in bitcoind bitviewd bitview_mcp; do
+for name in bitcoind bitviewd; do
     if pgrep -x "$name" >/dev/null; then workloads=$((workloads + 1)); else down="$down $name"; fi
 done
 if pgrep -qf 'server/tunnels\.sh$'; then workloads=$((workloads + 1)); else down="$down tunnels"; fi
@@ -43,7 +43,7 @@ behind="$(curl -s -m 5 http://127.0.0.1:3110/api/server/sync | jq -r '.blocks_be
 crashes="$(awk -v since="$(date -v-7d +%Y-%m-%dT%H:%M:%S)" '$1 >= since' "$CRASH_LOG" 2>/dev/null || true)"
 
 if [ "$check" -eq 1 ]; then
-    if [ "$workloads" -eq 4 ] && [ "$ready" -eq "$(wc -w <<< "$names")" ]; then
+    if [ "$workloads" -eq 3 ] && [ "$ready" -eq "$(wc -w <<< "$names")" ]; then
         [ "${behind:-1}" != 0 ] || exit 0
         # A count of blocks, not a Bitview that does not answer, whose tunnels
         # would only serve errors.
@@ -54,7 +54,6 @@ if [ "$check" -eq 1 ]; then
     # A crashed workload's supervisor ends, and it stays down until ship start.
     booted="$(date -r "$(sysctl -n kern.boottime | sed -E 's/^[{] sec = ([0-9]+),.*/\1/')" +%Y-%m-%dT%H:%M:%S)"
     for name in $down; do
-        [ "$name" != bitview_mcp ] || name=mcp
         pgrep -f "server/workloads.sh supervise $name\$" >/dev/null && continue
         if awk -v since="$booted" -v name="$name" '$1 >= since && $2 == name { found = 1 } END { exit !found }' \
             "$CRASH_LOG" 2>/dev/null; then
@@ -87,7 +86,7 @@ fi
 macos="$(sw_vers -productVersion)"
 waiting="$(cat "$HOME/.config/dots/macos-downloaded" 2>/dev/null || true)"
 [ "$waiting" != "$macos" ] || waiting=''
-printf '%s %s, workloads %s/4%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s%s, Rex %s, dots %s\n' \
+printf '%s %s, workloads %s/3%s%s, tunnels %s %s/%s ready, %s behind, %s free, macOS %s%s, Rex %s, dots %s\n' \
     "${mode:-no mode}" "${version:-}" "$workloads" "${down:+ (down:$down)}" "${crashed:+, crashes $crashed}" \
     "${names:-none}" "$ready" "$(wc -w <<< "$names" | tr -d ' ')" \
     "${behind:-?}" "$(df -h /Volumes/External 2>/dev/null | awk 'NR == 2 { print $4 }')" \

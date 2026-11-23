@@ -97,7 +97,7 @@ if pgrep -qf 'server/tunnels\.sh$' && { binary_stale cloudflared || script_stale
 fi
 # Everything else needs Bitcoin Core, so it all stops with it.
 if binary_stale bitcoind; then
-    restart="$restart tunnels mcp bitviewd bitcoind"
+    restart="$restart tunnels bitviewd bitcoind"
 fi
 if [ "$step" = pending ]; then
     # shellcheck disable=SC2086 # one line, the names apart
@@ -155,6 +155,18 @@ fi
 if [ -n "$restart" ]; then
     # shellcheck disable=SC2086
     "$SERVER_DIR/workloads.sh" stop $restart
+fi
+
+# TEMPORARY, for the rollout of the MCP server into bitviewd (2026-11): delete
+# once no mini has ~/.cargo/bin/bitview_mcp. The mcp workload from before is
+# stopped through its own supervisor, which then logs no crash, and the binary
+# is uninstalled. After the stops above, so no running tunnels.sh, which waits
+# for bitview_mcp, takes the tunnels down; a mini running one by hand gets it
+# stopped direct.
+if [ -e "$HOME/.cargo/bin/bitview_mcp" ]; then
+    pkill -TERM -f 'server/workloads\.sh supervise mcp$' || pkill -x bitview_mcp || true
+    cargo uninstall bitview_mcp
+    rm -f "$RUNNING_DIR/bitview_mcp"
 fi
 
 "$SERVER_DIR/workloads.sh" start

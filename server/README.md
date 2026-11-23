@@ -159,14 +159,12 @@ Every mini runs the same setup, and the mode is the only difference: Bitview
 comes from crates.io (**release**), from a branch of the official
 `bitcoinresearchkit/mono` repository (**prod**, **next**, or any other branch), or from
 the workstation's `~/Developer/mono`, which `fleet` copies to the mini
-(**local**). The MCP server is part of Bitview, at `/mcp`; the separate
-`bitview_mcp`, which nothing installs or updates any more, keeps running until
-`mcp.bitview.space` moves to Bitview's tunnel.
+(**local**).
 
 `ship install` installs Bitview in the mini's mode, restarts a workload
 that runs another build than the one installed, and starts whatever is not
 running, so a run with nothing new leaves a running mini alone. Each start of
-Bitview or the MCP server records the mode and build it runs in
+Bitview records the mode and build it runs in
 `~/.config/dots/running`; its mode, version and commit decide a restart, so a rebuild of the same one needs
 none, and cargo builds a version only once, the crate's own binary alone, as
 one behind a feature, such as bitviewd 0.12.2's `bitview-bindgen`, would have
@@ -195,15 +193,10 @@ ship stop tunnels bitviewd    # stop some; start brings them back
 | --- | --- |
 | `bitcoind` | `server/bitcoin.sh` |
 | `bitviewd` | `server/bitview.sh` |
-| `mcp` | `server/mcp.sh` |
 | `tunnels` | `server/tunnels.sh` |
 
-The MCP server queries the mini's own Bitview, so its tools run against the
-same version whichever role fleet gives the mini, and a swap of roles
-restarts nothing.
-
-`start` starts Bitcoin Core and waits for its RPC, then starts Bitview, the MCP
-server, and the tunnels, which wait in their block until Bitview reaches the
+`start` starts Bitcoin Core and waits for its RPC, then starts Bitview and
+the tunnels, which wait in their block until Bitview reaches the
 tip. It leaves a workload that already runs alone, wherever it runs, and
 replaces the block a stopped one left with its last output. `stop` sends each
 workload TERM and waits until it has shut down, which can take Bitcoin Core
@@ -211,8 +204,8 @@ minutes.
 
 A workload that fails is not restarted, since a crash is to be looked at: its
 exit is logged in `~/Library/Logs/dots/crashes.log`, with the end of its output
-beside it, and `ship status` shows the last week's. Bitcoin Core, Bitview, or
-the MCP server then stays down, and with it this mini's tunnels, until
+beside it, and `ship status` shows the last week's. Bitcoin Core or Bitview
+then stays down, and with it this mini's tunnels, until
 `ship start`, a reboot, or an update starts it. Only the tunnels start again,
 10 seconds later, as `cloudflared` gives up during a long network outage.
 
@@ -220,7 +213,7 @@ Attach to the session from the Rex app to watch them, or run `ship status` for
 one line:
 
 ```text
-release v0.12.2, workloads 4/4, tunnels prod mcp m4-1 3/3 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 3b1a84f
+release v0.12.2, workloads 3/3, tunnels prod m4-1 2/2 ready, 0 behind, 730Gi free, macOS 27.0.1, Rex 0.0.1792607779-g171246, dots 3b1a84f
 ```
 
 They come back on their own after a reboot and after a Rex update restarts the
@@ -231,7 +224,7 @@ to the volume.
 
 The workloads only run the installed binaries, so a restart keeps the version
 installed last, and `~/.config/dots/mode` names its mode and version, written
-once built. Each start of Bitview and the MCP server records that mode
+once built. Each start of Bitview records that mode
 and its build in `~/.config/dots/running`; `ship apply` restarts one whose
 record differs. `cargo install --list` shows each installed version, with the
 branch and commit or the checkout's path. Builds use the native-CPU settings in
@@ -297,11 +290,11 @@ connected, so the file is never a change waiting to happen. `tunnels.sh
 state`, which `fleet` and `ship status` read, says what
 the file names and each tunnel's state, as the running `tunnels.sh` records it
 in `~/.config/dots/running/tunnels` when asked (each second while something
-changes, each minute once steady): ready (connected, both servers answering),
+changes, each minute once steady): ready (connected, Bitview answering),
 lost, or draining.
 
 `tunnels.sh` starts this mini's tunnels, one `cloudflared` each, once Bitcoin
-Core, Bitview, and the MCP server run, both servers answer, and Bitview has
+Core and Bitview run, Bitview answers, and it has
 reached Bitcoin Core's tip (`blocks_behind` in `/api/server/sync`; a version
 without it counts as at the tip), so a restarting node gets no public traffic.
 While a backend is down, it takes the tunnels down and waits until the node
@@ -334,7 +327,7 @@ its responses uncompressed for Cloudflare to compress, and large ones reached
 the edge about 18% faster over HTTP/2, with small ones no slower.
 
 Cloudflare emails when a tunnel goes down, comes back, or degrades, but only
-for the shared `prod` and `mcp` tunnels: its one notification policy lists
+for the shared `prod` tunnel: its one notification policy lists
 their tunnel IDs. Each server's own tunnel, `next` and `local` send no email,
 so restarts and test servers stay quiet. A new shared tunnel needs its ID
 added to that policy.
