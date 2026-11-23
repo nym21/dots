@@ -34,8 +34,10 @@ SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOKEN_FILE="$SERVER_DIR/.tokens"
 STATE_FILE="$HOME/.config/dots/running/tunnels"
 # A line written here wakes the workload; the pipe keeps it until read, so
-# none is lost while the workload is busy.
-WAKE="$HOME/.config/dots/running/tunnels.wake"
+# none is lost while the workload is busy. In the user's temporary folder,
+# outside the home folder: a recursive read there (grep -r ~/.config) would
+# block on the pipe and swallow the wakes.
+WAKE="$(getconf DARWIN_USER_TEMP_DIR)dots-tunnels.wake"
 LOG="$HOME/Library/Logs/dots/tunnels.log"
 # The workload, by its command line, which the verbs' lack.
 WORKLOAD='server/tunnels\.sh$'

@@ -50,6 +50,8 @@ EOF
 # Only the stand-ins: this Mac's own cloudflared is not the test's.
 printf '#!/bin/bash\nexec /usr/bin/pkill -f "%s/bin/cloudflared"\n' "$TMP" > "$TMP/bin/pkill"
 printf '#!/bin/bash\necho %s\n' "'{\"Self\":{\"DNSName\":\"m4-1.tail.ts.net.\"}}'" > "$TMP/bin/tailscale"
+mkdir -p "$TMP/tmp"
+printf '#!/bin/bash\necho %s/\n' "$TMP/tmp" > "$TMP/bin/getconf"
 chmod +x "$TMP"/bin/* "$TMP"/server/*.sh
 export HOME="$TMP/home" PATH="$TMP/bin:$PATH"
 script="$TMP/server/tunnels.sh"
