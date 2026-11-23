@@ -483,8 +483,10 @@ check "a held next server keeps its group off prod, untouched" eval \
     'sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx m6-2 "$SIM/fetched" && sim_floors'
 echo N2 > "$SIM/pin.next"
 echo P0 > "$SIM/pin.prod"
-check "and a run that would build on it waits for its lock, then stops with status 4" eval \
-    'status_is 4 sim_fleet update && grep -qx fleet-auto "$SIM/takes" && ! grep -qx m6-2 "$SIM/fetched"'
+check "and fleet auto's run that would build on it waits for its lock, then stops with status 4" eval \
+    'FLEET_AUTO=1 status_is 4 sim_fleet update && grep -qx fleet-auto "$SIM/takes" && ! grep -qx m6-2 "$SIM/fetched"'
+check "while a run by hand, as the holder's, builds on it" eval \
+    'rm -f "$SIM/takes" && sim_fleet update m6-2 && grep -qx m6-2 "$SIM/fetched" && [ ! -e "$SIM/takes" ]'
 
 # Prod never restarts.
 sim_setup P0 N0
