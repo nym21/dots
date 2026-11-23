@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ship status: one line for this mini, its mode and version, workloads,
-# tunnels, sync, and disk. With --check, print nothing and exit 0 only when it
+# ship status: one line for this mini, its mode and the build Bitview runs
+# (and the one installed, when a restart is pending), workloads, tunnels,
+# sync, and disk. With --check, print nothing and exit 0 only when it
 # serves: every workload runs, every tunnel is connected, and Bitview is at
 # Bitcoin Core's tip. fleet update waits for that, as long as Bitview takes,
 # but not for a workload that crashed since this Mac started, with nothing to
@@ -65,7 +66,19 @@ fi
 
 mode="$(built_mode)"
 mode="${mode:-$(bitview_mode)}"
-version="$(cargo install --list | awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }')"
+# Bitview's build: while it runs, the one its start recorded, which fleet's
+# roles and swaps read too, and the one installed when that differs, as from
+# ship fetch until ship apply restarts it.
+short() {
+    awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }'
+}
+installed="$(cargo install --list | short)"
+running=''
+! pgrep -x bitviewd >/dev/null || running="$(short 2>/dev/null < "$RUNNING_DIR/bitviewd" || true)"
+version="${running:-$installed}"
+if [ -n "$running" ] && [ "$running" != "$installed" ]; then
+    version="running $running, installed ${installed:-none} (restart pending)"
+fi
 crashed=''
 if [ -n "$crashes" ]; then
     crashed="$(awk 'END { sub(/T/, " ", $1); print NR " this week, last " $2 " at " substr($1, 6, 11) ", status " $NF }' <<< "$crashes")"
