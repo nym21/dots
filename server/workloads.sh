@@ -144,7 +144,9 @@ supervise() {
         if [ "$stopping" -eq 1 ] || [ "$status" -eq 0 ]; then
             exit "$status"
         fi
-        crashed "$name" "$status"
+        # A crash that cannot be logged, as on a full disk, still restarts the
+        # tunnels: they come back once there is room again.
+        crashed "$name" "$status" || echo "$name: its exit could not be logged; see above." >&2
         if [ "$name" != tunnels ]; then
             echo "$name exited with status $status, logged in $CRASH_LOG; it stays down until ship start."
             exit "$status"
