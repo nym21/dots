@@ -94,12 +94,13 @@ ship update    # Update everything and restart what changed; macOS last.
 ship clean     # Free what caches and old builds take; ship update runs it too.
 ship status    # On the workstation: what only you can do, while it is missing.
 fleet init     # On the workstation: what fleet needs from you, once: logins, tunnels, passwords, Rex.
-fleet status   # On the workstation: one line per server, and what is due.
-fleet update   # On the workstation: ready every server at once, then restart what changed, in turn.
+fleet status   # On the workstation: one line per server, its role, and what is due.
+fleet role     # On the workstation: which servers serve prod and which next.
+fleet update   # On the workstation: build next on the next group, then swap the groups when prod moves.
 fleet restart  # On the workstation: restart the servers' workloads cleanly, in turn.
 fleet reboot   # On the workstation: restart the servers themselves, cleanly, in turn.
 fleet shutdown # On the workstation: turn the servers off, cleanly, in turn.
-fleet tunnels  # On the workstation: give the servers fleet.conf's tunnels, updating nothing.
+fleet tunnels  # On the workstation: give the servers their roles' tunnels, updating nothing.
 fleet log      # On the workstation: how many servers each tunnel had, and when below its floor.
 fleet purge    # On the workstation: purge Cloudflare's cache of the servers' hostnames.
 fleet auto     # Run hourly by a LaunchAgent: fleet update, when this Mac can.
@@ -111,7 +112,7 @@ listed Cargo tools, and names anything installed that the lists lack, so the
 Macs stay alike: add it to one, or uninstall it. On a server it updates Rex and
 the workloads within the mini's mode (see the
 [server instructions](server/README.md)), in two halves that `fleet` runs
-apart: `ship fetch` readies everything while the mini serves, restarting
+apart: `ship fetch` readies everything while the mini serves next, restarting
 nothing, then `ship apply` restarts only what runs an older build than the one
 installed, for the seconds that takes. It then runs `ship clean`, which keeps
 what is in use and frees the rest: Homebrew's downloads, Rust toolchains but the
@@ -164,31 +165,45 @@ end of the run.
 ## Servers
 
 The workstation decides what each server runs. `pc/fleet.conf` lists the
-servers by their Tailscale names, each with its mode, release (crates.io),
-prod, next or another branch, or local (the workstation's `~/Developer/mono`),
-and the tunnels it shares. Mono's branches are tiers, each a prefix of the one
-before it and promoted by fast-forward: `main` the releases, `prod` what
-bitview.space runs, `next` the work in progress next.bitview.space shows, and
-feature branches off `next`. Since tunnel tokens go out by name, `fleet update` first
+servers by their Tailscale names in groups, each an M4 and an M6, and the
+tunnels of each role, `prod` and `next`. Mono's branches are tiers, each a
+prefix of the one before it and promoted by fast-forward: `main` the
+releases, `prod` what bitview.space runs, `next` the work in progress
+next.bitview.space shows, and feature branches off `next`.
+
+One group serves prod, and never builds or restarts: a build beside a serving
+Bitview stalls it for a minute (memory, not CPU, so `nice` does not help).
+The other serves next, and only it builds, each server natively for its own
+CPU. Which group is prod is never kept, only read, each run: the group whose
+servers all serve, at the tip, the commit `prod` names, with no job of
+fleet's running there and no hold on them (see [Holds](#holds)); the group
+holding prod keeps it while it does, or while no other does. So promoting a
+commit next runs, by pushing `prod` to it, has the next `fleet update` move
+prod's tunnels to the next group (a swap, seconds, nothing built), and
+pushing `prod` back to what the other group still runs swaps back. `fleet
+role` prints each server's role now.
+
+Since tunnel tokens go out by name, `fleet update` first
 checks that every server is on the tailnet under its `fleet.conf` name and
 calls itself that; `fleet status` also names a Mac on the tailnet that
 `fleet.conf` lacks.
 
 ### Tunnels
 
-A tunnel is named after what it serves: a mode's site (`prod`, `next`,
-`local`), `mcp`, or a server, which serves the tunnel named after it too, to
+A tunnel is named after what it serves: a site (`prod`, `next`, `local`),
+`mcp`, or a server, which serves the tunnel named after it too, to
 reach that server alone, at a hostname such as `m4-1.bitview.space`. Cloudflare
 holds the tokens; `fleet` keeps them at hand in the Git-ignored `pc/.tunnels`,
 one `NAME TOKEN` per line, fetching any it lacks with `cf`, so a new
 workstation needs only Cloudflare's login. Each server gets only its own
 tunnels' tokens.
 
-A shared tunnel keeps a floor of servers holding it ready, two where
-`fleet.conf` gives it two or more, as `prod` and `mcp`, one otherwise, as
-`next`, at every step of every `fleet` command: a server leaves a tunnel only
-while the others holding it ready, counted just before, number at least its
-floor. Desired is `fleet.conf` alone; what each server holds is what its
+A shared tunnel keeps a floor of servers holding it ready, a whole group for
+prod's (`prod`, `mcp`), one for `next`, at every step of every `fleet`
+command: a server leaves a tunnel only while the others holding it ready,
+counted just before, number at least its floor, so prod has two servers
+throughout a swap, and a prod server never restarts. Desired is the roles
+alone; what each server holds is what its
 tunnels run, which `fleet` reads from all of them before each step, so a run
 stopped at any moment and run again starts from there, with nothing to resume.
 A server that does not answer is left as it is, as what it holds is unknown,
@@ -196,18 +211,14 @@ never nothing. A run stopped between a tunnel's gain and its drop, which only
 killing it does, leaves the tunnel on the servers leaving it too until the next
 run: one by hand, or `fleet auto`'s next hour.
 
-`fleet tunnels` gives the servers the tunnels `fleet.conf` gives them now and
-updates nothing, as when a tunnel moves to other servers in an outage, or back
-to a server of another mode: the servers gaining a tunnel take it, waiting
-until it is connected, then those losing it leave it together. A server takes
-a tunnel once its Bitview started in the mode `fleet.conf`
-gives it, as their starts record, whatever the version: one whose update
-failed takes its tunnels back on the build it runs, and a mode's versions mix
-for the whole of its roll
-(each ETag carries the release, so caches never hand one version's file to
-the other). The run ends failing while a tunnel's servers holding it ready
-are not those `fleet.conf` gives it, as when one was moved to another mode
-there but not yet updated.
+`fleet tunnels` gives the servers their roles' tunnels now and updates
+nothing, as a swap due, or after an outage: the servers gaining a tunnel take
+it, waiting until it is connected, then those losing it leave it together. A
+server takes one of prod's tunnels only while it runs the commit `prod`
+names, and `next` whatever it runs; during a swap both groups' versions serve
+prod for seconds (each ETag carries the release, so caches never hand one
+version's file to the other). The run ends failing while a tunnel's servers
+holding it ready are not those its role gives it.
 Each tunnel's cache is purged once the servers holding it run one version
 again, other than the one it was last purged for (kept in
 `~/Library/Application Support/dots/purged`, so a run stopped before its purge
@@ -220,34 +231,17 @@ servers held each tunnel ready at each change since SINCE, a day ago by
 default, the changes of one second taken together, then the fewest and every
 span below its floor.
 
-### Borrowing a server
+### Holds
 
-A mini borrowed for a benchmark or a long computation leaves `fleet.conf` while
-it is lent, in commits like any other change, so dots stays clean and equal to
-origin and `fleet auto` keeps updating the others, knowing nothing of it. Every
-fleet run then notes the mini as on the tailnet but not in `fleet.conf`, which
-says it is still lent. For m6-2 and `next`, from `~/Developer/dots`, with m6-2
-serving:
-
-1. In `fleet.conf`, add `next` to every prod mini's line, and leave m6-2's line
-   without tunnels, as `m6-2 next`: `fleet` acts only on the servers
-   `fleet.conf` names, so m6-2 dropped here would keep serving `next`. Commit
-   that alone and don't push yet, as `fleet auto` skips while main differs from
-   origin. `pc/fleet tunnels`: the prod minis take `next`, then m6-2 leaves it.
-   Push.
-2. For a benchmark from a fresh boot, `pc/fleet reboot m6-2` now.
-3. Remove m6-2's line, commit alone, push. m6-2 is the borrower's.
-
-Another fresh boot during the borrow: put `m6-2 next` back in `fleet.conf`
-without committing, so `fleet auto` skips, `pc/fleet reboot m6-2`, and
-`git checkout pc/fleet.conf`. To give it back, put `m6-2 next next` back and
-`next` off the prod minis' lines, commit alone, push, and `pc/fleet update`:
-m6-2 comes to `next`'s newest version, however long Bitview takes on the data
-the borrow left, and takes `next` back, the prod minis leaving it.
-
-A prod mini is lent the same way, its line removed, which leaves prod two
-servers, so `fleet update` then leaves prod's minis at their version rather
-than let prod fall to one.
+Timed work on a server, a benchmark or a profile, holds its lock in brain,
+`~/Developer/brain/bin/SERVER-lock`, or `next-m4-lock` and `next-m6-lock`,
+which take the next group's server of that CPU, whichever it is then; the
+lock refuses a prod server. `fleet update` takes a server's lock, as
+`fleet-auto`, before it builds on it, restarts it or swaps it to prod,
+waiting up to 50 minutes, then stopping with status 4, which `fleet auto`
+takes as its hour skipped. A held server that needs no new build is left
+alone, and a group with a held server never takes prod. The other next server
+keeps `next` meanwhile. Nothing in `fleet.conf` changes for a hold.
 
 ### Setting up
 
@@ -271,17 +265,17 @@ In a terminal, in turn:
 
 ### Updates
 
-`fleet update [SERVER...]`, all of them by default, brings the servers to the
-newest version of their mode:
+`fleet update [SERVER...]`, all of them by default, updates the next group's
+servers among them, never prod's:
 
-1. It pins one version per mode for the whole run, the newest crates.io release
-   in release and the branch's current commit otherwise, so servers in the same
-   mode end on the same version even when the branch moves meanwhile. A
-   release counts once it has been out 10 minutes, as crates.io's index can
-   lag behind a publish.
-2. It readies every server at once, while all keep serving: in local mode it
-   copies `~/Developer/mono` to each, and runs `ship fetch` there at a low
-   priority, in its mode at the run's version, recorded once it built. That
+1. It pins `prod`'s commit and works out the roles (see [Servers](#servers)),
+   swapping first when one is due. The next group's version for the run is
+   `prod`'s commit while the prod group does not run it, which the next group
+   then takes prod on; `next`'s otherwise, but not within 2 hours of a swap,
+   the soak, while the group that left prod keeps what it ran, so pushing
+   `prod` back to it swaps back at once.
+2. It readies the next group's servers at once, and runs `ship fetch` there at
+   a low priority, in its role at the run's versions, recorded once they built. That
    does all of `ship update` that restarts nothing: Homebrew, Rust, Cargo, Rex's
    newest build, Bitview, the cleanup, and Apple's other updates
    while no macOS update waits; then macOS's download, as a job of its own,
@@ -289,15 +283,13 @@ newest version of their mode:
    job of the server's own, which finishes however this Mac or the connection
    fares. A server whose version cannot be found or that fails to get ready is
    left as it is while the others update, and the run ends failing.
-3. Then it takes the servers one at a time, those not in prod first, so a bad
-   version shows there before prod. When `ship apply --pending` says `ship
+3. Then it takes them one at a time. When `ship apply --pending` says `ship
    apply` would restart anything (the Rex server or Bitview on
    a new build, the tunnels on a new cloudflared or a changed `tunnels.sh`, or
    the whole node on a new Bitcoin Core), or a macOS update waits, the server first leaves its shared
-   tunnels, each only while it keeps its floor; a tunnel it alone holds, as
-   `next` on m6-2, first gains a stand-in, the first prod mini, which serves it
-   on prod's version meanwhile. A server that would take a tunnel below its
-   floor is left as it is, and the run ends failing.
+   tunnels, each only while it keeps its floor, `next` staying on the other.
+   A server that would take a tunnel below its floor is left as it is, and
+   the run ends failing.
 4. It runs `ship apply` there, which restarts only what runs another build
    than the one installed and starts what is not running, then waits until the
    server serves, workloads running, tunnels connected and Bitview at the tip,
@@ -307,9 +299,10 @@ newest version of their mode:
    update that the fetch found installs, with the lent password, and restarts
    the server, which must serve again on it.
 5. Then the server gets its tunnels back as in `fleet tunnels`, on its new
-   version beside the others' old one, and the stand-in leaves its tunnel.
-   Prod's three minis so roll one at a time, two serving throughout. Caches
-   are purged as there.
+   version beside the other's old one. Once all are done, a group that now
+   serves `prod`'s commit takes prod (the swap). Caches are purged as there,
+   and IndexNow told of the pages a new prod commit changed, once the prod
+   group serves it.
 
 A release that cannot serve beside the one before it is switched by hand that
 day; `fleet` has no such mode.
@@ -319,11 +312,9 @@ day; `fleet` has no such mode.
 tunnels in November 2026, so each mini's running one restarts into the new
 one, as `ship apply` does for any change of it. Until then, a mini on the old
 one counts as holding its tunnels while each of its `cloudflared` is
-connected, and `set` has it take a new token file with its own reload. The
-first `fleet update` after does the prod minis, one at a time behind the
-floors, and leaves m6-2, whose `next` has no stand-in until a prod mini runs
-the new one; the second does m6-2. Run it with no new version out, as fleet
-cannot see what the old ones serve.
+connected, and `set` has it take a new token file with its own reload. A
+next server restarts into the new one at its next update, a prod one once it
+is next.
 
 Every connection to a server has keepalives, so one that goes away mid-step
 ends rather than waits, and one that stops answering while it readies is left
@@ -340,10 +331,10 @@ waiting for an earlier one, as of a run cut short.
 `fleet auto`, which a LaunchAgent that setup and `ship update` install runs
 hourly, runs `fleet update` without a terminal, when this Mac is on power, its
 dots is exactly origin's `main`, which the servers pull (not another branch, nor
-changes left to commit, push or pull), and a server answers. That one check brings the servers a new crates.io release or
-`next` commit within the hour, prod included, and Homebrew, Rust, Rex,
-cloudflared, Bitcoin Core, Tailscale, and macOS's updates, major upgrades
-included; a run with nothing new
+changes left to commit, push or pull), and a server answers. That one check brings the next group a new
+`next` commit within the hour, prod a promoted one by a swap, and the next
+group Homebrew, Rust, Rex, cloudflared, Bitcoin Core, Tailscale, and macOS's
+updates, major upgrades included, which a prod server gets once it is next; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one
 it is open for catches up. It leaves alone a server that does not serve, as one
 stopped on purpose or after a crash, to be looked at, while the others update.
@@ -370,15 +361,14 @@ Mac's own tunnel, `local`, which serves its Bitview at `local.bitview.space`,
 as a LaunchAgent that starts it at login and again whenever it exits, logging
 to `~/Library/Logs/local-tunnel.log`, and moves it onto a new cloudflared on
 its own. The tunnel stops when `pc/.tunnels` lacks its token, which `fleet init`
-fetches, or when `fleet.conf` gives `local` to a server, as two machines on
-one tunnel would serve two versions.
+fetches.
 
 ### Status and alerts
 
-`fleet status` prints a line per server and flags a server that differs from
-`fleet.conf`, a tunnel that serves more than one version, a mode with a newer
-version than its servers have, when an update is due, and a macOS update
-downloaded for `fleet update` to install.
+`fleet status` prints a line per server with its role, and flags a server
+whose tunnels differ from its role's, a tunnel that serves more than one
+version, a role whose servers do not run its newest commit, and a macOS
+update downloaded for `fleet update` to install.
 
 Cloudflare emails when the shared `prod` or `mcp` tunnel goes down, comes
 back, or degrades. Each server's own tunnel, `next` and `local` send no email.

@@ -135,7 +135,7 @@ check "a server's alert never hides a skip streak" [ "$(notified 'fleet update s
 # change of the tunnels a serving mini runs, who serves each, at which version.
 # KILL_AT and KILL_WHEN stop the run's process group at a selected change.
 export SIM="$TMP/sim"
-EVENTS="$SIM/events" WORKER="$SIM/m/m6-1" # the worker a roll lends the shared tunnels to
+EVENTS="$SIM/events"
 FAKES="$TMP/fakes"
 mkdir -p "$FAKES"
 cat > "$FAKES/tailscale" <<'EOF'
@@ -204,6 +204,8 @@ case "$cmd" in
         else
             printf 'mode %s\nbitviewd v0.1.0 (https://x/mono?rev=%s#x):\ncache %s\n' "$mode" "$running" "$cache"
         fi
+        read -r job < "$M/job" || job=''
+        echo "job $job"
         tokens='' applied=''
         while read -r t; do tokens="$tokens $t"; done 2> /dev/null < "$M/tokens"
         while read -r t; do applied="$applied $t"; done < "$M/applied"
@@ -241,6 +243,7 @@ case "$cmd" in
         case "$cmd" in
             *"ship fetch"*)
                 # The mode and its pin, recorded once it built.
+                echo "$host" >> "$SIM/fetched"
                 if [ -e "$M/fetch_fails" ]; then
                     echo 1 > "$M/job"
                 else
@@ -299,33 +302,41 @@ printf '#!/bin/bash\necho %s >&2\n' "'password: \"pw\"'" > "$FAKES/security"
 printf '#!/bin/bash\n' > "$FAKES/sleep"
 chmod +x "$FAKES"/*
 
-# The four minis as fleet.conf has them, at PROD and NEXT, the versions of
-# their modes, each serving the tunnels it gives them.
+
+# The four minis in fleet.conf's two groups: a (m4-1 m6-1) serving prod at
+# PROD, b (m4-2 m6-2) serving next at NEXT, each with its role's tunnels and
+# its own.
 sim_setup() {
     rm -rf "$SIM"
     mkdir -p "$SIM/pc" "$SIM/home"
-    cp "$REPO/pc/fleet" "$SIM/pc/"
-    printf '%s\n' 'm4-1 prod prod mcp' 'm4-2 prod prod mcp' 'm6-1 prod' 'm6-2 next next' > "$SIM/pc/fleet.conf"
+    cp "$REPO/pc/fleet" "$REPO/pc/fleet.conf" "$SIM/pc/"
     for name in prod mcp next m4-1 m4-2 m6-1 m6-2; do
         echo "$name $(printf '{"t":"id-%s"}' "$name" | base64)"
     done > "$SIM/pc/.tunnels"
     echo cf1 > "$SIM/cf_version"
     echo "$1" > "$SIM/pin.prod"
     echo "$2" > "$SIM/pin.next"
-    while read -r server mode tunnels; do
-        m="$SIM/m/$server"
-        mkdir -p "$m"
-        echo "$mode $(cat "$SIM/pin.$mode")" > "$m/mode"
-        echo "$mode" > "$m/running_mode"
-        tee "$m/installed" < "$SIM/pin.$mode" > "$m/running"
-        echo default | tee "$m/cache_installed" > "$m/cache_running"
-        echo cf1 | tee "$m/cf_installed" > "$m/cf_running"
-        echo 0 | tee "$m/down" > "$m/job"
-        printf '%s\n' $tunnels "$server" | tee "$m/tokens" > "$m/applied"
-    done < "$SIM/pc/fleet.conf"
+    sim_mini m4-1 prod "$1" prod mcp
+    sim_mini m6-1 prod "$1" prod mcp
+    sim_mini m4-2 next "$2" next
+    sim_mini m6-2 next "$2" next
     : > "$SIM/events"
     : > "$SIM/purges"
+    : > "$SIM/fetched"
     rm -f "$SIM/changes"
+}
+# SERVER in MODE, running VERSION, serving TUNNEL... and its own.
+sim_mini() {
+    local server="$1" mode="$2" version="$3" m="$SIM/m/$1"
+    shift 3
+    mkdir -p "$m"
+    echo "$mode $version" > "$m/mode"
+    echo "$mode" > "$m/running_mode"
+    echo "$version" | tee "$m/installed" > "$m/running"
+    echo default | tee "$m/cache_installed" > "$m/cache_running"
+    echo cf1 | tee "$m/cf_installed" > "$m/cf_running"
+    echo 0 | tee "$m/down" > "$m/job"
+    printf '%s\n' "$@" "$server" | tee "$m/tokens" > "$m/applied"
 }
 # Run fleet ARGS... as a process group of its own.
 sim_fleet() {
@@ -342,141 +353,152 @@ sim_floors() {
     awk -F ' [|] ' '{ for (i = 2; i <= NF; i++) { split($i, f, ":"); if (split(f[2], h, " ") < (f[1] == "next" ? 1 : 2)) bad = 1 } }
         END { exit bad }' "$SIM/events"
 }
-# Whether every mini runs what fleet.conf gives it, at its mode's version.
+# Whether the servers of group PROD serve prod and mcp at prod's pin, and the
+# others next at NEXT, each serving and with its own tunnel.
 sim_final() {
-    local server mode tunnels
-    while read -r server mode tunnels; do
-        [ "$(printf '%s\n' $tunnels "$server" | sort | xargs)" = "$(sort "$SIM/m/$server/applied" | xargs)" ] &&
-            [ "$(cat "$SIM/m/$server/running")" = "$(cat "$SIM/pin.$mode")" ] &&
-            [ "$(cat "$SIM/m/$server/down")" = 0 ] && [ ! -e "$SIM/m/$server/old" ] || return 1
-    done < "$SIM/pc/fleet.conf"
+    local prod="$1" next="$2" group servers server want version
+    while read -r _ group servers; do
+        for server in $servers; do
+            if [ "$group" = "$prod" ]; then want="mcp prod" version="$(cat "$SIM/pin.prod")"; else want=next version="$next"; fi
+            [ "$(printf '%s\n' $want "$server" | sort | xargs)" = "$(sort "$SIM/m/$server/applied" | xargs)" ] &&
+                [ "$(cat "$SIM/m/$server/running")" = "$version" ] &&
+                [ "$(cat "$SIM/m/$server/down")" = 0 ] && [ ! -e "$SIM/m/$server/old" ] || return 1
+        done
+    done < <(grep '^group ' "$SIM/pc/fleet.conf")
+}
+# Whether no server of group a (m4-1 m6-1) built in any run since setup.
+sim_a_built_nothing() {
+    ! grep -qxE 'm4-1|m6-1' "$SIM/fetched"
+}
+sim_soak_over() {
+    mkdir -p "$SIM/home/Library/Application Support/dots"
+    echo $(($(date +%s) - 3 * 3600)) > "$SIM/home/Library/Application Support/dots/swapped"
 }
 
-# Whether m6-1 held prod and mcp in some snapshot, and holds neither tunnel at the end.
-sim_lent() {
-    grep -q 'prod: .*m6-1@' "$EVENTS" && grep -q 'mcp: .*m6-1@' "$EVENTS" && ! grep -qxE 'prod|mcp' "$WORKER/applied"
-}
-# Lend m6-1 prod and mcp, so a restart keeps the floors, as a roll would.
-sim_lend() {
-    printf '%s\n' prod mcp m6-1 | tee "$WORKER/tokens" > "$WORKER/applied"
-}
-
-# The exact set of attempted purges, including duplicates if any, since reset.
-sim_purged() {
-    diff <(printf '%s\n' "$@" | sed '/^$/d' | sort) <(sort "$SIM/purges") && [ ! -e "$SIM/premature-purges" ]
-}
-
-sim_clean() {
-    sim_fleet update && : > "$SIM/purges"
-}
-
+# Next moves: the next group builds and restarts in turn, prod untouched.
 sim_setup P0 N0
-echo P1 > "$SIM/pin.prod"
 echo N1 > "$SIM/pin.next"
-check "a version change of prod and next ends as fleet.conf says" sim_fleet update
-check "with the floors kept throughout, and m6-1 (a worker) lent prod and mcp meanwhile, holding them no longer" \
-    eval 'sim_floors && sim_lent'
-check "prod rolling one mini at a time, m6-2 never lent" fails grep -q 'prod:[^|]* m6-2@' "$SIM/events"
+check "next's new commit reaches the next group" eval 'sim_fleet update && sim_final a N1'
+check "with the floors kept throughout" sim_floors
+check "the prod group building nothing and serving prod throughout" eval \
+    'sim_a_built_nothing && ! grep -q "prod:[^|]*m[46]-2@" "$EVENTS"'
+check "each server's Bitview gets its own address, the next group's here" \
+    diff <(printf 'https://%s.bitview.space\n' m4-2 m6-2) <(cat "$SIM"/m/m4-2/public-url "$SIM"/m/m6-2/public-url)
 check "each mini keeping its own tunnel except while it restarts" [ ! -e "$SIM/own_lost" ]
-check "each server's Bitview gets its own address" \
-    diff <(for m in "$SIM"/m/*; do echo "https://${m##*/}.bitview.space"; done) <(cat "$SIM"/m/*/public-url)
+
+# A promotion of what next runs: a swap, nothing built.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+check "prod's branch moved to what the next group runs swaps the groups" eval 'sim_fleet update && sim_final b P0'
+check "with nothing built anywhere, the group that left prod keeping its version (the soak)" \
+    eval '[ ! -s "$SIM/fetched" ] && grep -q "keeps what it runs" "$SIM/out"'
+check "and the floors kept throughout" sim_floors
+check "prod's and mcp's caches purged once, after the swap" eval \
+    '[ "$(grep -cx prod "$SIM/purges")" = 1 ] && [ "$(grep -cx mcp "$SIM/purges")" = 1 ] && [ ! -e "$SIM/premature-purges" ]'
+check "fleet role names the new roles" eval \
+    'sim_fleet role && [ "$(sort "$SIM/out" | xargs)" = "m4-1 next m4-2 prod m6-1 next m6-2 prod" ]'
+echo N2 > "$SIM/pin.next"
+check "next moving within the soak builds nothing" eval 'sim_fleet update && [ ! -s "$SIM/fetched" ] && sim_final b P0'
+echo P0 > "$SIM/pin.prod"
+check "prod pushed back within the soak swaps back at once, nothing built" eval \
+    'sim_fleet update && sim_final a N1 && [ ! -s "$SIM/fetched" ] && sim_floors'
+echo N1 > "$SIM/pin.prod"
+sim_fleet update
+sim_soak_over
+: > "$SIM/fetched"
+check "after the soak, the group that left prod builds next's newest" eval \
+    'sim_fleet update && sim_final b N2 && [ "$(sort -u "$SIM/fetched" | xargs)" = "m4-1 m6-1" ] && sim_floors'
+
+# A promotion of a commit next does not run: the next group builds it first,
+# serving next only, then takes prod in the same run.
+sim_setup P0 N0
+echo C1 > "$SIM/pin.prod"
+echo N1 > "$SIM/pin.next"
+mkdir -p "$SIM/home/Developer/mono/scripts" "$SIM/home/Library/Application Support/dots"
+printf '#!/bin/bash\necho "$1 $2" >> "$SIM/announced"\n' > "$SIM/home/Developer/mono/scripts/indexnow.sh"
+chmod +x "$SIM/home/Developer/mono/scripts/indexnow.sh"
+echo P0 > "$SIM/home/Library/Application Support/dots/indexnow-prod"
+check "prod moved past next: the next group builds prod's commit, then takes prod" eval \
+    'sim_fleet update && sim_final b P0 && sim_floors && sim_a_built_nothing'
+check "IndexNow told once, of the old prod commit to the new, after the swap" \
+    [ "$(cat "$SIM/announced")" = "P0 C1" ]
 total="$(cat "$SIM/changes")"
-# (Eight at a time, each in its own model.)
 for at in $(seq 1 "$total"); do
     (
         SIM="$TMP/sim.$at"
         sim_setup P0 N0
-        echo P1 > "$SIM/pin.prod"
+        echo C1 > "$SIM/pin.prod"
         echo N1 > "$SIM/pin.next"
         KILL_AT="$at" sim_fleet update
         rm -f "$SIM/changes"
-        sim_fleet update && sim_floors && sim_final || echo "$at" >> "$TMP/broken"
+        sim_fleet update && sim_floors && sim_final b P0 && sim_a_built_nothing &&
+            [ "$(grep -cx prod "$SIM/purges")" -ge 1 ] && [ ! -e "$SIM/premature-purges" ] || echo "$at" >> "$TMP/broken"
     ) 2> /dev/null &
     [ $((at % 8)) -ne 0 ] || wait
 done
 wait
-check "killed after any of its $total changes, a rerun ends the same, with the floors kept" [ ! -e "$TMP/broken" ]
+check "killed after any of its $total changes (mid-build, mid-swap), a rerun ends the same, floors kept, prod purged" \
+    [ ! -e "$TMP/broken" ]
 
-# Interrupted rolls expose the new build before fleet finishes observing the
-# attachment. Returning to the original pins must still clear the cache.
-sim_abort() {
-    local status="$1" first second
-    sim_setup P0 N0
-    # A roll updates a mode's worker first, so it is the first changed holder.
-    first="$(awk '$2 == "prod" && NF == 2 { print $1 }' "$SIM/pc/fleet.conf")"
-    second="$(awk 'NR == 2 { print $1 }' "$SIM/pc/fleet.conf")"
-    sim_clean || return 1
-    echo P1 > "$SIM/pin.prod"
-    KILL_WHEN='prod:[^|]*@P1' status_is 137 sim_fleet update || return 1
-    ! grep -qxE 'prod|mcp' "$SIM/purges" || return 1
-    : > "$SIM/purges"
-    # After losing its connection, the changed holder restarts as soon as
-    # fetch installs the old build. The first probe must still spot the change.
-    echo 1 > "$SIM/m/$first/down"
-    touch "$SIM/m/$first/restart-on-fetch"
-    echo P0 > "$SIM/pin.prod"
-    [ "$status" = 0 ] || touch "$SIM/m/$second/fetch_fails"
-    status_is "$status" sim_fleet update && sim_floors && sim_final && sim_purged "$first" prod
-}
-check "a probe before fetch remembers the changed build on an interrupted roll" sim_abort 0
-check "a failed build during that abort still purges once the old build is uniform" sim_abort 1
+# A build that fails leaves prod where it is, and IndexNow untold.
+sim_setup P0 N0
+echo C1 > "$SIM/pin.prod"
+touch "$SIM/m/m6-2/fetch_fails"
+check "a next server whose build fails keeps the swap from happening" eval \
+    '! sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && grep -qx prod "$SIM/m/m6-1/applied" &&
+     ! grep -qx prod "$SIM/m/m4-2/applied" && sim_floors'
 
-sim_flags() {
-    local first server ledger holders=()
-    sim_setup P0 N0
-    while read -r server; do holders+=("$server"); done < <(awk '$2 == "prod" { print $1 }' "$SIM/pc/fleet.conf")
-    first="${holders[0]}"
-    sim_clean || return 1
-    for server in "${holders[@]}"; do echo changed > "$SIM/m/$server/cache_installed"; done
-    sim_fleet update && sim_purged "${holders[@]}" prod mcp || return 1
-    : > "$SIM/purges"
-    sim_lend
-    touch "$SIM/m/$first/missing-record"
-    sim_fleet restart "$first" && sim_purged || return 1
-    ledger="$SIM/home/Library/Application Support/dots/purged"
-    : > "$ledger/$first"
-    printf '%s' "$(cat "$ledger/mcp")" > "$ledger/mcp"
-    sim_fleet tunnels && sim_purged "$first" mcp
-}
-check "flag changes purge at the same build, incomplete ledgers retry, and a missing live record leaves a clean cache alone" sim_flags
+# A prod server gone: the next group builds prod's commit and takes prod.
+sim_setup P0 N0
+touch "$SIM/m/m6-1/unreachable"
+check "a prod server that does not answer has the next group build prod's commit and take prod" eval \
+    '! sim_fleet update && grep -qx prod "$SIM/m/m4-2/applied" && grep -qx prod "$SIM/m/m6-2/applied" &&
+     [ "$(cat "$SIM/m/m4-2/running")" = P0 ] && ! grep -qx prod "$SIM/m/m4-1/applied" && sim_floors'
 
-sim_purge_retry() {
-    local own
-    # Start the stand-in and the next holder on the same build, so this case
-    # isolates retries from purges caused by switching to a different stand-in.
-    sim_setup P0 P0
-    own="$(awk '$2 == "next" { print $1 }' "$SIM/pc/fleet.conf")"
-    sim_clean || return 1
-    echo N1 > "$SIM/pin.next"
-    touch "$SIM/fail-purge.$own" "$SIM/empty-ingress.next"
-    status_is 1 sim_fleet update && grep -q "Could not purge the cache of $own" "$SIM/out" &&
-        grep -q 'Could not get ingress hostnames for next' "$SIM/out" && sim_final && sim_purged "$own" || return 1
-    rm "$SIM/fail-purge.$own" "$SIM/empty-ingress.next"
-    : > "$SIM/purges"
-    sim_fleet update && sim_purged "$own" next || return 1
-    : > "$SIM/purges"
-    echo P0 > "$SIM/pin.next"
-    sim_fleet update && sim_final && sim_purged "$own" next
-}
-check "command failure and missing ingress fail the run and retry, and rollback purges again" sim_purge_retry
+# A next server gone: no swap, prod untouched, the run fails.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+touch "$SIM/m/m6-2/unreachable"
+check "a next server that does not answer keeps its group off prod, and the run fails" eval \
+    '! sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && grep -qx prod "$SIM/m/m6-1/applied" &&
+     ! grep -qx prod "$SIM/m/m4-2/applied" && sim_floors'
+
+# A job of fleet's still running on a next server (an earlier run's build).
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+echo > "$SIM/m/m4-2/job"
+check "a next server with a job running takes no prod" eval \
+    'sim_fleet tunnels && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx prod "$SIM/m/m4-2/applied"'
+echo 0 > "$SIM/m/m4-2/job"
+check "and once it ends, fleet tunnels swaps" eval 'sim_fleet tunnels && sim_final b P0 && sim_floors'
+
+# A hold for timed work on a next server.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+mkdir -p "$SIM/home/Developer/brain/bin"
+printf '#!/bin/bash\ncase "$1" in status) echo "held: bench since 2026-11-23T09:08:14Z (9 min)" ;; take) echo "$2" >> "$SIM/takes"; exit 75 ;; esac\n' \
+    > "$SIM/home/Developer/brain/bin/m6-2-lock"
+chmod +x "$SIM/home/Developer/brain/bin/m6-2-lock"
+check "a held next server keeps its group off prod, untouched" eval \
+    'sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx m6-2 "$SIM/fetched" && sim_floors'
+echo N2 > "$SIM/pin.next"
+echo P0 > "$SIM/pin.prod"
+check "and a run that would build on it waits for its lock, then stops with status 4" eval \
+    'status_is 4 sim_fleet update && grep -qx fleet-auto "$SIM/takes" && ! grep -qx m6-2 "$SIM/fetched"'
+
+# Prod never restarts.
+sim_setup P0 N0
+check "a prod server is never restarted: its tunnels would fall below their floor" eval \
+    '! sim_fleet restart m4-1 && grep -q "below its floor of 2" "$SIM/out" && [ ! -s "$EVENTS" ]'
+check "a next server restarts, the other keeping next" eval \
+    'sim_fleet restart m4-2 && sim_floors && sim_final a N0'
 
 sim_setup P0 N0
-first="$(awk 'NR == 1 { print $1 }' "$SIM/pc/fleet.conf")"
+first=m4-1
 touch "$SIM/m/$first/unreachable"
 check "an unobserved holder blocks only its tunnels from purging" eval \
     'status_is 1 sim_fleet tunnels && grep -q "Skipping the cache purge of prod" "$SIM/out" &&
      ! grep -qxE "prod|mcp" "$SIM/purges" && grep -qx next "$SIM/purges"'
-
-sim_setup P0 N0
-echo P1 > "$SIM/pin.prod"
-echo 1 > "$SIM/m/m6-1/down"
-check "with only two prod holders ready, neither can restart" eval \
-    '! sim_fleet update m4-1 m4-2 && grep -q "below its floor of 2" "$SIM/out" && [ ! -s "$SIM/events" ]'
-
-sim_setup P0 N0
-for server in m4-1 m4-2 m6-1; do echo next | tee -a "$SIM/m/$server/tokens" >> "$SIM/m/$server/applied"; done
-printf 'm6-2\n' | tee "$SIM/m/m6-2/tokens" > "$SIM/m/m6-2/applied"
-check "fleet tunnels hands next back to m6-2 across modes" eval 'sim_fleet tunnels && sim_floors && sim_final'
 
 broken=''
 for at in 1 2 3 4 5 6; do
@@ -484,36 +506,36 @@ for at in 1 2 3 4 5 6; do
     echo N1 > "$SIM/pin.next"
     echo "$at" > "$SIM/m/m6-2/fail_state"
     sim_fleet update
-    sim_floors && sim_fleet update && sim_final || broken="$broken $at"
+    sim_floors && sim_fleet update && sim_final a N1 || broken="$broken $at"
 done
 check "a mini that does not answer a probe keeps its tunnels, and a rerun ends right" [ -z "$broken" ]
 
 sim_setup P0 N0
 rm "$SIM/m/m6-2/tokens" "$SIM/m/m6-2/applied"
 touch "$SIM/m/m6-2/applied"
-check "a new mini gets its tunnels and its own" eval 'sim_fleet update && sim_final'
+check "a new mini gets its tunnels and its own" eval 'sim_fleet update && sim_final a N0'
 
 sim_setup P0 N0
-for server in "$SIM"/m/*; do touch "$server/old"; done
+for server in m4-2 m6-2; do touch "$SIM/m/$server/old"; done
 sim_fleet update
-check "the workloads from before tunnels.sh's state restart in turn, behind the floors, within two runs" eval \
-    'sim_floors && { sim_final || { sim_fleet update && sim_floors && sim_final; }; }'
+check "the next group's workloads from before tunnels.sh's state restart in turn, within two runs" eval \
+    'sim_floors && { sim_final a N0 || { sim_fleet update && sim_floors && sim_final a N0; }; }'
 
-# A mini whose build failed keeps the mode of what it runs, so restarted it
-# takes its tunnels back.
+# A next mini whose build failed takes its tunnels back on its old build.
 sim_setup P0 N0
-echo P1 > "$SIM/pin.prod"
-touch "$SIM/m/m4-1/fetch_fails"
+echo N1 > "$SIM/pin.next"
+touch "$SIM/m/m4-2/fetch_fails"
 sim_fleet update
-rm "$SIM/m/m4-1/fetch_fails"
-sim_lend
+rm "$SIM/m/m4-2/fetch_fails"
 check "a mini whose fetch failed, restarted, takes its tunnels back on its old build" eval \
-    'sim_fleet restart m4-1 && sim_floors && grep -qx prod "$SIM/m/m4-1/applied" && grep -qx mcp "$SIM/m/m4-1/applied"'
+    'sim_fleet restart m4-2 && sim_floors && grep -qx next "$SIM/m/m4-2/applied"'
 
-# m6-2 given prod in fleet.conf, but not yet updated to it.
+# A cache-affecting change on the next group purges next, at the same build.
 sim_setup P0 N0
-printf '%s\n' 'm4-1 prod prod mcp' 'm4-2 prod prod mcp' 'm6-1 prod prod mcp' 'm6-2 prod prod mcp next' > "$SIM/pc/fleet.conf"
-check "a mini moved to another mode takes none of its tunnels before it is updated" eval \
-    '! sim_fleet tunnels && sim_floors && ! grep -qx prod "$SIM/m/m6-2/applied"'
+sim_fleet update
+: > "$SIM/purges"
+for server in m4-2 m6-2; do echo changed > "$SIM/m/$server/cache_installed"; done
+check "a flag change on the next group restarts it and purges next alone" eval \
+    'sim_fleet update && [ "$(sort -u "$SIM/purges" | xargs)" = "m4-2 m6-2 next" ] && [ ! -e "$SIM/premature-purges" ]'
 
 finish

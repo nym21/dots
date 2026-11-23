@@ -9,8 +9,6 @@ set -euo pipefail
 #
 #   tunnel.sh       install the LaunchAgent, restart the tunnel onto a new
 #                   cloudflared, or stop it when pc/.tunnels lacks its token
-#                   or fleet.conf gives it to a server, as two machines on one
-#                   tunnel would serve two versions
 #   tunnel.sh run   the tunnel, which the LaunchAgent runs
 
 PC_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -47,10 +45,6 @@ stop() {
 }
 if [ -z "$(token)" ]; then
     stop "pc/.tunnels has no token for it"
-    exit 0
-fi
-if awk '!/^#/ { for (i = 3; i <= NF; i++) if ($i == "local") found = 1 } END { exit !found }' "$PC_DIR/fleet.conf"; then
-    stop "fleet.conf gives it to a server"
     exit 0
 fi
 

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # fleet: the servers, from the workstation, which decides what each runs.
-# pc/fleet.conf lists them by their Tailscale names, with their mode and the
-# tunnels they share. Cloudflare holds the tunnel tokens, and the git-ignored
+# pc/fleet.conf lists them by their Tailscale names in groups, and the tunnels
+# of each role, prod and next. Cloudflare holds the tunnel tokens, and the git-ignored
 # pc/.tunnels keeps them at hand, fetched with cf when missing.
 # Each server also serves the tunnel named after it, if there is one, which
 # reaches it alone. fleet gives each server its part over SSH, as mini, and
@@ -13,33 +13,35 @@ set -euo pipefail
 #   fleet init [SERVER...]     what fleet needs from you, once: the tailnet's and
 #                              Cloudflare's logins, each server's own tunnel, its
 #                              password, and the Rex app's forwards
-#   fleet status [SERVER...]   one line per server, and what differs from fleet.conf
-#   fleet update [SERVER...]   bring the servers to the newest version of their mode
+#   fleet status [SERVER...]   one line per server, its role, and what differs from fleet.conf
+#   fleet role [SERVER]        each server's role now, or SERVER's: prod or next
+#   fleet update [SERVER...]   bring the next group to its newest version, and swap
+#                              the groups when it serves what prod's branch names
 #   fleet restart [SERVER...]  stop and start the servers' workloads cleanly
 #   fleet reboot [SERVER...]   restart the servers themselves, cleanly, in turn
 #   fleet shutdown [SERVER...] turn them off, cleanly, in turn
-#   fleet tunnels              give the servers the tunnels fleet.conf gives them,
-#                              updating nothing (a tunnel moved in an outage)
+#   fleet tunnels              give the servers their roles' tunnels, updating
+#                              nothing (a swap due, or after an outage)
 #   fleet log [SINCE]          how many servers each tunnel had ready since SINCE,
 #                              a day ago by default, at each change, the fewest,
 #                              and when below its floor, from their tunnels.log
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #   fleet auto                 fleet update, hourly, when this Mac can
 #
-# A shared tunnel keeps its floor of servers holding it ready, two where
-# fleet.conf gives it two or more, one otherwise: a server leaves a tunnel only
-# while the others holding it ready, counted just before, number at least that.
-# An update pins one version per mode, readies every server at once, then takes
-# them in turn, those not in prod first and, in each group, those with fewer
-# tunnels first: one that would restart anything leaves its tunnels, restarts,
-# and takes them back (converge), so a mode's versions mix while it rolls. A
-# tunnel that would fall below its floor first gains lenders: where the floor
-# is two, servers of that mode already on the run's version (a worker, which
-# holds no tunnel of its own), where one, any other server (a stand-in); they
-# hold it until converge takes it back. A server that cannot get ready, or
-# cannot leave, is left as it is and the run fails, as does one with no lender
-# to be found; a rerun after any stop, with a tunnel still lent, starts from
-# what the servers hold, with nothing to resume, and converges it back.
+# One group serves prod and never builds nor restarts: a build beside a
+# serving Bitview stalls it (brain notes stalls-20261123). The others serve
+# next, and only they build, each server for its own CPU. Prod is the group
+# whose servers all serve the commit prod's branch names (assign); promoting
+# a commit next runs moves prod's tunnels to that group in seconds (a swap),
+# and pushing prod back to what the other group still runs swaps back.
+# A shared tunnel keeps its floor of servers holding it ready, a whole group
+# for prod's tunnels, one for the others: a server leaves a tunnel only while
+# the others holding it ready, counted just before, number at least that. An
+# update pins one version per role, readies the next group's servers at once,
+# then restarts them in turn, each leaving its tunnels first and taking them
+# back (converge). A server that cannot get ready, or cannot leave, is left as
+# it is and the run fails; a rerun after any stop starts from what the
+# servers hold and run, with nothing to resume.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="$PC_DIR/fleet.conf"
@@ -72,9 +74,17 @@ DOMAIN=bitview.space
 SITE=http://localhost:3110
 export CF_QUIET=1
 # Where fleet keeps its state, which a cache cleaner leaves alone: the lock,
-# the tunnel cache records, and fleet auto's last success and alerts.
+# the tunnel cache records, the last swap's time, and fleet auto's last
+# success and alerts.
 STATE_DIR="$HOME/Library/Application Support/dots"
 PURGED="$STATE_DIR/purged"
+SWAPPED="$STATE_DIR/swapped"
+# How long the group that left prod keeps what it ran, so pushing prod's
+# branch back to it swaps back at once, before it builds next's newest.
+soak=$((2 * 3600))
+# Brain's locks for timed work on a server, LOCKS/SERVER-lock, which fleet
+# takes before it builds on, restarts or swaps to a server that has one.
+LOCKS="$HOME/Developer/brain/bin"
 
 # cf caches the account in .cloudflare where it runs, so it runs in fleet's
 # cache rather than wherever fleet was. Quiet, as on a terminal it prints a
@@ -85,43 +95,54 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update | restart | reboot | shutdown | purge [SERVER...] | tunnels | log [SINCE] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | reboot | shutdown | purge [SERVER...] | role [SERVER] | tunnels | log [SINCE] | auto" >&2
     exit 1
 }
 
-# fleet.conf's lines, SERVER MODE TUNNEL..., for the servers given or all.
+# fleet.conf's groups, GROUP SERVER... a line each; its servers, one a line;
+# and ROLE's tunnels.
+groups() {
+    awk '$1 == "group" { $1 = ""; print substr($0, 2) }' "$CONF"
+}
+servers() {
+    awk '$1 == "group" { for (i = 3; i <= NF; i++) print $i }' "$CONF"
+}
+# The servers given, or all.
+given() {
+    if [ "$#" -eq 0 ]; then servers; else printf '%s\n' "$@"; fi
+}
+role_tunnels() {
+    awk -v role="$1" '$1 == "role" && $2 == role { for (i = 3; i <= NF; i++) printf "%s ", $i }' "$CONF" | xargs
+}
+
+# This run's roles, SERVER ROLE TUNNEL..., the role's tunnels, a line each,
+# for the servers given or all: assign writes them.
 entries() {
     local server
     if [ "$#" -eq 0 ]; then
-        awk '!/^#/ && NF >= 2' "$CONF"
+        cat "$work/conf"
         return
     fi
     for server; do
-        awk -v server="$server" '!/^#/ && $1 == server' "$CONF"
+        awk -v server="$server" '$1 == server' "$work/conf"
     done
 }
+role_of() {
+    entries "$1" | awk '{ print $2 }'
+}
 
-# The servers given, or all, those not in prod first, so a bad version shows
-# there before prod, and in each group those with fewer tunnels first, in
-# fleet.conf's order otherwise: a worker updated before the servers it lends
-# tunnels to (down).
+# The servers given, or all, those not in prod first, and in each role those
+# with fewer tunnels first, in fleet.conf's order otherwise.
 order() {
     entries "$@" | awk '$2 != "prod" { print NF, $1 }' | sort -s -n -k1,1 | cut -d ' ' -f 2
     entries "$@" | awk '$2 == "prod" { print NF, $1 }' | sort -s -n -k1,1 | cut -d ' ' -f 2
 }
 
-# The tunnels two or more of the servers given share.
-shared() {
-    entries "$@" | awk '
-        { for (i = 3; i <= NF; i++) count[$i]++ }
-        END { for (tunnel in count) if (count[tunnel] > 1) printf "%s ", tunnel }'
-}
-
-# Each server of fleet.conf and a tunnel it serves, a line each: those
-# fleet.conf gives it, and the one named after it, if pc/.tunnels has one.
+# Each server and a tunnel it serves, a line each: its role's, and the one
+# named after it, if pc/.tunnels has one.
 serves() {
     awk -v tokens="$TUNNELS" 'BEGIN { while ((getline line < tokens) > 0) { split(line, f, " "); token[f[1]] } }
-        !/^#/ && NF >= 2 { for (i = 3; i <= NF; i++) print $1, $i; if ($1 in token) print $1, $1 }' "$CONF"
+        { for (i = 3; i <= NF; i++) print $1, $i; if ($1 in token) print $1, $1 }' "$work/conf"
 }
 # The tunnels SERVER serves, and the servers that serve TUNNEL.
 tunnels_of() {
@@ -150,9 +171,9 @@ check_names() {
             echo "$server calls itself $self on the tailnet; rename one of them." >&2
             bad=1
         fi
-    done < <(entries "$@")
+    done < <(given "$@")
     for peer in $peers; do
-        [ -n "$(entries "$peer")" ] || echo "$peer is on the tailnet but not in fleet.conf." >&2
+        servers | grep -qx "$peer" || echo "$peer is on the tailnet but not in fleet.conf." >&2
     done
     return "$bad"
 }
@@ -252,13 +273,15 @@ follow_job() {
 
 # What each server runs and holds now, read from all at once into
 # $work/live.SERVER: the mode and build each of its workloads runs, as their
-# starts recorded them, then tunnels.sh state. Empty for one that does not
-# answer. Keep each tunnel's observations even if its connection has since
-# dropped. It can reconnect with those builds without fleet doing anything.
+# starts recorded them, then whether a job of fleet's runs there (a line
+# "job " while it does), then tunnels.sh state. Empty for one that does not
+# answer. Under the fleet lock, keep each tunnel's observations even if its
+# connection has since dropped. It can reconnect with those builds without
+# fleet doing anything.
 probe() {
     local server file state tunnel status pids=()
-    for server in $(entries | awk '{ print $1 }'); do
-        { on "$server" "cat ~/.config/dots/running/bitviewd 2>/dev/null; $TUNNELS_SH state" ||
+    for server in $(servers); do
+        { on "$server" "cat ~/.config/dots/running/bitviewd 2>/dev/null; printf 'job '; $JOB status; echo; $TUNNELS_SH state" ||
             : ; } >"$work/live.$server" 2>/dev/null &
         pids+=("$!")
     done
@@ -267,7 +290,7 @@ probe() {
     for file in "$work"/live.*; do
         state="$(serving_state "$file")"
         while read -r tunnel status; do
-            remember "$tunnel" "$state"
+            [ -z "$locked" ] || remember "$tunnel" "$state"
             printf '%s\t%s\t%s\n' "$tunnel" "$state" "$status" >> "$work/serving"
         done < <(awk '
             /^tokens( |$)/ { for (i = 2; i <= NF; i++) tunnels[$i] }
@@ -296,14 +319,91 @@ up() {
 answered() {
     grep -q '^tokens' "$work/live.$1"
 }
-# Whether SERVER's Bitview started in the mode fleet.conf gives it, whatever
-# version: a server moved to another mode there takes no tunnel before it runs
-# that mode's build, and one whose build failed takes its tunnels on the last
-# that built. The record's mode line is build_record()'s, in server/crate.sh.
+# Whether SERVER may take TUNNEL: one of prod's only while it runs prod's
+# pin, so a server whose build failed or that restarts on another waits;
+# any other whatever it runs.
 current() {
-    local mode
-    mode="$(entries "$1" | awk '{ print $2 }')"
-    [ "$(sed -n 's/^mode //p' "$work/live.$1")" = "$mode" ]
+    case " $(role_tunnels prod) " in
+        *" $2 "*) at_pin "$1" "$(cat "$work/pin.prod")" ;;
+    esac
+}
+
+# Whether a job of fleet's runs on SERVER, and whether brain's lock for timed
+# work there is held by another than fleet, from the last probe and the lock.
+busy() {
+    grep -qx 'job ' "$work/live.$1"
+}
+held() {
+    local state
+    [ -x "$LOCKS/$1-lock" ] || return 1
+    state="$("$LOCKS/$1-lock" status | head -1)"
+    [ "${state#held: }" != "$state" ] && [ "${state#held: fleet-auto }" = "$state" ]
+}
+
+# Whether every server of GROUP serves prod's pin, at the tip, with no job of
+# fleet's and no hold on it, from the last probe: what prod asks of a group.
+qualifies() {
+    local server
+    for server in $(groups | awk -v group="$1" '$1 == group { $1 = ""; print }'); do
+        up "$server" && at_pin "$server" "$(cat "$work/pin.prod")" && ! busy "$server" && ! held "$server" || return 1
+    done
+}
+
+# Which group serves prod and which next this run, into $work/conf as
+# entries() reads it, from the last probe and prod's pin: nothing is kept
+# between runs, so an interrupted swap, a rollback (prod's branch moved back)
+# and a prod server gone are all read from the servers. The group holding
+# prod's tunnels ready on the most servers keeps prod while it qualifies, or
+# while no other does; otherwise the first other that does takes it, and
+# $swapping says so: converge then moves the tunnels. Every other group is next.
+assign() {
+    local group servers server tunnel role count most=-1 holder='' prod=''
+    tunnel="$(role_tunnels prod | cut -d ' ' -f 1)"
+    while read -r group servers; do
+        count=0
+        for server in $servers; do
+            ! grep -qx "$tunnel ready" "$work/live.$server" || count=$((count + 1))
+        done
+        [ "$count" -le "$most" ] || { most="$count" holder="$group"; }
+    done < <(groups)
+    if qualifies "$holder"; then
+        prod="$holder"
+    else
+        prod="$(groups | while read -r group _; do
+            [ "$group" = "$holder" ] || ! qualifies "$group" || { echo "$group"; break; }
+        done)"
+    fi
+    swapping=''
+    if [ -z "$prod" ]; then
+        prod="$holder"
+    elif [ "$prod" != "$holder" ]; then
+        swapping=1
+    fi
+    while read -r group servers; do
+        role=next
+        [ "$group" != "$prod" ] || role=prod
+        for server in $servers; do
+            echo "$server $role $(role_tunnels "$role")"
+        done
+    done < <(groups) > "$work/conf"
+}
+
+# Into $work: prod's pin, what the servers run and hold, then their roles.
+roles() {
+    if ! resolve prod > "$work/pin.prod"; then
+        echo "Could not find prod's commit." >&2
+        exit 1
+    fi
+    probe
+    assign
+}
+
+# Whether every server in ROLE runs PINS, from the last probe.
+all_at() {
+    local server
+    for server in $(entries | awk -v role="$1" '$2 == role { print $1 }'); do
+        at_pin "$server" "$2" || return 1
+    done
 }
 
 # The servers whose token file names TUNNEL, and those on which it is in one
@@ -315,11 +415,13 @@ in_state() {
     grep -lE "^$1 ($2)\$" "$work"/live.* | sed 's|.*/live\.||' || true
 }
 
-# How many servers must keep TUNNEL ready at every step: two where fleet.conf
-# gives it two or more, one where it gives it one, none where none.
+# How many servers must keep TUNNEL ready at every step: one of prod's, a
+# whole group, the smallest; next's, or a server's own, one; any other none.
 floor() {
-    awk -v tunnel="$1" '!/^#/ && NF >= 2 { for (i = 3; i <= NF; i++) if ($i == tunnel) n++ }
-        END { print (n >= 2 ? 2 : n + 0) }' "$CONF"
+    awk -v tunnel="$1" '
+        $1 == "group" { n = NF - 2; if (!least || n < least) least = n; for (i = 3; i <= NF; i++) if ($i == tunnel) own = 1 }
+        $1 == "role" { for (i = 3; i <= NF; i++) if ($i == tunnel) role = $2 }
+        END { print (role == "prod" ? least : (role != "" || own) ? 1 : 0) }' "$CONF"
 }
 
 # Give SERVER the tunnels TUNNEL..., only those, and wait until it has taken
@@ -376,39 +478,17 @@ keeps_floor() {
 }
 
 # Take every tunnel but its own off SERVER before it stops, each only while it
-# keeps its floor without it, counted just before. A tunnel left short of its
-# floor first gains lenders, until it has it: servers that serve, not holding
-# it ready, and, where the floor is two, of SERVER's mode and already on the
-# run's version (as a worker of prod, which holds no tunnel itself). Where it
-# is one, any other server serves, those fleet.conf gives the tunnel first,
-# whatever version, as next is shown on prod's meanwhile. A lender keeps the
-# tunnel until converge takes it back, which a failed run leaves to a rerun,
-# fleet tunnels or the next update. SERVER is left as it is, failing, while a
-# tunnel would still fall below its floor, or when it does not answer.
+# keeps its floor without it, counted just before. SERVER is left as it is,
+# failing, when a tunnel would fall below its floor, as prod's always would
+# (prod restarts nothing until it is next), or when it does not answer.
 down() {
-    local server="$1" tunnel shared lender mode pin have need
+    local server="$1" tunnel shared
     probe
     if ! answered "$server"; then
         echo "$server did not answer, so what it holds is unknown." >&2
         return 1
     fi
-    read -r _ mode _ < <(entries "$server")
-    pin="$(cat "$work/pin.$mode" 2>/dev/null || :)"
     shared="$(minus "$(tokens "$server")" "$server" | xargs)"
-    for tunnel in $shared; do
-        need="$(floor "$tunnel")"
-        have="$(minus "$(in_state "$tunnel" ready)" "$server" | wc -w)"
-        for lender in $(wanted "$tunnel") $(entries | awk '{ print $1 }'); do
-            [ "$have" -lt "$need" ] || break
-            { [ "$lender" != "$server" ] && up "$lender"; } || continue
-            [ -n "$(minus "$lender" "$(in_state "$tunnel" ready | xargs)")" ] || continue
-            [ "$need" -lt 2 ] || { current "$lender" && at_pin "$lender" "$pin" && [ "$(entries "$lender" | awk '{ print $2 }')" = "$mode" ]; } || continue
-            echo "$lender: lent $tunnel while $server restarts"
-            give_all + "$tunnel" "$lender"
-            probe
-            have=$((have + 1))
-        done
-    done
     for tunnel in $shared; do
         keeps_floor "$tunnel" "$server" || return 1
     done
@@ -419,7 +499,7 @@ down() {
     purge_changed
 }
 
-# Make each tunnel's servers those fleet.conf gives it, and $unsettled
+# Make each tunnel's servers those their roles give it, and $unsettled
 # say when some tunnel's servers holding it ready are not those.
 converge() {
     local tunnel
@@ -435,20 +515,20 @@ converge() {
 # unsettled.
 settled() {
     [ -z "$unsettled" ] && return
-    echo "Not every tunnel has the servers fleet.conf gives it; see above, and run fleet again." >&2
+    echo "Not every tunnel has the servers its role gives it; see above, and run fleet again." >&2
     incomplete=1
 }
 
-# TUNNEL goes to the servers fleet.conf gives it that serve in the mode it
-# gives them (current), whatever version, then, while it keeps its floor without
-# them, those losing it leave it together.
+# TUNNEL goes to the servers whose role gives it that serve and may take it
+# (current), then, while it keeps its floor without them, those losing it
+# leave it together.
 converge_tunnel() {
     local tunnel="$1" wanted holders server gaining='' losing
     wanted="$(wanted "$tunnel" | xargs)"
     holders="$(holding "$tunnel" | xargs)"
     losing="$(minus "$holders" "$wanted" | xargs)"
     for server in $(minus "$wanted" "$holders"); do
-        ! up "$server" || ! current "$server" || gaining="$gaining $server"
+        ! up "$server" || ! current "$server" "$tunnel" || gaining="$gaining $server"
     done
     if [ -n "$gaining" ]; then
         # shellcheck disable=SC2086
@@ -559,7 +639,7 @@ keychain_changed() {
 # missing or no longer right, trying the one just typed before asking again.
 init_passwords() {
     local server password typed='' status
-    for server in $(entries "$@" | awk '{ print $1 }'); do
+    for server in $(given "$@"); do
         status=0
         kept_password "$server" || status=$?
         if [ "$status" -eq 1 ]; then
@@ -674,27 +754,11 @@ clear_passwords() {
     done
 }
 
-# The version to install in MODE, resolved once per run: the newest crates.io
-# release in release, the branch's commit otherwise. None for local, which
-# fleet copies.
+# The version to install from BRANCH, its commit, resolved once per run.
 resolve() {
     local commit
-    case "$1" in
-        release)
-            # The newest release out for 10 minutes, by when crates.io's index
-            # has it everywhere: cargo may not find one just published.
-            curl -s -m 10 -A fleet "https://crates.io/api/v1/crates/bitviewd/versions?per_page=50" |
-                jq -er --arg before "$(date -u -v-10M +%Y-%m-%dT%H:%M:%S)" '
-                    [.versions[] | select((.yanked | not) and (.num | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
-                        and .created_at[0:19] < $before)]
-                    | max_by(.num | split(".") | map(tonumber)) | .num'
-            ;;
-        local) ;;
-        *)
-            commit="$(git ls-remote https://github.com/bitcoinresearchkit/mono "refs/heads/$1" | cut -f 1)"
-            [ -n "$commit" ] && echo "$commit"
-            ;;
-    esac
+    commit="$(git ls-remote https://github.com/bitcoinresearchkit/mono "refs/heads/$1" | cut -f 1)"
+    [ -n "$commit" ] && echo "$commit"
 }
 
 # The last of what SERVER's fetch said of a macOS update: downloaded or not.
@@ -715,9 +779,9 @@ download_macos() {
 
 # Ready SERVER... at once, while each still serves: give each its own address
 # if it has its own tunnel (its Bitview names it in each answer from its next
-# start, so clients reaching it through a shared hostname stay on it), in local
-# mode its copy of ~/Developer/mono, and run ship fetch there in its mode at
-# the run's version, which builds it, recording the mode once it built,
+# start, so clients reaching it through a shared hostname stay on it), and run
+# ship fetch there in its role at the run's versions, which builds them natively,
+# recording them once they built,
 # updates Homebrew, Rust, and Rex, restarting nothing, then download a macOS
 # update with its password. Each is a job of the server's own, which finishes
 # there whatever happens to this Mac or the connection, as when it sleeps. The
@@ -733,10 +797,6 @@ fetch() {
         {
             on "$server" 'git -C ~/Developer/dots pull -q --ff-only' &&
                 on "$server" "bash -c 'mkdir -p ~/.config/dots && echo $url > ~/.config/dots/public-url'" &&
-                if [ "$mode" = local ]; then
-                    rsync -a --delete --exclude /target/ -e "ssh -T" \
-                        "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
-                fi &&
                 detach "$server" "nice -n 10 $SHIP fetch $mode $pin" &&
                 follow_job "$server" "$fetch_timeout" &&
                 download_macos "$server"
@@ -849,12 +909,10 @@ update_macos() {
 }
 
 # Whether SERVER runs PIN, as the build its Bitview recorded at its start says,
-# from the last probe. Never in local mode, which has none.
+# from the last probe.
 at_pin() {
     [ -n "$2" ] || return 1
-    awk -v pin="$2" '
-        $1 == "bitviewd" && ($2 == "v" pin ":" || index($0, "rev=" pin)) { found = 1 }
-        END { exit !found }' "$work/live.$1"
+    awk -v pin="$2" '$1 == "bitviewd" && index($0, "rev=" pin) { found = 1 } END { exit !found }' "$work/live.$1"
 }
 
 # Purge Cloudflare's cache of the hostnames that TUNNEL... route, so none
@@ -896,7 +954,45 @@ lock() {
         mkdir "$LOCK"
     fi
     echo $$ > "$LOCK/pid"
+    locked=1
     trap 'rm -rf "$LOCK"' EXIT
+}
+locked=''
+
+# Take brain's lock for timed work on each SERVER... that has one, as
+# fleet-auto, so fleet never builds on, restarts or swaps to a server someone
+# times: waiting at most 50 minutes each, then the run stops with status 4,
+# which fleet auto takes as its hour skipped. unhold releases them.
+hold() {
+    local server
+    for server; do
+        if [ ! -x "$LOCKS/$server-lock" ] || grep -qx "$server" "$work/held" 2>/dev/null; then continue; fi
+        if ! "$LOCKS/$server-lock" take fleet-auto 3000 >/dev/null; then
+            echo "$server stays held for timed work ($("$LOCKS/$server-lock" status | head -1)); stopping here." >&2
+            exit 4
+        fi
+        echo "$server" >> "$work/held"
+    done
+}
+unhold() {
+    local server
+    [ -e "$work/held" ] || return 0
+    while read -r server; do
+        "$LOCKS/$server-lock" release fleet-auto >/dev/null || echo "$server: could not release its lock." >&2
+    done < "$work/held"
+}
+
+# Converge, the tunnels moving to the other group first when assign found a
+# swap due: its servers held, and the time noted, from which the soak counts.
+swap() {
+    if [ -n "$swapping" ]; then
+        # shellcheck disable=SC2046
+        hold $(entries | awk '$2 == "prod" { print $1 }')
+        echo "== Swapping: $(entries | awk '$2 == "prod" { print $1 }' | xargs) take prod"
+        mkdir -p "$STATE_DIR"
+        date +%s > "$SWAPPED"
+    fi
+    converge
 }
 
 # Leave SERVERS as they are, for REASON, and have the run end failing.
@@ -912,7 +1008,7 @@ leave() {
 # touches the update.
 announce_pages() {
     local new old state="$STATE_DIR/indexnow-prod" script="$HOME/Developer/mono/scripts/indexnow.sh"
-    [ -s "$work/pin.prod" ] && [ -x "$script" ] || return 0
+    [ -s "$work/pin.prod" ] && [ -x "$script" ] && all_at prod "$(cat "$work/pin.prod")" || return 0
     new="$(cat "$work/pin.prod")"
     old="$(cat "$state" 2>/dev/null || true)"
     [ "$old" != "$new" ] || return 0
@@ -923,61 +1019,70 @@ announce_pages() {
 }
 
 update() {
-    local server mode tunnels tunnel selected kept=''
+    local server tunnel kept='' moving='' pin
     lock
-    # The servers given, all by default, which checks before the run cover.
-    selected="$(order "$@" | xargs)"
-    one_mode || exit 1
     cf_logged_in
     fetch_tokens
-    # shellcheck disable=SC2086
-    while read -r server _ tunnels; do
-        for tunnel in $tunnels; do
-            if [ -z "$(tunnel_id "$tunnel")" ]; then
-                echo "fleet.conf gives $server the tunnel $tunnel, which Cloudflare lacks." >&2
-                exit 1
-            fi
-        done
-    done < <(entries $selected)
-
-    # shellcheck disable=SC2086
-    check_names $selected || exit 1
-
-    work="$(mktemp -d)"
-    trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
-    # shellcheck disable=SC2086
-    for mode in $(entries $selected | awk '{ print $2 }' | sort -u); do
-        if ! resolve "$mode" > "$work/pin.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pin.$mode" ]; }; then
-            echo "Could not find the newest version of $mode." >&2
-            rm -f "$work/pin.$mode"
+    for tunnel in $(role_tunnels prod) $(role_tunnels next); do
+        if [ -z "$(tunnel_id "$tunnel")" ]; then
+            echo "fleet.conf gives a role the tunnel $tunnel, which Cloudflare lacks." >&2
+            exit 1
         fi
     done
-    for server in $selected; do
-        read -r _ mode _ < <(entries "$server")
-        if [ ! -e "$work/pin.$mode" ]; then
-            leave "$server" "$mode has no version to install"
+    check_names "$@" || exit 1
+
+    work="$(mktemp -d)"
+    trap 'unhold; clear_passwords; rm -rf "$work" "$LOCK"' EXIT
+    roles
+    # The next group's version: prod's while the prod group does not run it,
+    # which the next group then takes prod on; next's newest otherwise, but
+    # not within the soak after a swap, while the group that left prod keeps
+    # what it ran, from the swap this run makes on.
+    if ! all_at prod "$(cat "$work/pin.prod")"; then
+        cp "$work/pin.prod" "$work/pin.next"
+    elif [ -n "$swapping" ] || [ $(($(date +%s) - $(cat "$SWAPPED" 2>/dev/null || echo 0))) -lt "$soak" ]; then
+        echo "== The next group keeps what it runs: prod swapped less than $((soak / 3600)) hours ago."
+    elif ! resolve next > "$work/pin.next"; then
+        echo "Could not find next's commit." >&2
+        exit 1
+    fi
+    pin="$(cat "$work/pin.next" 2>/dev/null || :)"
+    for server in $(order "$@"); do
+        if [ "$(role_of "$server")" != next ]; then
+            [ "$#" -eq 0 ] || echo "$server serves prod, so it updates once it is next."
+        elif [ -z "$pin" ]; then
+            :
         # fleet auto leaves alone a server that does not serve, as one stopped
         # on purpose or after a crash, to be looked at.
         elif [ -n "${FLEET_AUTO:-}" ] && ! on "$server" "$SHIP status --check" 2>/dev/null; then
             leave "$server" "$server does not serve, which ship status there explains"
+        elif at_pin "$server" "$pin" && held "$server"; then
+            echo "$server is held for timed work and has its version: left alone."
         else
             kept="$kept $server"
+            at_pin "$server" "$pin" || moving="$moving $server"
         fi
     done
-    [ -n "$kept" ] || exit 1
     # shellcheck disable=SC2086
-    check_passwords $kept
-    probe
-    # shellcheck disable=SC2086
-    fetch $kept
-    for server in $kept; do
-        if grep -qx "$server" "$work/unready" 2>/dev/null; then
-            leave "$server" "$server did not get ready"
-        else
-            update_server "$server"
-        fi
-    done
-    converge
+    hold $moving
+    swap
+    if [ -n "$kept" ]; then
+        # shellcheck disable=SC2086
+        check_passwords $kept
+        # shellcheck disable=SC2086
+        fetch $kept
+        for server in $kept; do
+            if grep -qx "$server" "$work/unready" 2>/dev/null; then
+                leave "$server" "$server did not get ready"
+            else
+                update_server "$server"
+            fi
+        done
+        # A group that now serves prod's pin takes prod.
+        probe
+        assign
+        swap
+    fi
     settled
     if [ -n "$incomplete" ]; then
         echo "Not everything was updated; see above." >&2
@@ -991,6 +1096,7 @@ restart() {
     lock
     work="$(mktemp -d)"
     trap 'rm -rf "$work" "$LOCK"' EXIT
+    roles
     for server in $(order "$@"); do
         echo "== $server"
         on "$server" 'git -C ~/Developer/dots pull -q --ff-only'
@@ -1019,8 +1125,9 @@ power() {
     lock
     work="$(mktemp -d)"
     trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
+    roles
     # shellcheck disable=SC2046
-    check_passwords $(entries "$@" | awk '{ print $1 }')
+    check_passwords $(given "$@")
     for server in $(order "$@"); do
         grep -qx "$server" "$work/checked" 2>/dev/null || continue
         if ! down "$server"; then
@@ -1062,21 +1169,6 @@ power() {
     [ -z "$incomplete" ]
 }
 
-# Whether fleet.conf gives each shared tunnel one mode, as two would serve two
-# versions; it says which does not.
-one_mode() {
-    awk '!/^#/ && NF >= 2 {
-            for (i = 3; i <= NF; i++) {
-                if (($i in m) && m[$i] != $2) {
-                    printf "%s is shared by servers in %s and %s; give them one mode.\n", $i, m[$i], $2
-                    bad = 1
-                }
-                m[$i] = $2
-            }
-        }
-        END { exit bad }' "$CONF" >&2
-}
-
 # The words of the list A that the list B lacks, one a line.
 minus() {
     local word
@@ -1088,18 +1180,17 @@ minus() {
     done
 }
 
-# Give the servers the tunnels fleet.conf gives them now, updating nothing, as
-# when a tunnel moves to other servers in an outage, or back to a server of
-# another mode (converge): a tunnel moved keeps its floor throughout.
+# Give the servers their roles' tunnels now, updating nothing, as a swap due
+# or after an outage (converge): a tunnel moved keeps its floor throughout.
 retunnel() {
     lock
-    one_mode || exit 1
     cf_logged_in
     fetch_tokens
     check_names || exit 1
     work="$(mktemp -d)"
-    trap 'rm -rf "$work" "$LOCK"' EXIT
-    converge
+    trap 'unhold; rm -rf "$work" "$LOCK"' EXIT
+    roles
+    swap
     settled
     [ -z "$incomplete" ] || exit 1
     echo "Every server has its tunnels."
@@ -1114,14 +1205,14 @@ tunnels_log() {
     local since="${1:-$(date -u -v-1d +%Y-%m-%dT%H:%M:%SZ)}" server tunnel floors=''
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
-    for server in $(entries | awk '{ print $1 }'); do
+    for server in $(servers); do
         # (Each line as the server it came from, whatever name it wrote.)
         on "$server" 'cat ~/Library/Logs/dots/tunnels.log' 2>/dev/null |
             awk -v server="$server" '{ $2 = server; print }' >"$work/$server" ||
             echo "$server does not answer; its log is left out." >&2 &
     done
     wait
-    for tunnel in $(entries | awk '{ for (i = 3; i <= NF; i++) print $i }' | sort -u); do
+    for tunnel in $(role_tunnels prod) $(role_tunnels next); do
         floors="$floors $tunnel=$(floor "$tunnel")"
     done
     sort "$work"/* | awk -v since="$since" -v floors="$floors" '
@@ -1155,23 +1246,22 @@ tunnels_log() {
 }
 
 status() {
-    local work server mode tunnels line tunnel versions newest behind version waiting
+    local work server role tunnels line tunnel versions pin behind waiting
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' RETURN
-    while read -r server _; do
-        { on "$server" "$SHIP status" >"$work/$server" 2>/dev/null || echo unreachable >"$work/$server"; } &
-    done < <(entries "$@")
+    roles
+    for server in $(given "$@"); do
+        { on "$server" "$SHIP status" >"$work/status.$server" 2>/dev/null || echo unreachable >"$work/status.$server"; } &
+    done
     wait
-    while read -r server mode _; do
-        line="$(cat "$work/$server")"
-        printf '%-6s %s\n' "$server" "$line"
+    while read -r server role _; do
+        line="$(cat "$work/status.$server")"
+        printf '%-6s %-4s %s\n' "$server" "$role" "$line"
         [ "$line" != unreachable ] || continue
         tunnels="$(tunnels_of "$server")"
-        if [ "${line%% *}" != "$mode" ] ||
-            [ "$(sed -nE 's/.*, tunnels (.*) [0-9]+\/[0-9]+ ready,.*/\1/p' <<< "$line" | xargs -n 1 | sort | xargs)" != \
-                "$(xargs -n 1 <<< "${tunnels:-none}" | sort | xargs)" ]; then
-            printf '%-6s fleet.conf gives it %s with tunnels %s; run fleet update %s\n' \
-                '' "$mode" "${tunnels:-none}" "$server"
+        if [ "$(sed -nE 's/.*, tunnels (.*) [0-9]+\/[0-9]+ ready,.*/\1/p' <<< "$line" | xargs -n 1 | sort | xargs)" != \
+            "$(xargs -n 1 <<< "${tunnels:-none}" | sort | xargs)" ]; then
+            printf '%-6s its role gives it the tunnels %s; run fleet tunnels\n' '' "${tunnels:-none}"
         fi
         case " $tunnels " in
             *" $server "*) ;;
@@ -1179,34 +1269,23 @@ status() {
         esac
         waiting="$(sed -nE 's/.*, macOS [^ ]+ \(([^ ]+) downloaded\).*/\1/p' <<< "$line")"
         if [ -n "$waiting" ]; then
-            printf '%-6s has macOS %s downloaded; fleet update installs it\n' '' "$waiting"
+            printf '%-6s has macOS %s downloaded; fleet update installs it once it is next\n' '' "$waiting"
         fi
     done < <(entries "$@")
     check_names "$@" || true
-    for tunnel in $(shared "$@"); do
-        versions="$(entries "$@" | awk -v tunnel="$tunnel" '{ for (i = 3; i <= NF; i++) if ($i == tunnel) print $1 }' |
-            while read -r server; do awk '$1 != "unreachable" { print $2 }' "$work/$server"; done | tr -d ',' | sort -u)"
+    for tunnel in $(role_tunnels prod) $(role_tunnels next); do
+        versions="$(wanted "$tunnel" | while read -r server; do serving_state "$work/live.$server"; done | sort -u)"
         if [ "$(wc -l <<< "$versions")" -gt 1 ]; then
-            echo "$tunnel serves more than one version: $(echo $versions); run fleet update"
+            echo "$tunnel serves more than one version; run fleet update"
         fi
     done
-    # A newer version of a mode than its servers have: a crates.io release in
-    # release, a commit of the branch otherwise.
-    for mode in $(entries "$@" | awk '$2 != "local" { print $2 }' | sort -u); do
-        newest="$(resolve "$mode" 2>/dev/null | cut -d ' ' -f 1)" || continue
-        [ -n "$newest" ] || continue
-        behind=''
-        while read -r server; do
-            [ "$(cat "$work/$server")" != unreachable ] || continue
-            version="$(awk '{ print $2 }' "$work/$server" | tr -d ',')"
-            case "$mode" in
-                release) [ "$version" = "v$newest" ] ;;
-                *) [ "${version#*#}" = "${newest:0:8}" ] ;;
-            esac || behind="$behind $server"
-        done < <(entries "$@" | awk -v mode="$mode" '$2 == mode { print $1 }')
-        if [ -n "$behind" ]; then
-            echo "$mode has ${newest:0:8}, newer than$behind have; run fleet update"
-        fi
+    # What prod's branch names and the prod group does not run yet, and what
+    # next has newer than the next group.
+    for role in prod next; do
+        if [ "$role" = prod ]; then pin="$(cat "$work/pin.prod")"; else pin="$(resolve next 2>/dev/null)" || continue; fi
+        behind="$(entries "$@" | awk -v role="$role" '$2 == role { print $1 }' | while read -r server; do
+            answered "$server" && ! at_pin "$server" "$pin" && echo "$server"; done | xargs)"
+        [ -z "$behind" ] || echo "$role has ${pin:0:8}, which $behind do not run; run fleet update"
     done
 }
 
@@ -1225,7 +1304,7 @@ cf_logged_in() {
 # than cf's login.
 fetch_tokens() {
     local list='' name id token
-    for name in $({ awk '!/^#/ && NF >= 2 { for (i = 1; i <= NF; i++) if (i != 2) print $i }' "$CONF"; echo local; } | sort -u); do
+    for name in $({ awk '$1 == "group" || $1 == "role" { for (i = 3; i <= NF; i++) print $i }' "$CONF"; echo local; } | sort -u); do
         [ -z "$(tunnel_id "$name")" ] || continue
         # Only when a token is missing, so a run with all of them at hand does
         # without Cloudflare's API.
@@ -1270,7 +1349,7 @@ tunnels() {
         fi
     done
 
-    for server in $(entries "$@" | awk '{ print $1 }'); do
+    for server in $(given "$@"); do
         hostname="$server.$DOMAIN"
         id="$(tunnel_id "$server")"
         if [ -z "$id" ]; then
@@ -1368,15 +1447,6 @@ alert() {
     notify "$2"
 }
 
-TIMED_LOCK="$HOME/Developer/brain/bin/m6-2-lock"
-# Whether an update would give m6-2 another version than it last built, or
-# that is unknown.
-timed_moves() {
-    local mode given
-    read -r mode given < <(on m6-2 'cat ~/.config/dots/mode' 2>/dev/null) || return 0
-    [ "$given" != "$(resolve "$mode")" ]
-}
-
 # Skip this hour's update for REASON, and notify once no run has succeeded for
 # 2 hours, naming the reason it skips now: the last success is the one record
 # of a streak, which only a successful update ends, so nothing else is kept.
@@ -1402,7 +1472,7 @@ recovered() {
 # the update skips, so a skipped update never leaves the servers unwatched.
 health() {
     local server status answered=''
-    for server in $(entries | awk '{ print $1 }'); do
+    for server in $(servers); do
         status=0
         on "$server" "$SHIP status --check" 2>/dev/null || status=$?
         # ssh's own failure: the server does not answer.
@@ -1461,16 +1531,6 @@ auto() {
         overdue "no server answers"
         return 0
     fi
-    # m6-2 times runs for others under brain's queued lock: an hour that gives
-    # it a new version waits its turn there, a few a day; one that doesn't
-    # takes no lock.
-    if [ -x "$TIMED_LOCK" ] && timed_moves; then
-        if ! "$TIMED_LOCK" take fleet-auto 3000 >/dev/null; then
-            overdue "m6-2's timing lock stayed held for 50 minutes"
-            return 0
-        fi
-        trap '"$TIMED_LOCK" release fleet-auto >/dev/null' EXIT
-    fi
     echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
     # Watched from here, as launchd starts no other hour's run while this one
     # runs: one that hangs notifies once it has run for a day. Each line it
@@ -1496,6 +1556,9 @@ auto() {
         # Another run holds the lock, as one by hand: this hour's turn, unless
         # that one hangs, which a day without a run says.
         3) overdue "another fleet update or restart runs" ;;
+        # A server it would build on, restart or swap to stayed held for timed
+        # work (hold), as during a bench: this hour's turn.
+        4) overdue "a server stayed held for timed work for 50 minutes" ;;
         *)
             alert failed "fleet update failed"
             return 1
@@ -1507,7 +1570,7 @@ auto() {
 command="$1"
 shift
 [ "$command" = log ] || for server; do
-    [ -n "$(entries "$server")" ] || { echo "$server is not in $CONF." >&2; exit 1; }
+    servers | grep -qx "$server" || { echo "$server is not in $CONF." >&2; exit 1; }
 done
 case "$command" in
     init) init "$@" ;;
@@ -1522,14 +1585,24 @@ case "$command" in
         tunnels_log "$@"
         ;;
     reboot | shutdown) power "$command" "$@" ;;
+    role)
+        [ "$#" -le 1 ] || usage
+        work="$(mktemp -d)"
+        trap 'rm -rf "$work"' EXIT
+        roles
+        if [ "$#" -eq 1 ]; then role_of "$1"; else awk '{ print $1, $2 }' "$work/conf"; fi
+        ;;
     auto)
         [ "$#" -eq 0 ] || usage
         auto
         ;;
     purge)
         cf_logged_in
+        work="$(mktemp -d)"
+        trap 'rm -rf "$work"' EXIT
+        roles
         # shellcheck disable=SC2046
-        purge $(entries "$@" | while read -r server _; do tunnels_of "$server"; done)
+        purge $(given "$@" | while read -r server; do tunnels_of "$server"; done)
         ;;
     update)
         update "$@"

@@ -175,8 +175,9 @@ branch's newest commit, unless `fleet update` pinned a version, as it does so
 that servers sharing a tunnel run the same one. Given a mode, as in
 `ship install next`, it switches the mini to it until `fleet update` sets it
 back. `ship fetch` only builds it, among the rest of the update, restarting
-nothing, as `fleet update` has every server do at once; `ship apply` then only
-restarts.
+nothing, as `fleet update` has the next group's servers do at once (never a
+server serving prod, whose role fleet gives it apart from its mode); `ship
+apply` then only restarts.
 The first run asks for `sudo` to install `com.local.workloads`, which starts the
 workloads at boot.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pc/tunnel.sh: this Mac's tunnel, as a LaunchAgent, through an upgrade of
 # cloudflared, with fakes for launchd, the running process and Homebrew's
-# Cellar, run from a copy of pc/ with its own token file and fleet.conf. What the fakes record of their calls in $calls says what it did.
+# Cellar, run from a copy of pc/ with its own token file. What the fakes record of their calls in $calls says what it did.
 # shellcheck disable=SC2016,SC2329 # the stand-ins' own expansions, left for them; helpers check calls
 source "$(dirname "$0")/lib.sh"
 export HOME="$TMP/home"
@@ -36,7 +36,6 @@ chmod +x "$TMP/bin/launchctl" "$TMP/bin/lsof"
 export PATH="$TMP/bin:$PATH"
 cp "$REPO/pc/tunnel.sh" "$TMP/pc/"
 printf 'prod p\nlocal tok\n' > "$TMP/pc/.tunnels"
-printf '# server mode tunnels...\nm4-1 prod prod mcp\n' > "$TMP/pc/fleet.conf"
 script="$TMP/pc/tunnel.sh"
 plist="$HOME/Library/LaunchAgents/com.local.tunnel.plist"
 
@@ -66,11 +65,6 @@ check "while it starts, before cloudflared, it is left alone" fails called kicks
 
 tunnel run
 check "its run gives cloudflared the local tunnel's token" called "cloudflared tunnel --no-autoupdate run token=tok$"
-
-echo "m4-1 local local" >> "$TMP/pc/fleet.conf"
-tunnel
-check "when fleet.conf gives the tunnel to a server, it stops" [ ! -e "$plist" ]
-sed -i '' '$d' "$TMP/pc/fleet.conf"
 
 tunnel
 printf 'prod p\n' > "$TMP/pc/.tunnels"
