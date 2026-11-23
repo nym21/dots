@@ -4,11 +4,10 @@
 # take their native-CPU flags from shared/home/.cargo/config.toml, linked
 # during setup.
 
-# The mode the builds installed were built in, followed by the versions of the
-# last build of both, bitviewd's then bitview_mcp's: a crates.io release in
-# release, a commit on a branch. ship install writes it once both built, and
-# removes it before building another mode, so it never names a mode a build
-# installed lacks.
+# The mode the build installed was built in, followed by the version of the
+# last build of bitviewd: a crates.io release in release, a commit on a branch.
+# ship install writes it once built, and removes it before building another
+# mode, so it never names a mode the build installed lacks.
 MODE_FILE="$HOME/.config/dots/mode"
 
 # The mode and build each of Bitview's workloads runs, as build_record() named
@@ -23,7 +22,7 @@ RUNNING_DIR="$HOME/.config/dots/running"
 # the last week's.
 CRASH_LOG="$HOME/Library/Logs/dots/crashes.log"
 
-# The mode the builds installed were built in, MODE_FILE's first word: empty
+# The mode the build installed was built in, MODE_FILE's first word: empty
 # when none is, as while a build changes the mode.
 built_mode() {
     awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true

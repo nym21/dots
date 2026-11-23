@@ -204,7 +204,6 @@ case "$cmd" in
         else
             printf 'mode %s\nbitviewd v0.1.0 (https://x/mono?rev=%s#x):\ncache %s\n' "$mode" "$running" "$cache"
         fi
-        printf 'mode %s\nbitview_mcp v0.1.0 (https://x/mono?rev=%s#x):\n' "$mode" "$running"
         tokens='' applied=''
         while read -r t; do tokens="$tokens $t"; done 2> /dev/null < "$M/tokens"
         while read -r t; do applied="$applied $t"; done < "$M/applied"
@@ -241,7 +240,7 @@ case "$cmd" in
         echo 0 > "$M/job"
         case "$cmd" in
             *"ship fetch"*)
-                # The mode and its pins, recorded once they built.
+                # The mode and its pin, recorded once it built.
                 if [ -e "$M/fetch_fails" ]; then
                     echo 1 > "$M/job"
                 else
@@ -316,7 +315,7 @@ sim_setup() {
     while read -r server mode tunnels; do
         m="$SIM/m/$server"
         mkdir -p "$m"
-        echo "$mode $(cat "$SIM/pin.$mode") $(cat "$SIM/pin.$mode")" > "$m/mode"
+        echo "$mode $(cat "$SIM/pin.$mode")" > "$m/mode"
         echo "$mode" > "$m/running_mode"
         tee "$m/installed" < "$SIM/pin.$mode" > "$m/running"
         echo default | tee "$m/cache_installed" > "$m/cache_running"

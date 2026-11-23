@@ -200,7 +200,7 @@ run: one by hand, or `fleet auto`'s next hour.
 updates nothing, as when a tunnel moves to other servers in an outage, or back
 to a server of another mode: the servers gaining a tunnel take it, waiting
 until it is connected, then those losing it leave it together. A server takes
-a tunnel once its Bitview and MCP server both started in the mode `fleet.conf`
+a tunnel once its Bitview started in the mode `fleet.conf`
 gives it, as their starts record, whatever the version: one whose update
 failed takes its tunnels back on the build it runs, and a mode's versions mix
 for the whole of its roll
@@ -281,9 +281,9 @@ newest version of their mode:
    lag behind a publish.
 2. It readies every server at once, while all keep serving: in local mode it
    copies `~/Developer/mono` to each, and runs `ship fetch` there at a low
-   priority, in its mode at the run's versions, recorded once they built. That
+   priority, in its mode at the run's version, recorded once it built. That
    does all of `ship update` that restarts nothing: Homebrew, Rust, Cargo, Rex's
-   newest build, Bitview and the MCP server, the cleanup, and Apple's other updates
+   newest build, Bitview, the cleanup, and Apple's other updates
    while no macOS update waits; then macOS's download, as a job of its own,
    with the password `fleet` lends it (see [Passwords](#passwords)). Each is a
    job of the server's own, which finishes however this Mac or the connection
@@ -291,7 +291,7 @@ newest version of their mode:
    left as it is while the others update, and the run ends failing.
 3. Then it takes the servers one at a time, those not in prod first, so a bad
    version shows there before prod. When `ship apply --pending` says `ship
-   apply` would restart anything (the Rex server, Bitview or the MCP server on
+   apply` would restart anything (the Rex server or Bitview on
    a new build, the tunnels on a new cloudflared or a changed `tunnels.sh`, or
    the whole node on a new Bitcoin Core), or a macOS update waits, the server first leaves its shared
    tunnels, each only while it keeps its floor; a tunnel it alone holds, as

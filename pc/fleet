@@ -34,7 +34,7 @@ set -euo pipefail
 # tunnels first: one that would restart anything leaves its tunnels, restarts,
 # and takes them back (converge), so a mode's versions mix while it rolls. A
 # tunnel that would fall below its floor first gains lenders: where the floor
-# is two, servers of that mode already on the run's versions (a worker, which
+# is two, servers of that mode already on the run's version (a worker, which
 # holds no tunnel of its own), where one, any other server (a stand-in); they
 # hold it until converge takes it back. A server that cannot get ready, or
 # cannot leave, is left as it is and the run fails, as does one with no lender
@@ -258,7 +258,7 @@ follow_job() {
 probe() {
     local server file state tunnel status pids=()
     for server in $(entries | awk '{ print $1 }'); do
-        { on "$server" "cat ~/.config/dots/running/bitviewd ~/.config/dots/running/bitview_mcp 2>/dev/null; $TUNNELS_SH state" ||
+        { on "$server" "cat ~/.config/dots/running/bitviewd 2>/dev/null; $TUNNELS_SH state" ||
             : ; } >"$work/live.$server" 2>/dev/null &
         pids+=("$!")
     done
@@ -281,10 +281,9 @@ probe() {
 serving_state() {
     awk '
         /^tokens( |$)/ { exit }
-        NF > 1 && ($1 == "bitviewd" || $1 == "bitview_mcp") { build[$1] = $0 }
+        $1 == "bitviewd" && NF > 1 { build = $0 }
         /^cache / { cache = $0 }
-        END { if (build["bitviewd"] && build["bitview_mcp"])
-            print build["bitviewd"] " " build["bitview_mcp"] (cache ? " " cache : "") }' "$1"
+        END { if (build) print build (cache ? " " cache : "") }' "$1"
 }
 # From the last probe: the tunnels SERVER's token file names; whether its
 # tunnels serve; and whether it answered, as what it holds is otherwise unknown.
@@ -297,15 +296,14 @@ up() {
 answered() {
     grep -q '^tokens' "$work/live.$1"
 }
-# Whether SERVER's Bitview and MCP server both started in the mode fleet.conf
-# gives it, whatever version: a server moved to another mode there takes no
-# tunnel before it runs that mode's builds, and one whose build failed takes
-# its tunnels on the last that built. Each record's mode line is
-# build_record()'s, in server/crate.sh.
+# Whether SERVER's Bitview started in the mode fleet.conf gives it, whatever
+# version: a server moved to another mode there takes no tunnel before it runs
+# that mode's build, and one whose build failed takes its tunnels on the last
+# that built. The record's mode line is build_record()'s, in server/crate.sh.
 current() {
     local mode
     mode="$(entries "$1" | awk '{ print $2 }')"
-    [ "$(sed -n 's/^mode //p' "$work/live.$1" | paste -sd ' ' -)" = "$mode $mode" ]
+    [ "$(sed -n 's/^mode //p' "$work/live.$1")" = "$mode" ]
 }
 
 # The servers whose token file names TUNNEL, and those on which it is in one
@@ -381,21 +379,21 @@ keeps_floor() {
 # keeps its floor without it, counted just before. A tunnel left short of its
 # floor first gains lenders, until it has it: servers that serve, not holding
 # it ready, and, where the floor is two, of SERVER's mode and already on the
-# run's versions (as a worker of prod, which holds no tunnel itself). Where it
+# run's version (as a worker of prod, which holds no tunnel itself). Where it
 # is one, any other server serves, those fleet.conf gives the tunnel first,
 # whatever version, as next is shown on prod's meanwhile. A lender keeps the
 # tunnel until converge takes it back, which a failed run leaves to a rerun,
 # fleet tunnels or the next update. SERVER is left as it is, failing, while a
 # tunnel would still fall below its floor, or when it does not answer.
 down() {
-    local server="$1" tunnel shared lender mode pins have need
+    local server="$1" tunnel shared lender mode pin have need
     probe
     if ! answered "$server"; then
         echo "$server did not answer, so what it holds is unknown." >&2
         return 1
     fi
     read -r _ mode _ < <(entries "$server")
-    pins="$(cat "$work/pins.$mode" 2>/dev/null || :)"
+    pin="$(cat "$work/pin.$mode" 2>/dev/null || :)"
     shared="$(minus "$(tokens "$server")" "$server" | xargs)"
     for tunnel in $shared; do
         need="$(floor "$tunnel")"
@@ -404,7 +402,7 @@ down() {
             [ "$have" -lt "$need" ] || break
             { [ "$lender" != "$server" ] && up "$lender"; } || continue
             [ -n "$(minus "$lender" "$(in_state "$tunnel" ready | xargs)")" ] || continue
-            [ "$need" -lt 2 ] || { current "$lender" && at_pins "$lender" "$pins" && [ "$(entries "$lender" | awk '{ print $2 }')" = "$mode" ]; } || continue
+            [ "$need" -lt 2 ] || { current "$lender" && at_pin "$lender" "$pin" && [ "$(entries "$lender" | awk '{ print $2 }')" = "$mode" ]; } || continue
             echo "$lender: lent $tunnel while $server restarts"
             give_all + "$tunnel" "$lender"
             probe
@@ -676,27 +674,25 @@ clear_passwords() {
     done
 }
 
-# The versions to install in MODE, bitviewd's and bitview_mcp's, resolved
-# once per run: the newest crates.io releases in release, the branch's commit
-# otherwise. None for local, which fleet copies.
+# The version to install in MODE, resolved once per run: the newest crates.io
+# release in release, the branch's commit otherwise. None for local, which
+# fleet copies.
 resolve() {
     local commit
     case "$1" in
         release)
             # The newest release out for 10 minutes, by when crates.io's index
             # has it everywhere: cargo may not find one just published.
-            for crate in bitviewd bitview_mcp; do
-                curl -s -m 10 -A fleet "https://crates.io/api/v1/crates/$crate/versions?per_page=50" |
-                    jq -er --arg before "$(date -u -v-10M +%Y-%m-%dT%H:%M:%S)" '
-                        [.versions[] | select((.yanked | not) and (.num | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
-                            and .created_at[0:19] < $before)]
-                        | max_by(.num | split(".") | map(tonumber)) | .num' || exit 1
-            done | paste -s -d ' ' -
+            curl -s -m 10 -A fleet "https://crates.io/api/v1/crates/bitviewd/versions?per_page=50" |
+                jq -er --arg before "$(date -u -v-10M +%Y-%m-%dT%H:%M:%S)" '
+                    [.versions[] | select((.yanked | not) and (.num | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                        and .created_at[0:19] < $before)]
+                    | max_by(.num | split(".") | map(tonumber)) | .num'
             ;;
         local) ;;
         *)
             commit="$(git ls-remote https://github.com/bitcoinresearchkit/mono "refs/heads/$1" | cut -f 1)"
-            [ -n "$commit" ] && echo "$commit $commit"
+            [ -n "$commit" ] && echo "$commit"
             ;;
     esac
 }
@@ -721,17 +717,17 @@ download_macos() {
 # if it has its own tunnel (its Bitview names it in each answer from its next
 # start, so clients reaching it through a shared hostname stay on it), in local
 # mode its copy of ~/Developer/mono, and run ship fetch there in its mode at
-# the run's versions, which builds them, recording the mode once they built,
+# the run's version, which builds it, recording the mode once it built,
 # updates Homebrew, Rust, and Rex, restarting nothing, then download a macOS
 # update with its password. Each is a job of the server's own, which finishes
 # there whatever happens to this Mac or the connection, as when it sleeps. The
 # servers that fail are listed in $work/unready.
 fetch() {
-    local server mode pins url note pids=() i
+    local server mode pin url note pids=() i
     echo "== Readying $* at once, while they serve..."
     for server; do
         read -r _ mode _ < <(entries "$server")
-        pins="$(cat "$work/pins.$mode")"
+        pin="$(cat "$work/pin.$mode")"
         url=''
         case " $(tunnels_of "$server") " in *" $server "*) url="https://$server.$DOMAIN" ;; esac
         {
@@ -741,7 +737,7 @@ fetch() {
                     rsync -a --delete --exclude /target/ -e "ssh -T" \
                         "$HOME/Developer/mono/" "$server_user@$server:Developer/mono/" </dev/null
                 fi &&
-                detach "$server" "nice -n 10 $SHIP fetch $mode $pins" &&
+                detach "$server" "nice -n 10 $SHIP fetch $mode $pin" &&
                 follow_job "$server" "$fetch_timeout" &&
                 download_macos "$server"
         } >"$work/fetch.$server" 2>&1 &
@@ -766,12 +762,12 @@ fetch() {
 # when they cannot. Then ship apply, a job of the server's own, which finishes
 # there whatever happens to this Mac or the connection, restarts only what
 # runs an older build than the one installed, and starts what is not running.
-# Once it serves the run's versions, its Tailscale daemon and macOS update,
+# Once it serves the run's version, its Tailscale daemon and macOS update,
 # and it takes its tunnels back (converge).
 update_server() {
-    local server="$1" mode pins pending macos=''
+    local server="$1" mode pin pending macos=''
     read -r _ mode _ < <(entries "$server")
-    pins="$(cat "$work/pins.$mode")"
+    pin="$(cat "$work/pin.$mode")"
     if ! pending="$(on "$server" "$SHIP apply --pending")"; then
         leave "$server" "$server does not answer"
         return 0
@@ -779,7 +775,7 @@ update_server() {
     if grep -qx "$server" "$work/checked" 2>/dev/null && [ -n "$(macos_note "$server")" ]; then
         macos=1
     fi
-    echo "== $server: $mode${pins:+ ${pins%% *}}${pending:+, restarting $pending}"
+    echo "== $server: $mode${pin:+ $pin}${pending:+, restarting $pending}"
     if [ -n "$pending$macos" ] && ! down "$server"; then
         leave "$server" "$server keeps its tunnels"
         return 0
@@ -796,15 +792,15 @@ update_server() {
 }
 
 # Wait until SERVER serves again after its update. Serving is not enough: it
-# must run the run's versions, or its update did not take.
+# must run the run's version, or its update did not take.
 wait_updated() {
-    local server="$1" mode pins
+    local server="$1" mode pin
     read -r _ mode _ < <(entries "$server")
-    pins="$(cat "$work/pins.$mode")"
+    pin="$(cat "$work/pin.$mode")"
     wait_serving "$server"
     probe
-    if [ -n "$pins" ] && ! at_pins "$server" "$pins"; then
-        echo "$server serves, but not ${pins%% *}; stopping here." >&2
+    if [ -n "$pin" ] && ! at_pin "$server" "$pin"; then
+        echo "$server serves, but not $pin; stopping here." >&2
         exit 1
     fi
 }
@@ -852,18 +848,13 @@ update_macos() {
     fi
 }
 
-# Whether SERVER runs PINS, bitviewd's and bitview_mcp's, as the builds its
-# workloads recorded at their start say, from the last probe. Never in local
-# mode, which has none.
-at_pins() {
-    local pin mcp_pin
-    read -r pin mcp_pin <<< "$2"
-    [ -n "$pin" ] || return 1
-    awk -v pin="$pin" -v mcp_pin="$mcp_pin" '
-        function at(p) { return $2 == "v" p ":" || index($0, "rev=" p) }
-        $1 == "bitviewd" && at(pin) { found++ }
-        $1 == "bitview_mcp" && at(mcp_pin) { found++ }
-        END { exit found != 2 }' "$work/live.$1"
+# Whether SERVER runs PIN, as the build its Bitview recorded at its start says,
+# from the last probe. Never in local mode, which has none.
+at_pin() {
+    [ -n "$2" ] || return 1
+    awk -v pin="$2" '
+        $1 == "bitviewd" && ($2 == "v" pin ":" || index($0, "rev=" pin)) { found = 1 }
+        END { exit !found }' "$work/live.$1"
 }
 
 # Purge Cloudflare's cache of the hostnames that TUNNEL... route, so none
@@ -921,8 +912,8 @@ leave() {
 # touches the update.
 announce_pages() {
     local new old state="$STATE_DIR/indexnow-prod" script="$HOME/Developer/mono/scripts/indexnow.sh"
-    [ -s "$work/pins.prod" ] && [ -x "$script" ] || return 0
-    new="$(cut -d ' ' -f 1 "$work/pins.prod")"
+    [ -s "$work/pin.prod" ] && [ -x "$script" ] || return 0
+    new="$(cat "$work/pin.prod")"
     old="$(cat "$state" 2>/dev/null || true)"
     [ "$old" != "$new" ] || return 0
     if [ -z "$old" ] || "$script" "$old" "$new"; then
@@ -956,14 +947,14 @@ update() {
     trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
     # shellcheck disable=SC2086
     for mode in $(entries $selected | awk '{ print $2 }' | sort -u); do
-        if ! resolve "$mode" > "$work/pins.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pins.$mode" ]; }; then
+        if ! resolve "$mode" > "$work/pin.$mode" || { [ "$mode" != local ] && [ ! -s "$work/pin.$mode" ]; }; then
             echo "Could not find the newest version of $mode." >&2
-            rm -f "$work/pins.$mode"
+            rm -f "$work/pin.$mode"
         fi
     done
     for server in $selected; do
         read -r _ mode _ < <(entries "$server")
-        if [ ! -e "$work/pins.$mode" ]; then
+        if [ ! -e "$work/pin.$mode" ]; then
             leave "$server" "$mode has no version to install"
         # fleet auto leaves alone a server that does not serve, as one stopped
         # on purpose or after a crash, to be looked at.

@@ -155,13 +155,15 @@ mode and tunnels, and `fleet update` hands a mini its part, then runs
 `ship fetch` and `ship apply` there (see the [main README](../README.md#servers)). A mini keeps
 what it was given, so it boots and serves without the workstation.
 
-Every mini runs the same setup, and the mode is the only difference: Bitview and
-the MCP server come from crates.io (**release**), from a branch of the official
+Every mini runs the same setup, and the mode is the only difference: Bitview
+comes from crates.io (**release**), from a branch of the official
 `bitcoinresearchkit/mono` repository (**prod**, **next**, or any other branch), or from
 the workstation's `~/Developer/mono`, which `fleet` copies to the mini
-(**local**).
+(**local**). The MCP server is part of Bitview, at `/mcp`; the separate
+`bitview_mcp`, which nothing installs or updates any more, keeps running until
+`mcp.bitview.space` moves to Bitview's tunnel.
 
-`ship install` installs both servers in the mini's mode, restarts a workload
+`ship install` installs Bitview in the mini's mode, restarts a workload
 that runs another build than the one installed, and starts whatever is not
 running, so a run with nothing new leaves a running mini alone. Each start of
 Bitview or the MCP server records the mode and build it runs in
@@ -172,7 +174,7 @@ it build the package again on every install. `ship update` runs it, taking the n
 branch's newest commit, unless `fleet update` pinned a version, as it does so
 that servers sharing a tunnel run the same one. Given a mode, as in
 `ship install next`, it switches the mini to it until `fleet update` sets it
-back. `ship fetch` only builds them, among the rest of the update, restarting
+back. `ship fetch` only builds it, among the rest of the update, restarting
 nothing, as `fleet update` has every server do at once; `ship apply` then only
 restarts.
 The first run asks for `sudo` to install `com.local.workloads`, which starts the
@@ -228,8 +230,8 @@ It runs `start` there because reaching Bitcoin Core needs the Rex server's acces
 to the volume.
 
 The workloads only run the installed binaries, so a restart keeps the version
-installed last, and `~/.config/dots/mode` names its mode and versions, written
-once both built. Each start of Bitview and the MCP server records that mode
+installed last, and `~/.config/dots/mode` names its mode and version, written
+once built. Each start of Bitview and the MCP server records that mode
 and its build in `~/.config/dots/running`; `ship apply` restarts one whose
 record differs. `cargo install --list` shows each installed version, with the
 branch and commit or the checkout's path. Builds use the native-CPU settings in
@@ -240,7 +242,9 @@ target directory in `~/Library/Caches/dots`, outside the copy of
 Bitview passes `--bitcoindir /Volumes/External/bitcoin`,
 `--bitviewdir /Volumes/External/bitview`, and `--cdn true` directly, so those
 settings do not require a config file. An existing config file still supplies
-other settings. It also passes `--publicurl` with the mini's own address,
+other settings. It passes `--siteurl https://bitview.space`, the site's public
+origin, which the MCP server at `/mcp` names itself by, on every mini, whatever
+its mode. It also passes `--publicurl` with the mini's own address,
 `https://SERVER.bitview.space`, which `fleet update` writes to
 `~/.config/dots/public-url` when the mini has its own tunnel. Clients then
 stay on the server that answered, even when they reach it through a shared

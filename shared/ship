@@ -18,7 +18,7 @@ usage() {
             echo "  status                      what only you can do, while it is missing" >&2
             ;;
         server)
-            echo "  fetch [MODE [PIN...]]       ready all of update while serving, restarting nothing, in MODE if given" >&2
+            echo "  fetch [MODE [PIN]]          ready all of update while serving, restarting nothing, in MODE if given" >&2
             echo "  apply [--pending]           then restart only what runs an older build than installed, or say what" >&2
             echo "  status [--check]            this mini's mode, workloads, tunnels, and disk" >&2
             echo "  install [MODE]              install this mini's mode, or MODE: release, prod, next, a branch, or local" >&2

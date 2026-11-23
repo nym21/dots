@@ -2,12 +2,12 @@
 
 set -euo pipefail
 
-# Run this mini in MODE, or in the mode it has: install Bitview and the MCP
-# server in it, restart a workload whose build installed differs from the one
-# it runs, and start whatever is not running. A run with nothing new leaves a
-# running mini alone. fleet passes the versions to pin, bitviewd's and
-# bitview_mcp's, so servers sharing a tunnel run the same one; without, it
-# takes the newest. The first run asks for sudo, to have them start at boot.
+# Run this mini in MODE, or in the mode it has: install Bitview in it, restart
+# a workload whose build installed differs from the one it runs, and start
+# whatever is not running. A run with nothing new leaves a running mini alone.
+# fleet passes the version to pin, so servers sharing a tunnel run the same
+# one; without, it takes the newest. The first run asks for sudo, to have them
+# start at boot.
 # The tunnels restart too when they run an older cloudflared than the one
 # installed, or tunnels.sh as it was before it changed, and the whole node when Bitcoin Core runs an older binary than the
 # one Homebrew installed, so its upgrades take effect in fleet's order rather
@@ -21,7 +21,7 @@ set -euo pipefail
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
-    echo "Usage: $0 [--build] [release | prod | next | BRANCH | local [BITVIEWD_VERSION [MCP_VERSION]]]" >&2
+    echo "Usage: $0 [--build] [release | prod | next | BRANCH | local [VERSION]]" >&2
     echo "       $0 --restart | --pending" >&2
     exit 1
 }
@@ -33,19 +33,18 @@ case "${1:-}" in
         shift
         ;;
 esac
-[ "$#" -le 3 ] || usage
+[ "$#" -le 2 ] || usage
 [ "$step" = all ] || [ "$step" = build ] || [ "$#" -eq 0 ] || usage
 
 source "$SERVER_DIR/crate.sh"
 
 if [ "$step" = all ] || [ "$step" = build ]; then
     if [ "$#" -gt 0 ]; then
-        mode="$1" pin="${2:-}" mcp_pin="${3:-${2:-}}"
+        mode="$1" pin="${2:-}"
     elif [ -r "$MODE_FILE" ]; then
-        read -r mode pin mcp_pin < "$MODE_FILE" || true
-        mcp_pin="${mcp_pin:-$pin}"
+        read -r mode pin _ < "$MODE_FILE" || true
     else
-        mode="$(bitview_mode)" pin='' mcp_pin=''
+        mode="$(bitview_mode)" pin=''
     fi
     if [ -z "${mode:-}" ]; then
         echo "This mini has no mode yet; give one: release, prod, next, a branch, or local." >&2
@@ -55,9 +54,8 @@ if [ "$step" = all ] || [ "$step" = build ]; then
     rustup update
     [ "$mode" = "$(built_mode)" ] || rm -f "$MODE_FILE"
     install_crate bitviewd "$mode" "$pin"
-    install_crate bitview_mcp "$mode" "$mcp_pin"
     mkdir -p "$(dirname "$MODE_FILE")"
-    echo "$mode${pin:+ $pin}${pin:+ $mcp_pin}" > "$MODE_FILE"
+    echo "$mode${pin:+ $pin}" > "$MODE_FILE"
 fi
 [ "$step" != build ] || exit 0
 
@@ -93,9 +91,6 @@ script_stale() {
 restart=''
 if stale bitviewd; then
     restart="$restart tunnels bitviewd"
-fi
-if stale bitview_mcp; then
-    restart="$restart tunnels mcp"
 fi
 if pgrep -qf 'server/tunnels\.sh$' && { binary_stale cloudflared || script_stale; }; then
     restart="$restart tunnels"
