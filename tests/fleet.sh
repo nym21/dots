@@ -272,14 +272,22 @@ case "$cmd" in
     *"ship status") echo "$(cut -d ' ' -f 1 "$M/mode") $(get running)" ;;
     *password* | *"sudo -S"*) cat > /dev/null ;;
     # server/audits.sh, streamed: a mini with no-merge runs a bitviewd from
-    # before the merge, which fails supported and every check, one with torn
-    # fails every check, one with clone-fails answers but can't clone.
+    # before the merge, which fails supported (4) and every check, one with
+    # no-ask can't be asked (2), one with torn fails every check, one with
+    # clone-fails answers but can't clone, one with drop-once drops its first
+    # clone's connection (255).
     "bash -s -- "*)
         cat > /dev/null
         echo "$host ${cmd#bash -s -- }" >> "$SIM/audits"
         case "${cmd#bash -s -- }" in
-            supported) [ ! -e "$M/no-merge" ] ;;
-            clone) [ ! -e "$M/clone-fails" ] ;;
+            supported)
+                [ ! -e "$M/no-ask" ] || exit 2
+                [ ! -e "$M/no-merge" ] || exit 4
+                ;;
+            clone)
+                if [ -e "$M/drop-once" ]; then rm "$M/drop-once"; exit 255; fi
+                [ ! -e "$M/clone-fails" ]
+                ;;
             check*) [ ! -e "$M/torn" ] && [ ! -e "$M/no-merge" ] ;;
         esac
         ;;
@@ -496,6 +504,21 @@ echo N1 > "$SIM/pin.prod"
 touch "$SIM/m/m4-2/no-merge" "$SIM/m/m6-2/no-merge"
 check "a swap to a build without the audit merge happens, nothing merged, said loudly" eval \
     'sim_fleet update && sim_final b P0 && [ ! -s "$SIM/merged" ] && grep -q "takes NO audit history" "$SIM/out"'
+# A bitviewd that can't be asked whether it merges is no build without the
+# merge: the swap waits.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+touch "$SIM/m/m6-2/no-ask"
+check "an entering server that can't be asked about the merge keeps the swap from happening" eval \
+    '! sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx prod "$SIM/m/m6-2/applied" &&
+     [ ! -s "$SIM/merged" ] && sim_floors'
+# One dropped connection to a leaving server that answered the probe is tried again.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+touch "$SIM/m/m4-1/drop-once"
+check "a dropped connection while copying m4-1's audits is tried again, and the swap carries them" eval \
+    'sim_fleet update && sim_final b P0 && [ "$(grep -cx "m4-1 clone" "$SIM/audits")" = 2 ] &&
+     ! grep -q "m4-1.*left out" "$SIM/out"'
 # A run cut short once prod's tunnels began to move: the rerun merges nothing again.
 sim_setup P0 N1
 echo N1 > "$SIM/pin.prod"

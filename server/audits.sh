@@ -11,7 +11,7 @@ set -euo pipefail
 # but place, which runs in a job on the entering server from its own dots: the
 # servers leaving prod keep the dots they had.
 #
-#   audits.sh supported    whether the installed bitviewd merges audit copies
+#   audits.sh supported    whether the installed bitviewd merges audit copies: 0 yes, 4 no
 #   audits.sh clone        an APFS clone of this mini's store into OUT, for fleet to fetch
 #   audits.sh clear        remove OUT and fleet's numbered copies in STAGE
 #   audits.sh check NAME   bitviewd --checkaudits STAGE/NAME (a copy fleet put there)
@@ -38,8 +38,12 @@ STAGE="$ROOT/audits-stage"
 
 case "$#:${1:-}" in
     1:supported)
+        # 4 only when bitviewd ran and lacks the flag: every failure to ask
+        # (external.sh's 1, a missing bitviewd, ssh's 255) is another status,
+        # which fleet takes as an error, never as a build without the merge.
         # (Read whole first: grep -q ending the pipe early fails it under pipefail.)
-        case "$(bitviewd --help)" in *--checkaudits*) ;; *) exit 1 ;; esac
+        help="$(bitviewd --help)" || exit 2
+        case "$help" in *--checkaudits*) ;; *) exit 4 ;; esac
         ;;
     1:clone)
         # A clone of the live store: one write per block makes a torn clone

@@ -44,6 +44,9 @@ set -euo pipefail
 # servers hold and run, with nothing to resume.
 
 PC_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# guard_path, before the audit sync's deletions in this run's $work.
+# shellcheck source=shared/path-guard.sh
+source "$PC_DIR/../shared/path-guard.sh"
 CONF="$PC_DIR/fleet.conf"
 TUNNELS="$PC_DIR/.tunnels"
 # The servers' ship, its ~ expanded there, by their shell.
@@ -540,7 +543,7 @@ converge() {
 # it) takes prod without the history, saying so loudly.
 synced=''
 sync_audits() {
-    local entering leaving server source i=0
+    local entering leaving server source status i=0
     entering="$(entries | awk '$2 == "prod" { print $1 }' | xargs)"
     [ "$synced" != "$entering" ] || return 0
     synced="$entering"
@@ -551,14 +554,25 @@ sync_audits() {
         fi
     done
     for server in $entering; do
-        audits "$server" supported && continue
-        echo "!! $server's bitviewd has no audit merge: on this build, prod takes NO audit history" \
-            "from the group leaving it; the blocks it lacks stay missing there." >&2
-        return 0
+        status=0
+        audits "$server" supported || status=$?
+        case "$status" in
+            0) ;;
+            4)
+                echo "!! $server's bitviewd has no audit merge: on this build, prod takes NO audit history" \
+                    "from the group leaving it; the blocks it lacks stay missing there." >&2
+                return 0
+                ;;
+            *)
+                echo "$server: could not ask its bitviewd whether it merges audits (status $status); stopping here." >&2
+                exit 1
+                ;;
+        esac
     done
     # shellcheck disable=SC2046
     leaving="$(minus "$(servers | xargs)" "$entering" | xargs)"
     echo "== Audits: $entering take the history of ${leaving:-no other server}"
+    guard_path "$work" "$work/audits"
     rm -rf "$work/audits"
     mkdir -p "$work/audits"
     # shellcheck disable=SC2046,SC2086
@@ -581,23 +595,30 @@ audit_order() {
 }
 
 # Copy SOURCE's audit store into DIR here: a clone there, fetched, removed.
-# Tried twice; a source that does not answer (ssh's 255) or holds no store (3)
-# is left out, saying so; any other failure stops the run.
+# Tried twice. A source that holds no store (3), or does not answer (ssh's
+# 255) and did not answer the last probe either, is left out, saying so; any
+# other failure, a dropped connection to a server that answered included,
+# stops the run.
 fetch_audits() {
     local source="$1" dir="$2" try status
     for try in 1 2; do
         status=0
         audits "$source" clone || status=$?
-        case "$status" in
-            255) echo "$source does not answer: its audits are left out." >&2; return 0 ;;
-            3) echo "$source holds no audits: left out." >&2; return 0 ;;
-        esac
+        if [ "$status" -eq 255 ] && ! answered "$source"; then
+            echo "$source did not answer fleet's probe either: its audits are left out." >&2
+            return 0
+        fi
+        if [ "$status" -eq 3 ]; then
+            echo "$source holds no audits: left out." >&2
+            return 0
+        fi
         [ "$status" -eq 0 ] && rsync -a "$server_user@$source:/Volumes/External/bitview/mempool/audits-out/" "$dir/" &&
             audits "$source" clear && return 0
+        guard_path "$work" "$dir"
         rm -rf "$dir"
         echo "$source: copying its audits failed (try $try of 2)." >&2
     done
-    echo "$source answers, but its audits could not be copied; stopping here." >&2
+    echo "$source answered fleet's probe, but its audits could not be copied; stopping here." >&2
     exit 1
 }
 
