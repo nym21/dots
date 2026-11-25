@@ -61,10 +61,15 @@ JOB='~/Developer/dots/server/job.sh'
 TAILSCALE_SH='~/Developer/dots/shared/tailscale.sh'
 # shellcheck disable=SC2088
 TUNNELS_SH='~/Developer/dots/server/tunnels.sh'
+# shellcheck disable=SC2088
+AUDITS_SH='~/Developer/dots/server/audits.sh'
 server_user=mini
 # How long a server may take to serve again: a macOS upgrade, or Bitview
 # recomputing what a new version changed, which can take hours.
 ready_timeout=$((12 * 3600))
+# How long a server restarted on its merged audits may take to serve again: it
+# already runs its version, so it recomputes nothing.
+audits_timeout=1800
 # How long a server may go unanswered while it readies, which restarts
 # nothing, so one that stops answering is left out within the hour, rather
 # than holding every group's update for 12.
@@ -193,10 +198,10 @@ on() {
     ssh_to "$@" </dev/null
 }
 
-# Wait until SERVER serves again, stopping at once if a workload of its
-# crashed meanwhile, which stays down until it is looked at.
+# Wait until SERVER serves again, at most TIMEOUT seconds, stopping at once if
+# a workload of its crashed meanwhile, which stays down until it is looked at.
 wait_serving() {
-    local server="$1" start="$SECONDS" status
+    local server="$1" timeout="${2:-$ready_timeout}" start="$SECONDS" status
     while :; do
         status=0
         on "$server" "$SHIP status --check" 2>/dev/null || status=$?
@@ -205,8 +210,8 @@ wait_serving() {
             echo "$server: a workload crashed and stays down; ship status there says which, and its crash log why. Stopping here." >&2
             exit 1
         fi
-        if [ $((SECONDS - start)) -ge "$ready_timeout" ]; then
-            echo "$server does not serve again after $((ready_timeout / 3600)) hours; stopping here." >&2
+        if [ $((SECONDS - start)) -ge "$timeout" ]; then
+            echo "$server does not serve again after $((timeout / 60)) minutes; stopping here." >&2
             exit 1
         fi
         sleep 2
@@ -504,11 +509,135 @@ down() {
 converge() {
     local tunnel
     unsettled=''
+    [ -z "$swapping" ] || sync_audits
     probe
     for tunnel in $({ serves | cut -d ' ' -f 2; sed -n 's/^tokens //p' "$work"/live.*; } | xargs -n 1 | sort -u); do
         converge_tunnel "$tunnel"
     done
     purge_changed
+}
+
+# Bitview's block audits are each server's observations of its own mempool, so
+# they can't be rebuilt from the chain: a server whose data was wiped (a bench,
+# a reindex, a fresh mini) holds none. So before prod's tunnels move to another
+# group (a promotion or a swap back: every way to prod goes through converge),
+# its servers take the history of the group leaving prod, in one order whose
+# last copy wins: the entering group's last server's store, then its first's,
+# then the leaving group's last's, then its first's. Each group's first server
+# in fleet.conf is its canonical recorder. That keeps, for every block, the
+# recording of the group that served prod when it arrived: the leaving group's
+# first server took the whole history this way when its group entered prod,
+# then recorded every block since, so its store wins over all, and the others
+# fill only the blocks it lacks. Both entering servers merge the same copies
+# in the same order, so they hold the same history; a block arriving between
+# their restart and the tunnels moving keeps their own recordings.
+# Every copy is checked by the entering server's own bitviewd before anything
+# stops (a torn clone of a live store is fetched again once). Each server then
+# restarts in turn, out of its tunnels, and the tunnels move only once both
+# serve again with their copies merged: any failure stops the run here, before
+# converge moves prod, which stays on the leaving group.
+synced=''
+sync_audits() {
+    local entering holder leaving source i=0 server
+    entering="$(entries | awk '$2 == "prod" { print $1 }' | xargs)"
+    [ "$synced" != "$entering" ] || return 0
+    holder="$(in_state "$(role_tunnels prod | cut -d ' ' -f 1)" ready | head -n 1)"
+    leaving="$(groups | awk -v server="$holder" '{ for (i = 2; i <= NF; i++) if ($i == server) { $1 = ""; print } }' | xargs)"
+    echo "== Audits: $entering take the history of ${leaving:-no group, as none holds prod}"
+    rm -rf "$work/audits"
+    mkdir -p "$work/audits"
+    # shellcheck disable=SC2046,SC2086
+    for source in $(reversed $entering) $(reversed $leaving); do
+        i=$((i + 1))
+        fetch_audits "$source" "$work/audits/$i-$source" ||
+            echo "$source: no copy of its audits (it did not answer, or holds none); left out." >&2
+    done
+    for server in $entering; do
+        stage_audits "$server"
+    done
+    for server in $entering; do
+        restart_audits "$server"
+    done
+    synced="$entering"
+}
+
+# The words given, last first.
+reversed() {
+    local word out=''
+    for word; do out="$word $out"; done
+    echo "$out"
+}
+
+# Copy SOURCE's audit store into DIR here: a clone there, fetched, removed.
+fetch_audits() {
+    local source="$1" dir="$2"
+    rm -rf "$dir"
+    audits "$source" clone &&
+        rsync -a "$server_user@$source:/Volumes/External/bitview/mempool/audits-out/" "$dir/" &&
+        audits "$source" clear
+}
+
+# Run server/audits.sh STEP on SERVER, this Mac's copy streamed to it, as the
+# servers leaving prod keep the dots they had.
+audits() {
+    local server="$1"
+    shift
+    ssh_to "$server" bash -s -- "$@" < "$PC_DIR/../server/audits.sh"
+}
+
+# Put the copies on SERVER and have its own bitviewd check each, fetching a
+# copy that fails again once from its source; a second failure stops the run.
+stage_audits() {
+    local server="$1" copy name stage="/Volumes/External/bitview/mempool/audits-stage"
+    audits "$server" clear || { echo "$server: could not clear its audit stage; stopping here." >&2; exit 1; }
+    rsync -a "$work/audits/" "$server_user@$server:$stage/" ||
+        { echo "$server: could not take the audit copies; stopping here." >&2; exit 1; }
+    for copy in "$work"/audits/*; do
+        [ -e "$copy" ] || continue
+        name="${copy##*/}"
+        audits "$server" check "$name" && continue
+        echo "$server: the copy of ${name#*-}'s audits fails its check; fetching it again." >&2
+        if ! { fetch_audits "${name#*-}" "$copy" && rsync -a --delete "$copy/" "$server_user@$server:$stage/$name/" &&
+            audits "$server" check "$name"; }; then
+            echo "$server: the copy of ${name#*-}'s audits fails again; stopping here." >&2
+            exit 1
+        fi
+    done
+}
+
+# What SERVER holds as a server of next: next's tunnels and its own.
+as_next() {
+    awk -v server="$1" '$1 == server { print $1 }' "$TUNNELS"
+    role_tunnels next
+}
+
+# Restart SERVER, out of its tunnels, on its staged copies, as a job there,
+# and give it next's tunnels and its own back once it serves with them merged,
+# saying how long it took to serve again. It takes them first too: a run cut
+# short in an earlier restart can leave the other entering server out of
+# next, and then this one could never leave it.
+restart_audits() {
+    local server="$1" other start
+    probe
+    for other in $(entries | awk '$2 == "prod" { print $1 }'); do
+        # shellcheck disable=SC2046
+        ! up "$other" || give "$other" $(as_next "$other")
+    done
+    probe
+    down "$server" || { echo "$server keeps its tunnels, so it can't restart on its audits; stopping here." >&2; exit 1; }
+    # (Its place step runs in the job, from its own dots, up to date as fleet restart makes it.)
+    on "$server" 'git -C ~/Developer/dots pull -q --ff-only' ||
+        { echo "$server: could not update its dots; stopping here." >&2; exit 1; }
+    start="$SECONDS"
+    detach "$server" "$SHIP stop bitviewd && $AUDITS_SH place && $SHIP start"
+    follow_job "$server" || { echo "$server: its restart on the audits failed; stopping here." >&2; exit 1; }
+    wait_serving "$server" "$audits_timeout"
+    audits "$server" merged || { echo "$server serves without having merged its audits; stopping here." >&2; exit 1; }
+    echo "$server: serving again $((SECONDS - start)) s after its stop, its audits merged"
+    probe
+    # shellcheck disable=SC2046
+    give "$server" $(as_next "$server")
+    probe
 }
 
 # Have the run end failing, saying so, when the last converge left some tunnel

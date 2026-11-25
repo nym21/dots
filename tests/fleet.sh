@@ -257,6 +257,11 @@ case "$cmd" in
                 ;;
             *"ship apply"*) [ -z "$(pending)" ] || restart ;;
             *"ship stop && "*) restart ;;
+            # A restart on the audit copies fleet staged, which it merges (sync_audits).
+            *"ship stop bitviewd && "*"audits.sh place && "*)
+                echo "$host" >> "$SIM/merged"
+                restart
+                ;;
         esac
         ;;
     *"job.sh status") get job ;;
@@ -266,6 +271,12 @@ case "$cmd" in
     "git -C ~/Developer/dots pull -q --ff-only" | "tail -n +"* | *"tailscale.sh --check" | "rm -f ~/.config/dots/password") ;;
     *"ship status") echo "$(cut -d ' ' -f 1 "$M/mode") $(get running)" ;;
     *password* | *"sudo -S"*) cat > /dev/null ;;
+    # server/audits.sh, streamed: every check fails on a mini with a torn file.
+    "bash -s -- "*)
+        cat > /dev/null
+        echo "$host ${cmd#bash -s -- }" >> "$SIM/audits"
+        case "${cmd#bash -s -- }" in check*) [ ! -e "$M/torn" ] ;; esac
+        ;;
     *) echo "fake ssh: $host: $cmd" >&2; exit 1 ;;
 esac
 EOF
@@ -299,6 +310,8 @@ case "$1 $2" in
 esac
 EOF
 printf '#!/bin/bash\necho %s >&2\n' "'password: \"pw\"'" > "$FAKES/security"
+# rsync of the audit copies: a local destination is made, nothing copied.
+printf '#!/bin/bash\nfor a; do :; done\ncase "$a" in *:*) ;; *) mkdir -p "$a" ;; esac\n' > "$FAKES/rsync"
 printf '#!/bin/bash\n' > "$FAKES/sleep"
 chmod +x "$FAKES"/*
 
@@ -308,7 +321,8 @@ chmod +x "$FAKES"/*
 # its own.
 sim_setup() {
     rm -rf "$SIM"
-    mkdir -p "$SIM/pc" "$SIM/home"
+    mkdir -p "$SIM/pc" "$SIM/server" "$SIM/home"
+    cp "$REPO/server/audits.sh" "$SIM/server/"
     cp "$REPO/pc/fleet" "$REPO/pc/fleet.conf" "$SIM/pc/"
     for name in prod next m4-1 m4-2 m6-1 m6-2; do
         echo "$name $(printf '{"t":"id-%s"}' "$name" | base64)"
@@ -323,6 +337,8 @@ sim_setup() {
     : > "$SIM/events"
     : > "$SIM/purges"
     : > "$SIM/fetched"
+    : > "$SIM/audits"
+    : > "$SIM/merged"
     rm -f "$SIM/changes"
 }
 # SERVER in MODE, running VERSION, serving TUNNEL... and its own.
@@ -386,8 +402,13 @@ check "each server's Bitview gets its own address, the next group's here" \
     diff <(printf 'https://%s.bitview.space\n' m4-2 m6-2) <(cat "$SIM"/m/m4-2/public-url "$SIM"/m/m6-2/public-url)
 check "each mini keeping its own tunnel except while it restarts" [ ! -e "$SIM/own_lost" ]
 
-# A promotion of what next runs: a swap, nothing built.
+# A promotion of what next runs: a swap, nothing built. Fleet has run before,
+# so it holds each tunnel's purge record: the entering servers' restarts on
+# their audits, before the swap, purge nothing.
 sim_setup P0 N1
+sim_fleet tunnels
+: > "$SIM/purges"
+: > "$EVENTS"
 echo N1 > "$SIM/pin.prod"
 check "prod's branch moved to what the next group runs swaps the groups" eval 'sim_fleet update && sim_final b P0'
 check "with nothing built anywhere, the group that left prod keeping its version (the soak)" \
@@ -395,6 +416,12 @@ check "with nothing built anywhere, the group that left prod keeping its version
 check "and the floors kept throughout" sim_floors
 check "prod's cache purged once, after the swap" eval \
     '[ "$(grep -cx prod "$SIM/purges")" = 1 ] && [ ! -e "$SIM/premature-purges" ]'
+check "both entering servers restart on their merged audits before prod moves to them" eval \
+    '[ "$(sort "$SIM/merged" | xargs)" = "m4-2 m6-2" ] &&
+     [ "$(grep -n "prod:[^|]*m[46]-2@" "$EVENTS" | head -n 1 | cut -d : -f 1)" -gt \
+       "$(grep -n "^m6-2: restart" "$EVENTS" | cut -d : -f 1)" ]'
+check "taking copies of the four stores, leaving m4-1's last" eval \
+    '[ "$(awk "\$2 == \"clone\" { print \$1 }" "$SIM/audits" | xargs)" = "m6-2 m4-2 m6-1 m4-1" ]'
 check "fleet role names the new roles" eval \
     'sim_fleet role && [ "$(sort "$SIM/out" | xargs)" = "m4-1 next m4-2 prod m6-1 next m6-2 prod" ]'
 echo N2 > "$SIM/pin.next"
@@ -439,6 +466,14 @@ done
 wait
 check "killed after any of its $total changes (mid-build, mid-swap), a rerun ends the same, floors kept, prod purged" \
     [ ! -e "$TMP/broken" ]
+
+# An audit copy that fails its check twice leaves prod where it is.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+touch "$SIM/m/m6-2/torn"
+check "a copy failing its check twice keeps the swap from happening, nothing restarted" eval \
+    '! sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx prod "$SIM/m/m4-2/applied" &&
+     [ ! -s "$SIM/merged" ] && sim_floors'
 
 # A build that fails leaves prod where it is, and IndexNow untold.
 sim_setup P0 N0
