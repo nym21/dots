@@ -219,6 +219,12 @@ names, and `next` whatever it runs; during a swap both groups' versions serve
 prod for seconds (each ETag carries the release, so caches never hand one
 version's file to the other). The run ends failing while a tunnel's servers
 holding it ready are not those its role gives it.
+`fleet rotate TUNNEL...` gives each tunnel a new token, as when one leaked:
+Cloudflare takes a new secret and from then on refuses the old token's new
+connections, keeping those it has, and each server holding the tunnel (or this
+Mac, for `local`) takes the new token in turn, the next only once Cloudflare
+has the new connector, so a shared tunnel loses one server at a time, for
+seconds. Any connector left from the old token is then dropped.
 Each tunnel's cache is purged once the servers holding it run one version
 again, other than the one it was last purged for (kept in
 `~/Library/Application Support/dots/purged`, so a run stopped before its purge

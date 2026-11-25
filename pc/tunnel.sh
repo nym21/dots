@@ -10,6 +10,7 @@ set -euo pipefail
 #   tunnel.sh       install the LaunchAgent, restart the tunnel onto a new
 #                   cloudflared, or stop it when pc/.tunnels lacks its token
 #   tunnel.sh run   the tunnel, which the LaunchAgent runs
+#   tunnel.sh restart  restart the tunnel, as onto a new token (fleet rotate)
 
 PC_DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL=com.local.tunnel
@@ -31,8 +32,12 @@ case "$#:${1:-}" in
         fi
         TUNNEL_TOKEN="$token" exec cloudflared tunnel --no-autoupdate run
         ;;
+    1:restart)
+        launchctl kickstart -k "$DOMAIN/$LABEL"
+        exit
+        ;;
     *)
-        echo "Usage: $0 [run]" >&2
+        echo "Usage: $0 [run | restart]" >&2
         exit 1
         ;;
 esac

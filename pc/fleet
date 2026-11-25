@@ -22,6 +22,8 @@ set -euo pipefail
 #   fleet shutdown [SERVER...] turn them off, cleanly, in turn
 #   fleet tunnels              give the servers their roles' tunnels, updating
 #                              nothing (a swap due, or after an outage)
+#   fleet rotate TUNNEL...     give the tunnels new tokens, as when one leaked,
+#                              and their servers each in turn
 #   fleet log [SINCE]          how many servers each tunnel had ready since SINCE,
 #                              a day ago by default, at each change, the fewest,
 #                              and when below its floor, from their tunnels.log
@@ -103,7 +105,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update | restart | reboot | shutdown | purge [SERVER...] | role [SERVER] | tunnels | log [SINCE] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | reboot | shutdown | purge [SERVER...] | role [SERVER] | tunnels | rotate TUNNEL... | log [SINCE] | auto" >&2
     exit 1
 }
 
@@ -1376,6 +1378,70 @@ retunnel() {
     echo "Every server has its tunnels."
 }
 
+# The connectors Cloudflare has connected for the tunnel ID, a line each.
+connectors() {
+    cf tunnels connections list --tunnel-id "$1" | jq -r '.[] | select(.conns | length > 0) | .id'
+}
+
+# Give each TUNNEL... a new token, as when one leaked. Cloudflare takes a new
+# secret, then refuses the old token's new connections but keeps those it has,
+# so pc/.tunnels saves the new token and each server holding the tunnel takes
+# it in turn (tunnels.sh restarts a tunnel whose token changed), and the next
+# only once Cloudflare has its new connector and the server reports it ready:
+# a shared tunnel loses one server at a time, for seconds, a server's own its
+# only one, as does local, this Mac's, which restarts onto it. Any connector
+# left from before, which only the old token made, is then dropped.
+rotate() {
+    local tunnel id old token holders server gained start
+    lock
+    cf_logged_in
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work" "$LOCK"' EXIT
+    for tunnel; do
+        id="$(tunnel_id "$tunnel")"
+        [ -n "$id" ] || { echo "$TUNNELS has no token for $tunnel." >&2; exit 1; }
+        old="$(connectors "$id" | xargs)"
+        echo "$tunnel: $(wc -w <<< "$old" | xargs) connectors; giving it a new token"
+        cf tunnels edit "$id" --tunnel-secret "$(openssl rand -base64 32)" >/dev/null
+        token="$(cf tunnels token get "$id" | jq -er .)"
+        (umask 077 && TOKEN="$token" awk -v name="$tunnel" '$1 == name { $0 = name " " ENVIRON["TOKEN"] } { print }' \
+            "$TUNNELS" > "$TUNNELS.new" && mv "$TUNNELS.new" "$TUNNELS")
+        probe
+        holders="$(holding "$tunnel")"
+        [ "$tunnel" != local ] || holders=local
+        gained=0
+        for server in $holders; do
+            if [ "$server" = local ]; then
+                echo "local: restarting this Mac's tunnel"
+                "$PC_DIR/tunnel.sh" restart
+            else
+                # shellcheck disable=SC2046
+                give "$server" $(tokens "$server")
+            fi
+            gained=$((gained + 1))
+            start="$SECONDS"
+            until [ "$(minus "$(connectors "$id")" "$old" | wc -l)" -ge "$gained" ] &&
+                { [ "$server" = local ] || { probe; in_state "$tunnel" ready | grep -qx "$server"; }; }; do
+                if [ $((SECONDS - start)) -ge 120 ]; then
+                    echo "$tunnel is not connected again on $server after 2 minutes; stopping here." >&2
+                    exit 1
+                fi
+                sleep 2
+            done
+            echo "$server: $tunnel connected on its new token"
+        done
+        for server in $(connectors "$id"); do
+            case " $old " in
+                *" $server "*)
+                    echo "$tunnel: dropping connector $server, left from the old token"
+                    cf tunnels connections cleanup "$id" --client-id "$server" --force >/dev/null
+                    ;;
+            esac
+        done
+        echo "$tunnel: $(connectors "$id" | wc -l | xargs) connectors, all on the new token"
+    done
+}
+
 # How many servers held each tunnel of fleet.conf ready since SINCE, an ISO
 # time, a day ago by default, from the servers' tunnels.log, merged: TIME
 # TUNNEL COUNT at each change, the changes of one second taken together, then
@@ -1749,9 +1815,12 @@ auto() {
 [ "$#" -ge 1 ] || usage
 command="$1"
 shift
-[ "$command" = log ] || for server; do
-    servers | grep -qx "$server" || { echo "$server is not in $CONF." >&2; exit 1; }
-done
+case "$command" in
+    log | rotate) ;;
+    *) for server; do
+        servers | grep -qx "$server" || { echo "$server is not in $CONF." >&2; exit 1; }
+    done ;;
+esac
 case "$command" in
     init) init "$@" ;;
     status) status "$@" ;;
@@ -1763,6 +1832,10 @@ case "$command" in
     log)
         [ "$#" -le 1 ] || usage
         tunnels_log "$@"
+        ;;
+    rotate)
+        [ "$#" -ge 1 ] || usage
+        rotate "$@"
         ;;
     reboot | shutdown) power "$command" "$@" ;;
     role)
