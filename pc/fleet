@@ -521,36 +521,50 @@ converge() {
 # they can't be rebuilt from the chain: a server whose data was wiped (a bench,
 # a reindex, a fresh mini) holds none. So before prod's tunnels move to another
 # group (a promotion or a swap back: every way to prod goes through converge),
-# its servers take the history of the group leaving prod, in one order whose
-# last copy wins: the entering group's last server's store, then its first's,
-# then the leaving group's last's, then its first's. Each group's first server
-# in fleet.conf is its canonical recorder. That keeps, for every block, the
-# recording of the group that served prod when it arrived: the leaving group's
-# first server took the whole history this way when its group entered prod,
-# then recorded every block since, so its store wins over all, and the others
-# fill only the blocks it lacks. Both entering servers merge the same copies
-# in the same order, so they hold the same history; a block arriving between
-# their restart and the tunnels moving keeps their own recordings.
+# its servers take the history of the servers leaving prod, in one order whose
+# last copy wins: the entering servers' stores, then the leaving ones', each
+# set with its M4 last (audit_order). The leaving M4 is the canonical recorder.
+# That keeps, for every block, the recording of the group that served prod
+# when it arrived: the leaving M4 took the whole history this way when its
+# group entered prod, then recorded every block since, so its store wins over
+# all, and the others fill only the blocks it lacks. Both entering servers
+# merge the same copies in the same order, so they hold the same history; a
+# block arriving between their restart and the tunnels moving keeps their own.
 # Every copy is checked by the entering server's own bitviewd before anything
-# stops (a torn clone of a live store is fetched again once). Each server then
-# restarts in turn, out of its tunnels, and the tunnels move only once both
-# serve again with their copies merged: any failure stops the run here, before
-# converge moves prod, which stays on the leaving group.
+# stops. Each server then restarts in turn, out of its tunnels, and the
+# tunnels move only once both serve again with their copies merged: any
+# failure stops the run here, before converge moves prod, which stays on the
+# leaving group. A copy that can't be had stops it too, unless its server did
+# not answer or holds no store. A rerun after the tunnels began to move finds
+# the merge done. A build without the merge (a swap back to one from before
+# it) takes prod without the history, saying so loudly.
 synced=''
 sync_audits() {
-    local entering holder leaving source i=0 server
+    local entering leaving server source i=0
     entering="$(entries | awk '$2 == "prod" { print $1 }' | xargs)"
     [ "$synced" != "$entering" ] || return 0
-    holder="$(in_state "$(role_tunnels prod | cut -d ' ' -f 1)" ready | head -n 1)"
-    leaving="$(groups | awk -v server="$holder" '{ for (i = 2; i <= NF; i++) if ($i == server) { $1 = ""; print } }' | xargs)"
-    echo "== Audits: $entering take the history of ${leaving:-no group, as none holds prod}"
+    synced="$entering"
+    for server in $entering; do
+        if in_state "$(role_tunnels prod | cut -d ' ' -f 1)" ready | grep -qx "$server"; then
+            echo "== Audits: $server already serves prod, so its group merged them in an earlier run."
+            return 0
+        fi
+    done
+    for server in $entering; do
+        audits "$server" supported && continue
+        echo "!! $server's bitviewd has no audit merge: on this build, prod takes NO audit history" \
+            "from the group leaving it; the blocks it lacks stay missing there." >&2
+        return 0
+    done
+    # shellcheck disable=SC2046
+    leaving="$(minus "$(servers | xargs)" "$entering" | xargs)"
+    echo "== Audits: $entering take the history of ${leaving:-no other server}"
     rm -rf "$work/audits"
     mkdir -p "$work/audits"
     # shellcheck disable=SC2046,SC2086
-    for source in $(reversed $entering) $(reversed $leaving); do
+    for source in $(audit_order $entering) $(audit_order $leaving); do
         i=$((i + 1))
-        fetch_audits "$source" "$work/audits/$i-$source" ||
-            echo "$source: no copy of its audits (it did not answer, or holds none); left out." >&2
+        fetch_audits "$source" "$work/audits/$i-$source"
     done
     for server in $entering; do
         stage_audits "$server"
@@ -558,35 +572,47 @@ sync_audits() {
     for server in $entering; do
         restart_audits "$server"
     done
-    synced="$entering"
 }
 
-# The words given, last first.
-reversed() {
-    local word out=''
-    for word; do out="$word $out"; done
-    echo "$out"
+# SERVER... in merge order, last wins: the others, then the M4s, the CPU that
+# records the canonical audits.
+audit_order() {
+    printf '%s\n' "$@" | awk '/^m4-/ { last = last " " $0; next } { printf "%s ", $0 } END { print last }' | xargs
 }
 
 # Copy SOURCE's audit store into DIR here: a clone there, fetched, removed.
+# Tried twice; a source that does not answer (ssh's 255) or holds no store (3)
+# is left out, saying so; any other failure stops the run.
 fetch_audits() {
-    local source="$1" dir="$2"
-    rm -rf "$dir"
-    audits "$source" clone &&
-        rsync -a "$server_user@$source:/Volumes/External/bitview/mempool/audits-out/" "$dir/" &&
-        audits "$source" clear
+    local source="$1" dir="$2" try status
+    for try in 1 2; do
+        status=0
+        audits "$source" clone || status=$?
+        case "$status" in
+            255) echo "$source does not answer: its audits are left out." >&2; return 0 ;;
+            3) echo "$source holds no audits: left out." >&2; return 0 ;;
+        esac
+        [ "$status" -eq 0 ] && rsync -a "$server_user@$source:/Volumes/External/bitview/mempool/audits-out/" "$dir/" &&
+            audits "$source" clear && return 0
+        rm -rf "$dir"
+        echo "$source: copying its audits failed (try $try of 2)." >&2
+    done
+    echo "$source answers, but its audits could not be copied; stopping here." >&2
+    exit 1
 }
 
-# Run server/audits.sh STEP on SERVER, this Mac's copy streamed to it, as the
-# servers leaving prod keep the dots they had.
+# Run server/audits.sh STEP on SERVER, this Mac's copy streamed to it with the
+# two scripts it uses, as the servers leaving prod keep the dots they had.
 audits() {
     local server="$1"
     shift
-    ssh_to "$server" bash -s -- "$@" < "$PC_DIR/../server/audits.sh"
+    cat "$PC_DIR/../shared/path-guard.sh" "$PC_DIR/../server/external.sh" "$PC_DIR/../server/audits.sh" |
+        ssh_to "$server" bash -s -- "$@"
 }
 
-# Put the copies on SERVER and have its own bitviewd check each, fetching a
-# copy that fails again once from its source; a second failure stops the run.
+# Put the copies on SERVER and have its own bitviewd check each, saying how
+# many audits each holds; a copy that fails is fetched again once from its
+# source, and a second failure stops the run.
 stage_audits() {
     local server="$1" copy name stage="/Volumes/External/bitview/mempool/audits-stage"
     audits "$server" clear || { echo "$server: could not clear its audit stage; stopping here." >&2; exit 1; }
@@ -597,7 +623,8 @@ stage_audits() {
         name="${copy##*/}"
         audits "$server" check "$name" && continue
         echo "$server: the copy of ${name#*-}'s audits fails its check; fetching it again." >&2
-        if ! { fetch_audits "${name#*-}" "$copy" && rsync -a --delete "$copy/" "$server_user@$server:$stage/$name/" &&
+        fetch_audits "${name#*-}" "$copy"
+        if ! { [ -d "$copy" ] && rsync -a --delete "$copy/" "$server_user@$server:$stage/$name/" &&
             audits "$server" check "$name"; }; then
             echo "$server: the copy of ${name#*-}'s audits fails again; stopping here." >&2
             exit 1

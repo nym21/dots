@@ -271,11 +271,17 @@ case "$cmd" in
     "git -C ~/Developer/dots pull -q --ff-only" | "tail -n +"* | *"tailscale.sh --check" | "rm -f ~/.config/dots/password") ;;
     *"ship status") echo "$(cut -d ' ' -f 1 "$M/mode") $(get running)" ;;
     *password* | *"sudo -S"*) cat > /dev/null ;;
-    # server/audits.sh, streamed: every check fails on a mini with a torn file.
+    # server/audits.sh, streamed: a mini with no-merge runs a bitviewd from
+    # before the merge, which fails supported and every check, one with torn
+    # fails every check, one with clone-fails answers but can't clone.
     "bash -s -- "*)
         cat > /dev/null
         echo "$host ${cmd#bash -s -- }" >> "$SIM/audits"
-        case "${cmd#bash -s -- }" in check*) [ ! -e "$M/torn" ] ;; esac
+        case "${cmd#bash -s -- }" in
+            supported) [ ! -e "$M/no-merge" ] ;;
+            clone) [ ! -e "$M/clone-fails" ] ;;
+            check*) [ ! -e "$M/torn" ] && [ ! -e "$M/no-merge" ] ;;
+        esac
         ;;
     *) echo "fake ssh: $host: $cmd" >&2; exit 1 ;;
 esac
@@ -322,7 +328,9 @@ chmod +x "$FAKES"/*
 sim_setup() {
     rm -rf "$SIM"
     mkdir -p "$SIM/pc" "$SIM/server" "$SIM/home"
-    cp "$REPO/server/audits.sh" "$SIM/server/"
+    mkdir -p "$SIM/shared"
+    cp "$REPO/server/audits.sh" "$REPO/server/external.sh" "$SIM/server/"
+    cp "$REPO/shared/path-guard.sh" "$SIM/shared/"
     cp "$REPO/pc/fleet" "$REPO/pc/fleet.conf" "$SIM/pc/"
     for name in prod next m4-1 m4-2 m6-1 m6-2; do
         echo "$name $(printf '{"t":"id-%s"}' "$name" | base64)"
@@ -474,6 +482,27 @@ touch "$SIM/m/m6-2/torn"
 check "a copy failing its check twice keeps the swap from happening, nothing restarted" eval \
     '! sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx prod "$SIM/m/m4-2/applied" &&
      [ ! -s "$SIM/merged" ] && sim_floors'
+# So does a leaving server that answers but whose store can't be copied.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+touch "$SIM/m/m4-1/clone-fails"
+check "a leaving server answering without a copy of its audits keeps the swap from happening" eval \
+    '! sim_fleet update && grep -qx prod "$SIM/m/m4-1/applied" && ! grep -qx prod "$SIM/m/m4-2/applied" &&
+     [ ! -s "$SIM/merged" ] && sim_floors'
+# A swap to a build from before the merge (a swap back) takes prod, saying it
+# carries no history.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+touch "$SIM/m/m4-2/no-merge" "$SIM/m/m6-2/no-merge"
+check "a swap to a build without the audit merge happens, nothing merged, said loudly" eval \
+    'sim_fleet update && sim_final b P0 && [ ! -s "$SIM/merged" ] && grep -q "takes NO audit history" "$SIM/out"'
+# A run cut short once prod's tunnels began to move: the rerun merges nothing again.
+sim_setup P0 N1
+echo N1 > "$SIM/pin.prod"
+{ KILL_WHEN='m[46]-2: set [^|]*prod [|]' sim_fleet update; } 2> /dev/null
+check "(cut short with prod half moved)" eval '! sim_final b P0 && grep -q "prod:[^|]*m[46]-2@" "$EVENTS"'
+check "a rerun after prod's tunnels began to move finishes the swap without merging again" eval \
+    'sim_fleet update && sim_final b P0 && sim_floors && [ "$(sort "$SIM/merged" | xargs)" = "m4-2 m6-2" ]'
 
 # A build that fails leaves prod where it is, and IndexNow untold.
 sim_setup P0 N0
