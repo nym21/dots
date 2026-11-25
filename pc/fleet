@@ -1387,8 +1387,9 @@ connectors() {
 # secret, then refuses the old token's new connections but keeps those it has,
 # so pc/.tunnels saves the new token and each server holding the tunnel takes
 # it in turn (tunnels.sh restarts a tunnel whose token changed), and the next
-# only once Cloudflare has its new connector and the server reports it ready:
-# a shared tunnel loses one server at a time, for seconds, a server's own its
+# only once Cloudflare has its new connector and the server reports it ready,
+# and only while the others holding it are ready, counted just before: a
+# shared tunnel loses one server at a time, for seconds, a server's own its
 # only one, as does local, this Mac's, which restarts onto it. Any connector
 # left from before, which only the old token made, is then dropped.
 rotate() {
@@ -1407,10 +1408,16 @@ rotate() {
         (umask 077 && TOKEN="$token" awk -v name="$tunnel" '$1 == name { $0 = name " " ENVIRON["TOKEN"] } { print }' \
             "$TUNNELS" > "$TUNNELS.new" && mv "$TUNNELS.new" "$TUNNELS")
         probe
-        holders="$(holding "$tunnel")"
+        holders="$(holding "$tunnel" | xargs)"
         [ "$tunnel" != local ] || holders=local
         gained=0
         for server in $holders; do
+            # Every other server holding it ready, counted just before.
+            probe
+            if [ -n "$(minus "$(minus "$holders" "$server")" "$(in_state "$tunnel" ready)")" ]; then
+                echo "$tunnel is not ready on every other server holding it, so $server keeps the old token; stopping here." >&2
+                exit 1
+            fi
             if [ "$server" = local ]; then
                 echo "local: restarting this Mac's tunnel"
                 "$PC_DIR/tunnel.sh" restart
