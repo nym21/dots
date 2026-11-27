@@ -102,8 +102,9 @@ trim_window() {
 # start again, 10 seconds later. TERM, which stop sends, passes on to the
 # workload and ends the loop once it has exited, unless USR1, which a stop that
 # gave up sends, called the stop off: the workload then runs again once it has
-# exited. Each start of Bitview records the mode and build it runs in
-# RUNNING_DIR. Meanwhile its window is kept small.
+# exited cleanly, a failing exit being a crash like any other. Each start of
+# Bitview records the mode and build it runs in RUNNING_DIR. Meanwhile its
+# window is kept small.
 supervise() {
     local name="$1" command pid='' status stopping=0 again=0 trimmer
     command="$SERVER_DIR/$(script "$name")"
@@ -129,7 +130,7 @@ supervise() {
         # The tunnels look again at once, not at their next minute, so none
         # routes to a server that has ended.
         [ "$name" = tunnels ] || "$SERVER_DIR/tunnels.sh" wake || true
-        if [ "$again" -eq 1 ] && [ "$stopping" -eq 0 ]; then
+        if [ "$again" -eq 1 ] && [ "$stopping" -eq 0 ] && [ "$status" -eq 0 ]; then
             again=0
             continue
         fi
