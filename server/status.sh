@@ -71,7 +71,7 @@ mode="${mode:-$(bitview_mode)}"
 short() {
     awk '$1 == "bitviewd" { sub(/:$/, ""); v = $2; if ($3 ~ /#/) { c = $3; sub(/.*#/, "", c); sub(/\).*/, "", c); v = v "#" substr(c, 1, 8) } print v; exit }'
 }
-installed="$(installed_build bitviewd | short)"
+installed="$(installed_build bitviewd | short || true)"
 running=''
 ! pgrep -x bitviewd >/dev/null || running="$(short 2>/dev/null < "$RUNNING_DIR/bitviewd" || true)"
 version="${running:-$installed}"
