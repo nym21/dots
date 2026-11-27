@@ -246,7 +246,8 @@ lock refuses a prod server. `fleet update` takes a server's lock, as
 `fleet-auto`, before it builds on it, restarts it or swaps it to prod,
 waiting up to 50 minutes, then stopping with status 4, which `fleet auto`
 takes as its hour skipped; its hold ends with its run. A held server that needs no new build is left
-alone, and a group with a held server never takes prod. The other next server
+alone, and a group with a held server never takes prod. A run by hand takes no lock, but refuses a held
+server that needs an update, naming its holder, and goes on only with `fleet update --force`. The other next server
 keeps `next` meanwhile. Nothing in `fleet.conf` changes for a hold.
 
 ### Setting up

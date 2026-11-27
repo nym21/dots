@@ -105,7 +105,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update | restart | reboot | shutdown | purge [SERVER...] | role [SERVER] | tunnels | rotate TUNNEL... | log [SINCE] | auto" >&2
+    echo "Usage: fleet init | status | update [--force] [SERVER...] | restart | reboot | shutdown | purge [SERVER...] | role [SERVER] | tunnels | rotate TUNNEL... | log [SINCE] | auto" >&2
     exit 1
 }
 
@@ -348,6 +348,9 @@ held() {
     [ -x "$LOCKS/$1-lock" ] || return 1
     state="$("$LOCKS/$1-lock" status | head -1)"
     [ "${state#held: }" != "$state" ] && [ "${state#held: fleet-auto }" = "$state" ]
+}
+holder() {
+    "$LOCKS/$1-lock" status | awk 'NR == 1 { print $2 }'
 }
 
 # Whether every server of GROUP serves prod's pin, at the tip, with no job of
@@ -1144,7 +1147,7 @@ locked=''
 # status 4, which fleet auto takes as its hour skipped. A hold ends with this
 # run (-p), kill -9 included; unhold releases them sooner.
 # A run by hand takes none, as whoever runs it may hold the lock, as a bench
-# returning its mini does.
+# returning its mini does, and goes on over another's hold only with --force.
 hold() {
     local server
     [ -n "${FLEET_AUTO:-}" ] || return 0
@@ -1241,6 +1244,9 @@ update() {
             leave "$server" "$server does not serve, which ship status there explains"
         elif at_pin "$server" "$pin" && held "$server"; then
             echo "$server is held for timed work and has its version: left alone."
+        elif [ -z "${FLEET_AUTO:-}" ] && [ -z "${force:-}" ] && held "$server"; then
+            echo "$server is held for timed work by $(holder "$server"); fleet update goes on only with --force." >&2
+            exit 1
         else
             kept="$kept $server"
             at_pin "$server" "$pin" || moving="$moving $server"
@@ -1823,6 +1829,11 @@ auto() {
 [ "$#" -ge 1 ] || usage
 command="$1"
 shift
+# fleet update --force goes on over another's hold on a server.
+if [ "$command" = update ] && [ "${1:-}" = --force ]; then
+    force=1
+    shift
+fi
 case "$command" in
     log | rotate) ;;
     *) for server; do
