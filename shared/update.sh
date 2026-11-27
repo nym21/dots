@@ -67,8 +67,8 @@ update_tailscaled() {
 
 if [ "$step" = pending ]; then
     if rex_pending; then echo rex; fi
-    "$SERVER_DIR/install.sh" --pending || true
-    exit 0
+    "$SERVER_DIR/install.sh" --pending
+    exit
 fi
 if [ "$step" = apply ]; then
     apply
@@ -132,10 +132,7 @@ case "$ROLE" in
             "$SERVER_DIR/rex.sh" --download
         fi
         # Within the mode this mini has, or the one fleet gives with --fetch.
-        if ! "$SERVER_DIR/install.sh" --build "${@:2}"; then
-            [ "$step" = all ] || exit 1
-            echo "Bitview is not installed; fleet update gives this mini its mode."
-        fi
+        "$SERVER_DIR/install.sh" --build "${@:2}"
         ;;
 esac
 
