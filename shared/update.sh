@@ -47,7 +47,7 @@ apply() {
     if rex_pending; then
         "$SERVER_DIR/rex.sh" --yes
     fi
-    "$SERVER_DIR/install.sh" --restart || echo "Bitview is not installed; fleet update gives this mini its mode."
+    "$SERVER_DIR/install.sh" --restart
 }
 
 # Last, since a restart drops the connections over it, this update's own when

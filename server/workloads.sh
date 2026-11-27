@@ -42,23 +42,16 @@ script() {
     esac
 }
 
-# A workload's processes, wherever they were started.
-pids() {
-    case "$1" in
-        bitcoind) pgrep -x bitcoind ;;
-        bitviewd) pgrep -x bitviewd ;;
-        tunnels) pgrep -f 'server/tunnels\.sh$' ;;
-    esac || true
+# The loop that runs workload $1 in its block, which may be waiting to
+# restart it. It ends only once the workload has, so it is the workload as this
+# script manages it. A process of the same name that something else started, as
+# a seat's own bitviewd on a next mini, is none of its business.
+supervisor() {
+    pgrep -f "server/workloads.sh supervise $1\$" || true
 }
 
 running() {
-    [ -n "$(pids "$1")" ]
-}
-
-# The loop that runs workload $1 in its block, which may be waiting to
-# restart it.
-supervisor() {
-    pgrep -f "server/workloads.sh supervise $1\$" || true
+    [ -n "$(supervisor "$1")" ]
 }
 
 # Log that workload $1 exited with status $2, and keep the end of its output.
@@ -180,7 +173,7 @@ run_block() {
 # once.
 start_one() {
     local name="$1"
-    if running "$name" || [ -n "$(supervisor "$name")" ]; then
+    if running "$name"; then
         echo "$name: already running"
         return 0
     fi
@@ -245,21 +238,17 @@ start() {
     start_one tunnels no-check
 }
 
-# Stop workload $1 with TERM and wait for it to shut down cleanly, which can
-# take Bitcoin Core minutes.
+# Stop workload $1 with TERM, which its loop passes on once, and wait for it to
+# shut down cleanly, which can take Bitcoin Core minutes. A timeout leaves what
+# still runs as it is and fails, so the caller stops with it.
 stop_one() {
     local name="$1" waited=0 loop
     loop="$(supervisor "$name")"
-    running "$name" || [ -n "$loop" ] || return 0
+    [ -n "$loop" ] || return 0
     echo "$name: stopping"
-    # The loop passes TERM on once; a workload started without one gets it here.
-    # shellcheck disable=SC2046,SC2086
-    if [ -n "$loop" ]; then
-        kill -TERM $loop 2>/dev/null || true
-    else
-        kill -TERM $(pids "$name") 2>/dev/null || true
-    fi
-    while running "$name" || [ -n "$(supervisor "$name")" ]; do
+    # shellcheck disable=SC2086
+    kill -TERM $loop 2>/dev/null || true
+    while running "$name"; do
         sleep 1
         waited=$((waited + 1))
         if [ "$waited" -ge 1800 ]; then
