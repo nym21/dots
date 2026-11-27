@@ -7,8 +7,8 @@
 # The lock covers compiling only. It's brain's bin/lock (resource cargo), held
 # by a `lock hold` child for as long as any process keeps the pipe to its
 # stdin, which cargo and its children inherit; cargo starts whatever it runs
-# (cargo run, test, bench) through this script as its runner, which ends the
-# holder first: a `cargo dev` server holding it for its whole life blocked every other build
+# (cargo run, test, bench) through this script as its runner, which frees it
+# first with a line down that pipe: a `cargo dev` server holding it for its whole life blocked every other build
 # for hours (2026-11-18). The runner also points CARGO at this script, so a
 # program that builds again (bindgen --run building bitviewd) queues like any
 # other build. A cargo started while the lock is held (a build script or alias
@@ -53,10 +53,10 @@ if [ "${1:-}" = --one-cargo-runner ]; then
     exec /usr/bin/perl -e '
         use Fcntl qw(F_SETFD FD_CLOEXEC);
         if (defined(my $fd = delete $ENV{ONE_CARGO_FD})) {
-            my $holder = delete $ENV{ONE_CARGO_HOLDER};
-            $holder =~ /\A[1-9]\d*\z/ or die "one-cargo runner: no lock holder pid\n";   # never kill 0, the own group
-            kill TERM => $holder;   # frees the lock for the whole build tree
+            # A line to the holder frees the lock for the whole build tree; a later runner of the same build (one per
+            # test binary) finds the holder gone, which is fine.
             open(my $f, ">&=", $fd) or die "one-cargo runner: fd $fd: $!\n";
+            { local $SIG{PIPE} = "IGNORE"; syswrite($f, "\n") }
             fcntl($f, F_SETFD, FD_CLOEXEC);
         }
         if (defined(my $fd = delete $ENV{ONE_CARGO_LOG_FD})) {
@@ -161,8 +161,7 @@ exec /usr/bin/perl -e '
         exec { $ARGV[0] } @ARGV or die "one-cargo: $ARGV[0]: $!\n";
     }
     my $queued = time;
-    my $holder = open2(my $held, my $hold_in, $lock, "hold", "cargo", "$sub (pid $$)", "-s", 2, "-w", 0, "--more-if", "$self --one-cargo-room")
-        or die "one-cargo: lock hold: $!\n";
+    open2(my $held, my $hold_in, $lock, "hold", "cargo", "$sub (pid $$)", "-s", 2, "-w", 0, "--more-if", "$self --one-cargo-room");   # dies itself on failure
     my ($slot) = (<$held> // "") =~ /\Aheld ([12])\n\z/ or die "one-cargo: lock hold ended without holding\n";
     my ($rustc_cpu, $pressure) = $slot == 2 ? split(" ", `$self --one-cargo-room`) : ("-", "-");
     print STDERR "cargo slot $slot\n" if time - $queued > 1;
@@ -172,7 +171,6 @@ exec /usr/bin/perl -e '
     unless ($sub eq "hold") {
         fcntl($hold_in, F_SETFD, 0);
         $ENV{ONE_CARGO_FD} = fileno($hold_in);
-        $ENV{ONE_CARGO_HOLDER} = $holder;
     }
     sub log_build {
         my $start = time;
