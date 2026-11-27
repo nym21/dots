@@ -1141,7 +1141,8 @@ locked=''
 # In fleet auto, take brain's lock for timed work on each SERVER... that has
 # one, as fleet-auto, so it never builds on, restarts or swaps to a server
 # someone times: waiting at most 50 minutes each, then the run stops with
-# status 4, which fleet auto takes as its hour skipped. unhold releases them.
+# status 4, which fleet auto takes as its hour skipped. A hold ends with this
+# run (-p), kill -9 included; unhold releases them sooner.
 # A run by hand takes none, as whoever runs it may hold the lock, as a bench
 # returning its mini does.
 hold() {
@@ -1149,7 +1150,7 @@ hold() {
     [ -n "${FLEET_AUTO:-}" ] || return 0
     for server; do
         if [ ! -x "$LOCKS/$server-lock" ] || grep -qx "$server" "$work/held" 2>/dev/null; then continue; fi
-        if ! "$LOCKS/$server-lock" take fleet-auto 3000 >/dev/null; then
+        if ! "$LOCKS/$server-lock" take fleet-auto 3000 -p $$ >/dev/null; then
             echo "$server stays held for timed work ($("$LOCKS/$server-lock" status | head -1)); stopping here." >&2
             exit 4
         fi
