@@ -100,15 +100,18 @@ trim_window() {
 
 # Run workload $1 until it exits, logging a failing exit; only the tunnels
 # start again, 10 seconds later. TERM, which stop sends, passes on to the
-# workload and ends the loop once it has exited. Each start of Bitview records
-# the mode and build it runs in RUNNING_DIR. Meanwhile its window is kept small.
+# workload and ends the loop once it has exited, unless USR1, which a stop that
+# gave up sends, called the stop off: the workload then runs again once it has
+# exited. Each start of Bitview records the mode and build it runs in
+# RUNNING_DIR. Meanwhile its window is kept small.
 supervise() {
-    local name="$1" command pid='' status stopping=0 trimmer
+    local name="$1" command pid='' status stopping=0 again=0 trimmer
     command="$SERVER_DIR/$(script "$name")"
     trim_window "$name" &
     trimmer=$!
     trap 'kill "$trimmer" 2>/dev/null || true' EXIT
     trap 'stopping=1; kill -TERM "$pid" 2>/dev/null || true' TERM INT HUP
+    trap 'stopping=0; again=1' USR1
     while :; do
         mkdir -p "$RUNNING_DIR"
         if [ "$name" = bitviewd ]; then
@@ -126,6 +129,10 @@ supervise() {
         # The tunnels look again at once, not at their next minute, so none
         # routes to a server that has ended.
         [ "$name" = tunnels ] || "$SERVER_DIR/tunnels.sh" wake || true
+        if [ "$again" -eq 1 ] && [ "$stopping" -eq 0 ]; then
+            again=0
+            continue
+        fi
         if [ "$stopping" -eq 1 ] || [ "$status" -eq 0 ]; then
             exit "$status"
         fi
@@ -239,8 +246,7 @@ start() {
 }
 
 # Stop workload $1 with TERM, which its loop passes on once, and wait for it to
-# shut down cleanly, which can take Bitcoin Core minutes. A timeout leaves what
-# still runs as it is and fails, so the caller stops with it.
+# shut down cleanly, which can take Bitcoin Core minutes. A timeout fails.
 stop_one() {
     local name="$1" waited=0 loop
     loop="$(supervisor "$name")"
@@ -253,13 +259,23 @@ stop_one() {
         waited=$((waited + 1))
         if [ "$waited" -ge 1800 ]; then
             echo "$name still runs after 30 minutes; stopping here." >&2
-            exit 1
+            return 1
         fi
         if [ $((waited % 30)) -eq 0 ]; then
             echo "  still stopping after ${waited}s"
         fi
     done
     echo "  stopped after ${waited}s"
+}
+
+# A stop of $1 that timed out leaves the old service as it was: its loop runs
+# it again should it still end, and whatever this stop took down comes back up.
+# Then it fails, so the caller stops with it.
+call_off() {
+    # shellcheck disable=SC2046
+    kill -USR1 $(supervisor "$1") 2>/dev/null || true
+    start
+    exit 1
 }
 
 stop() {
@@ -271,7 +287,7 @@ stop() {
     # last.
     for name in tunnels bitviewd bitcoind; do
         case " $names " in
-            *" $name "*) stop_one "$name" ;;
+            *" $name "*) stop_one "$name" || call_off "$name" ;;
         esac
     done
 }
