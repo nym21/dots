@@ -28,14 +28,11 @@ built_mode() {
     awk '{ print $1; exit }' "$MODE_FILE" 2>/dev/null || true
 }
 
-# What a start of CRATE records in RUNNING_DIR: the mode of the builds
-# installed, on a line of its own, then the build of CRATE, as cargo lists it:
-# its version and, from git, its commit. A local build lists no change, so its
-# binary's digest instead. Bitview also records its cache-affecting arguments.
-# fleet's current() reads the mode lines.
-build_record() {
-    local line digest key
-    echo "mode $(built_mode)"
+# The build of CRATE installed, as cargo lists it: its version and, from git,
+# its commit. A local build lists no change, so its binary's digest instead.
+# ship status compares it with what a start recorded.
+installed_build() {
+    local line digest
     line="$(cargo install --list | awk -v crate="$1" '$1 == crate { print; exit }')"
     case "$line" in
         *" (/"*)
@@ -44,6 +41,15 @@ build_record() {
             ;;
         *) echo "$line" ;;
     esac
+}
+
+# What a start of CRATE records in RUNNING_DIR: the mode of the builds
+# installed, on a line of its own, then installed_build. Bitview also records
+# its cache-affecting arguments. fleet's current() reads the mode lines.
+build_record() {
+    local key
+    echo "mode $(built_mode)"
+    installed_build "$1" || return 1
     if [ "$1" = bitviewd ]; then
         key="$("$SERVER_DIR/bitview.sh" --cache-key)" || return 1
         echo "cache $key"
