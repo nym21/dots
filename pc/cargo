@@ -4,25 +4,43 @@
 # Linked ahead of rustup's proxy as /opt/homebrew/bin/cargo, first in every
 # shell's PATH.
 #
-# The lock covers compiling only. It's a flock on a file descriptor that cargo
-# and its children inherit, and cargo starts whatever it runs (cargo run, test,
-# bench) through this script as its runner, which drops the lock first: a
-# `cargo dev` server holding it for its whole life blocked every other build
+# The lock covers compiling only. It's brain's bin/lock (resource cargo), held
+# by a `lock hold` child for as long as any process keeps the pipe to its
+# stdin, which cargo and its children inherit; cargo starts whatever it runs
+# (cargo run, test, bench) through this script as its runner, which ends the
+# holder first: a `cargo dev` server holding it for its whole life blocked every other build
 # for hours (2026-11-18). The runner also points CARGO at this script, so a
 # program that builds again (bindgen --run building bitviewd) queues like any
 # other build. A cargo started while the lock is held (a build script or alias
 # calling cargo) skips the queue, or it would wait on its own parent, and its
 # runner keeps the lock (a nested cargo test let other builds in).
 # Listing and formatting pass straight through too. The lock goes when the
-# last process holding the descriptor exits, crash included.
-# A hold is the exception: its parent keeps the descriptor and waits for the
+# last process holding the pipe exits, crash included.
+# A hold is the exception: its parent keeps the pipe and waits for the
 # script, which runs without it, so a daemon the script leaves running (a
 # regtest bitcoind held every build from 18:40 on 2026-11-20) can't keep the
 # lock: it frees when the script exits. A plain build still shares the
-# descriptor with its children, so a build script that leaves one running would.
+# pipe with its children, so a build script that leaves one running would.
 real="$HOME/.cargo/bin/cargo"
 self=/opt/homebrew/bin/cargo
-export ONE_CARGO_LOCK="${ONE_CARGO_LOCK:-$HOME/Library/Caches/cargo-build.lock}"
+lock="$HOME/Developer/brain/bin/lock"
+
+# A second build starts alongside a running one only when rustc uses under
+# three cores and memory pressure is normal: a release build can spend ~7 min
+# linking on one core (2026-11-18), and load1 read 91 with only one rustc
+# because of fseventsd, so load says little. Prints the reading for the log.
+if [ "${1:-}" = --one-cargo-room ]; then
+    exec /usr/bin/perl -e '
+        local $ENV{LC_ALL} = "C";
+        my $cpu = 0;
+        for (`ps -Axo %cpu=,comm=`) { $cpu += $1 if m{\A\s*([\d.]+)\s+(?:.*/)?rustc\s*\z} }
+        $? == 0 or $cpu = "-";
+        my $level = `sysctl -n kern.memorystatus_vm_pressure_level`;
+        my $pressure = $? == 0 && $level =~ /\A(\d+)\s*\z/ ? $1 : "-";
+        printf "%s %s\n", $cpu eq "-" ? $cpu : sprintf("%.1f", $cpu), $pressure;
+        exit($cpu ne "-" && $cpu < 300 && $pressure eq "1" ? 0 : 1);
+    '
+fi
 
 if [ "${1:-}" = --one-cargo-runner ]; then
     shift
@@ -33,10 +51,12 @@ if [ "${1:-}" = --one-cargo-runner ]; then
         exec "$@"
     fi
     exec /usr/bin/perl -e '
-        use Fcntl qw(:flock F_SETFD FD_CLOEXEC);
+        use Fcntl qw(F_SETFD FD_CLOEXEC);
         if (defined(my $fd = delete $ENV{ONE_CARGO_FD})) {
+            my $holder = delete $ENV{ONE_CARGO_HOLDER};
+            $holder =~ /\A[1-9]\d*\z/ or die "one-cargo runner: no lock holder pid\n";   # never kill 0, the own group
+            kill TERM => $holder;   # frees the lock for the whole build tree
             open(my $f, ">&=", $fd) or die "one-cargo runner: fd $fd: $!\n";
-            flock($f, LOCK_UN);
             fcntl($f, F_SETFD, FD_CLOEXEC);
         }
         if (defined(my $fd = delete $ENV{ONE_CARGO_LOG_FD})) {
@@ -81,23 +101,15 @@ case "$sub" in
 esac
 : "${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER:=$self --one-cargo-runner}"
 export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER
-# Waiters go first come, first served: each leaves a ticket (arrival time and
-# pid) in $ONE_CARGO_LOCK.q, and only the oldest live ticket tries the lock. A
-# freed flock goes to any blocked waiter, so with every waiter blocked on it a
-# build waited 2 h 38 min while newer ones went first (2026-11-18, 20 waiting).
-# A ticket whose process is gone (killed, crashed) is skipped and removed.
-# A waiter knows its ticket by pid, so renaming one to an earlier time moves it
-# up (once the head rechecks, within 2 s); a renamed ticket stranded its
-# waiter when they matched by name (2026-11-18).
-# A release build can spend ~7 min linking on one core (2026-11-18). load1
-# read 91 with only one rustc because of fseventsd. The head tries the slots
-# every 2 s. Either slot can start alongside an existing build when rustc
-# uses under three cores and memory pressure is normal.
+# Waiters go first come, first served, in bin/lock's line (a build waited
+# 2 h 38 min behind newer ones when every waiter blocked on one flock,
+# 2026-11-18); its two slots are ONE_CARGO_SLOT, for a build tree per slot.
 exec /usr/bin/perl -e '
-    use Fcntl qw(:flock F_SETFD);
+    use Fcntl qw(F_SETFD);
+    use IPC::Open2 qw(open2);
     use POSIX qw(_exit);
     use Time::HiRes qw(time sleep);
-    my $sub = shift @ARGV;
+    my ($sub, $self, $lock) = splice(@ARGV, 0, 3);
     # Cargo config, CARGO_BUILD_TARGET_DIR and target overrides inside aliases are outside this check.
     sub own_target {
         return if $sub =~ /\A(?:hold|fetch|install|update|generate-lockfile|add|remove|rm|init|new|config|info|uninstall|report|install-update|install-update-config)\z/;
@@ -149,70 +161,18 @@ exec /usr/bin/perl -e '
         exec { $ARGV[0] } @ARGV or die "one-cargo: $ARGV[0]: $!\n";
     }
     my $queued = time;
-    my $q = "$ENV{ONE_CARGO_LOCK}.q";
-    sub lockfile { open(my $h, ">>", $_[0]) or die "one-cargo: $_[0]: $!\n"; $h }
-    sub reading {
-        local $ENV{LC_ALL} = "C";
-        my @processes = `ps -Axo %cpu=,comm=`;
-        my $cpu = $? == 0 ? 0 : "-";
-        if ($cpu ne "-") {
-            for (@processes) { $cpu += $1 if m{\A\s*([\d.]+)\s+(?:.*/)?rustc\s*\z} }
-        }
-        my $level = `sysctl -n kern.memorystatus_vm_pressure_level`;
-        my $pressure = $? == 0 && $level =~ /\A(\d+)\s*\z/ ? $1 : "-";
-        ($cpu eq "-" ? $cpu : sprintf("%.1f", $cpu), $pressure);
-    }
-    # The live tickets, oldest first; dead ones are removed.
-    sub line {
-        opendir(my $d, $q) or return ();
-        my @live;
-        for (sort grep { /^\d+-\d+$/ } readdir $d) {
-            my ($pid) = /-(\d+)$/;
-            if (kill 0, $pid) { push @live, $_ } else { unlink "$q/$_" }
-        }
-        @live;
-    }
-    my @slots = map { lockfile($_) } $ENV{ONE_CARGO_LOCK}, "$ENV{ONE_CARGO_LOCK}.2";
-    sub take {
-        for my $i (0, 1) {
-            my ($mine, $other) = @slots[$i, 1 - $i];
-            next unless flock($mine, LOCK_EX | LOCK_NB);
-            if (flock($other, LOCK_EX | LOCK_NB)) { flock($other, LOCK_UN); return ($i + 1, "-", "-") }
-            my ($cpu, $pressure) = reading();
-            return ($i + 1, $cpu, $pressure) if $cpu ne "-" && $cpu < 300 && $pressure eq "1";
-            flock($mine, LOCK_UN);
-            last;
-        }
-        ();
-    }
-    mkdir $q;
-    my $mine = sprintf("%017.0f-%d", time * 1e6, $$);
-    my ($slot, $rustc_cpu, $pressure, $waiting);
-    while (1) {
-        # Match by pid so a rename keeps its place and a removed ticket comes back.
-        my @line = line();
-        unless (grep { /-$$\z/ } @line) {
-            open(my $ticket, ">", "$q/$mine") or die "one-cargo: $q/$mine: $!\n";
-            close $ticket;
-            @line = line();
-        }
-        if ($line[0] =~ /-$$\z/) {
-            $mine = $line[0];
-            ($slot, $rustc_cpu, $pressure) = take();
-            last if $slot;
-        }
-        print STDERR "waiting for another cargo build\n" unless $waiting++;
-        sleep 2;
-    }
-    unlink "$q/$mine";
-    print STDERR "cargo slot $slot\n" if $waiting;
-    my $f = $slots[$slot - 1];
+    my $holder = open2(my $held, my $hold_in, $lock, "hold", "cargo", "$sub (pid $$)", "-s", 2, "-w", 0, "--more-if", "$self --one-cargo-room")
+        or die "one-cargo: lock hold: $!\n";
+    my ($slot) = (<$held> // "") =~ /\Aheld ([12])\n\z/ or die "one-cargo: lock hold ended without holding\n";
+    my ($rustc_cpu, $pressure) = $slot == 2 ? split(" ", `$self --one-cargo-room`) : ("-", "-");
+    print STDERR "cargo slot $slot\n" if time - $queued > 1;
     $ENV{ONE_CARGO_SLOT} = $slot;
     $ENV{ONE_CARGO_HELD} = 1;
-    # A hold script never gets the descriptor (it stays close-on-exec); see the header.
+    # A hold script never gets the pipe (it stays close-on-exec); see the header.
     unless ($sub eq "hold") {
-        fcntl($f, F_SETFD, 0);
-        $ENV{ONE_CARGO_FD} = fileno($f);
+        fcntl($hold_in, F_SETFD, 0);
+        $ENV{ONE_CARGO_FD} = fileno($hold_in);
+        $ENV{ONE_CARGO_HOLDER} = $holder;
     }
     sub log_build {
         my $start = time;
@@ -234,7 +194,7 @@ exec /usr/bin/perl -e '
         if ($pid) { $ENV{ONE_CARGO_LOG_FD} = fileno($write); return $write }
         # Keep the Cargo PID and finish the record when it exits or its runner unlocks.
         $SIG{$_} = "IGNORE" for qw(HUP INT TERM);
-        close $f;
+        close $hold_in;
         close $write;
         close STDIN;
         close STDOUT;
@@ -260,4 +220,4 @@ exec /usr/bin/perl -e '
         exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
     }
     exec { "nice" } "nice", "-n", "10", @ARGV or die "one-cargo: nice: $!\n";
-' "$sub" "$real" "$@"
+' "$sub" "$self" "$lock" "$real" "$@"
