@@ -68,7 +68,8 @@ mkdir -p "$src" || fail "cannot create source tree for $sha"
 rm -f "$index.lock" "$stage" "$stage.sha256" || fail "cannot clear staging for $sha"
 trap 'rm -f "$stage" "$stage.sha256"' 0
 trap 'exit 1' HUP INT TERM
-source_git() { GIT_INDEX_FILE="$index" git -C "$mono" --work-tree="$src" "$@"; }
+# An absolute git dir: git resolves the relative .git of -C after entering the work tree.
+source_git() { GIT_INDEX_FILE="$index" git --git-dir="$mono/.git" --work-tree="$src" "$@"; }
 source_git read-tree --reset -u "$sha" && source_git clean -fdx >&2 ||
     fail "cannot sync mono source for $sha"
 
