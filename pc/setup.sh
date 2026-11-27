@@ -89,19 +89,15 @@ link "$ROLE_DIR/cargo" /opt/homebrew/bin/cargo
 agent_domain="gui/$(id -u)"
 agent_dir="$HOME/Library/LaunchAgents"
 mkdir -p "$agent_dir" "$HOME/Library/Logs"
-for job in bitview-prune bitview-reap; do
-    link "$ROLE_DIR/$job" "$HOME/.local/bin/$job"
-done
-for job in bitview-prune bitview-reap; do
-    label=com.local.$job
-    plist="$agent_dir/$label.plist"
-    if ! cmp -s "$ROLE_DIR/$label.plist" "$plist" ||
-        ! launchctl print "$agent_domain/$label" >/dev/null 2>&1; then
-        launchctl bootout "$agent_domain/$label" 2>/dev/null || true
-        install -m 644 "$ROLE_DIR/$label.plist" "$plist"
-        launchctl bootstrap "$agent_domain" "$plist"
-    fi
-done
+link "$ROLE_DIR/bitview-reap" "$HOME/.local/bin/bitview-reap"
+label=com.local.bitview-reap
+plist="$agent_dir/$label.plist"
+if ! cmp -s "$ROLE_DIR/$label.plist" "$plist" ||
+    ! launchctl print "$agent_domain/$label" >/dev/null 2>&1; then
+    launchctl bootout "$agent_domain/$label" 2>/dev/null || true
+    install -m 644 "$ROLE_DIR/$label.plist" "$plist"
+    launchctl bootstrap "$agent_domain" "$plist"
+fi
 echo "Installing Cloudflare's cf..."
 install_cf
 # Cloned over HTTPS, as by bootstrap, dots pushes over SSH: the workstation
