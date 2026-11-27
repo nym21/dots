@@ -1,5 +1,6 @@
 brew "bat"
 brew "blueutil"
+brew "cloudflared"
 brew "helix"
 brew "mactop"
 brew "switchaudio-osx"

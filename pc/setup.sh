@@ -76,6 +76,10 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/com.local.transmission-vp
 [ -d ~/Developer/stream ] || git clone git@github.com:nym21/stream.git ~/Developer/stream
 ~/Developer/stream/install.sh
 
+# This Mac's Bitview, built from ~/Developer/mono and listening on port 3110,
+# served to the tailnet alone, at port 4110 of this Mac's name.
+tailscale serve --bg --https=4110 http://127.0.0.1:3110
+
 mkdir -p ~/.local/bin
 link "$ROLE_DIR/trex" ~/.local/bin/trex
 link "$ROLE_DIR/rex" ~/.local/bin/rex

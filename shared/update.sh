@@ -123,9 +123,6 @@ case "$ROLE" in
         update_cargo_hawk
         install_fleet_auto
         install_cf
-
-        # This Mac's tunnel, onto the cloudflared just upgraded to.
-        "$DOTS_DIR/pc/tunnel.sh" || echo "This Mac's tunnel was not moved onto the cloudflared installed; see above." >&2
         ;;
     server)
         if [ -r "$SERVER_DIR/.rex-feed" ]; then

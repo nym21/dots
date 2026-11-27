@@ -1397,8 +1397,8 @@ connectors() {
 # only once Cloudflare has its new connector and the server reports it ready,
 # and only while the others holding it are ready, counted just before: a
 # shared tunnel loses one server at a time, for seconds, a server's own its
-# only one, as does local, this Mac's, which restarts onto it. Any connector
-# left from before, which only the old token made, is then dropped.
+# only one. Any connector left from before, which only the old token made, is
+# then dropped.
 rotate() {
     local tunnel id old token holders server gained start
     lock
@@ -1416,7 +1416,6 @@ rotate() {
             "$TUNNELS" > "$TUNNELS.new" && mv "$TUNNELS.new" "$TUNNELS")
         probe
         holders="$(holding "$tunnel" | xargs)"
-        [ "$tunnel" != local ] || holders=local
         gained=0
         for server in $holders; do
             # Every other server holding it ready, counted just before.
@@ -1425,17 +1424,12 @@ rotate() {
                 echo "$tunnel is not ready on every other server holding it, so $server keeps the old token; stopping here." >&2
                 exit 1
             fi
-            if [ "$server" = local ]; then
-                echo "local: restarting this Mac's tunnel"
-                "$PC_DIR/tunnel.sh" restart
-            else
-                # shellcheck disable=SC2046
-                give "$server" $(tokens "$server")
-            fi
+            # shellcheck disable=SC2046
+            give "$server" $(tokens "$server")
             gained=$((gained + 1))
             start="$SECONDS"
             until [ "$(minus "$(connectors "$id")" "$old" | wc -l)" -ge "$gained" ] &&
-                { [ "$server" = local ] || { probe; in_state "$tunnel" ready | grep -qx "$server"; }; }; do
+                { probe; in_state "$tunnel" ready | grep -qx "$server"; }; do
                 if [ $((SECONDS - start)) -ge 120 ]; then
                     echo "$tunnel is not connected again on $server after 2 minutes; stopping here." >&2
                     exit 1
@@ -1558,13 +1552,12 @@ cf_logged_in() {
     fi
 }
 
-# Save in pc/.tunnels each token it lacks of a tunnel fleet.conf names, named
-# after a server, or this Mac's own, local, from Cloudflare, which holds them
-# all: pc/.tunnels only keeps them at hand, so a new workstation needs no more
-# than cf's login.
+# Save in pc/.tunnels each token it lacks of a tunnel fleet.conf names, a
+# role's or a server's, from Cloudflare, which holds them all: pc/.tunnels only
+# keeps them at hand, so a new workstation needs no more than cf's login.
 fetch_tokens() {
     local list='' name id token
-    for name in $({ awk '$1 == "group" || $1 == "role" { for (i = 3; i <= NF; i++) print $i }' "$CONF"; echo local; } | sort -u); do
+    for name in $(awk '$1 == "group" || $1 == "role" { for (i = 3; i <= NF; i++) print $i }' "$CONF" | sort -u); do
         [ -z "$(tunnel_id "$name")" ] || continue
         # Only when a token is missing, so a run with all of them at hand does
         # without Cloudflare's API.
@@ -1684,14 +1677,13 @@ init() {
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
 # the servers the newest release or commit of their mode, and Homebrew, Rust,
 # Rex, cloudflared, and macOS's updates; a run with nothing new restarts
-# nothing. It is this Mac's one hourly job, so it keeps this Mac's tunnel on
-# the cloudflared installed too, and checks every server serves, whatever it
-# skips. Only on power, with this Mac's dots exactly origin's main, which the
-# servers pull, and with a server in reach, so a closed or travelling Mac skips its
-# hours, and the next one it is open for catches up. It keeps the Mac awake
-# meanwhile, logs why it skips an hour, and notifies once when runs start
-# failing, or none has run for 2 hours, and again when runs succeed; ship status
-# says when none succeeded for over 3 days.
+# nothing. It is this Mac's one hourly job, so it checks every server serves
+# too, whatever it skips. Only on power, with this Mac's dots exactly origin's
+# main, which the servers pull, and with a server in reach, so a closed or
+# travelling Mac skips its hours, and the next one it is open for catches up.
+# It keeps the Mac awake meanwhile, logs why it skips an hour, and notifies once
+# when runs start failing, or none has run for 2 hours, and again when runs
+# succeed; ship status says when none succeeded for over 3 days.
 
 notify() {
     osascript -e "display notification \"See ~/Library/Logs/fleet-auto.log.\" with title \"$1\"" || true
@@ -1772,10 +1764,6 @@ auto() {
         tail -c 5242880 "$log" > "$log.new" && cat "$log.new" > "$log"
         rm -f "$log.new"
     fi
-    # Every hour, even one it skips: this Mac's tunnel, onto a cloudflared
-    # upgraded without ship update.
-    "$PC_DIR/tunnel.sh" ||
-        echo "$(date '+%Y-%m-%d %H:%M') this Mac's tunnel was not moved onto the cloudflared installed"
     health || silent=1
     if ! pmset -g batt | grep -q "'AC Power'"; then
         echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"

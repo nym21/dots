@@ -71,7 +71,7 @@ and sets it everywhere that holds it: the account, the login keychain, the
 ## Layout
 
 - `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, `trex`, and Cloudflare's `cf`, which Bun runs as the workstation has no Node.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, `trex`, and Cloudflare's `cf`, which Bun runs as the workstation has no Node. Its own Bitview, built from `~/Developer/mono`, is served to the tailnet alone, at port 4110 of its name.
 - `server/`: headless setup, profile, Helix and difftastic, and the workloads.
 - `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
   each run on this Mac alone with fakes for whatever it would change or reach:
@@ -190,7 +190,7 @@ calls itself that; `fleet status` also names a Mac on the tailnet that
 
 ### Tunnels
 
-A tunnel is named after what it serves: a site (`prod`, `next`, `local`),
+A tunnel is named after what it serves: a site (`prod`, `next`),
 or a server, which serves the tunnel named after it too, to
 reach that server alone, at a hostname such as `m4-1.bitview.space`. Cloudflare
 holds the tokens; `fleet` keeps them at hand in the Git-ignored `pc/.tunnels`,
@@ -221,8 +221,8 @@ version's file to the other). The run ends failing while a tunnel's servers
 holding it ready are not those its role gives it.
 `fleet rotate TUNNEL...` gives each tunnel a new token, as when one leaked:
 Cloudflare takes a new secret and from then on refuses the old token's new
-connections, keeping those it has, and each server holding the tunnel (or this
-Mac, for `local`) takes the new token in turn, the next only once Cloudflare
+connections, keeping those it has, and each server holding the tunnel takes
+the new token in turn, the next only once Cloudflare
 has the new connector, so a shared tunnel loses one server at a time, for
 seconds. Any connector left from the old token is then dropped.
 Each tunnel's cache is purged once the servers holding it run one version
@@ -362,14 +362,6 @@ skipped an hour, and notifies once when runs start failing, when one has run for
 when none has run for a day; `ship status` says
 when none succeeded for over 3 days.
 
-Being this Mac's one hourly job, `fleet auto` also runs `pc/tunnel.sh` every
-hour, even one it skips, as `ship update` does after upgrading. It keeps this
-Mac's own tunnel, `local`, which serves its Bitview at `local.bitview.space`,
-as a LaunchAgent that starts it at login and again whenever it exits, logging
-to `~/Library/Logs/local-tunnel.log`, and moves it onto a new cloudflared on
-its own. The tunnel stops when `pc/.tunnels` lacks its token, which `fleet init`
-fetches.
-
 ### Status and alerts
 
 `fleet status` prints a line per server with its role, and flags a server
@@ -378,7 +370,7 @@ version, a role whose servers do not run its newest commit, and a macOS
 update downloaded for `fleet update` to install.
 
 Cloudflare emails when the shared `prod` tunnel goes down, comes
-back, or degrades. Each server's own tunnel, `next` and `local` send no email.
+back, or degrades. Each server's own tunnel and `next` send no email.
 Their state, which shows a deliberate restart, a crash, a server down or Bitview
 stuck behind the tip, is in Cloudflare's dashboard and in `fleet status` (see
 the [server instructions](server/README.md#cloudflare-tunnels)).
