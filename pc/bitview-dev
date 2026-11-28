@@ -17,6 +17,7 @@
 # next newer, other branch    run                    skipped, said in the log
 # next newer, tree dirty      run                    skipped, said in the log
 # next in a new format        run, now               held, said in the log, the old server runs on
+# no build linked, data held  run, now               held the same way
 # next in a new format        new-format             built as above, the server rebuilds its data
 # next moves or tree dirtied  waiting for the lock   the build takes what is clean then
 # next moves or tree dirtied  during the build       nothing installed
@@ -56,26 +57,36 @@ format() {
         sed -n 's/^pub const VERSION: Version = Version::new(\([0-9]*\));$/\1/p'
 }
 
-# Whether commit $1 must wait: its indexer format isn't the installed build's, and
-# $2 doesn't accept that.
+# Whether commit $1 must wait: it may rebuild the data, as its indexer format
+# isn't the installed build's or none is linked to say, and $2 doesn't accept that.
 held() {
-    [ "$2" != new-format ] && [ -L "$link" ] || return 1
-    name=$(readlink "$link")
-    old=${name#bitviewd-}
-    from=$(format "${old%-debug}") && to=$(format "$1") && [ -n "$from" ] && [ -n "$to" ] ||
-        fail "cannot compare the indexer formats of $name and $1"
-    [ "$from" != "$to" ] || return 1
-    say "held $1: its indexer format is $to and $name has $from, so it would rebuild ~/.bitview from genesis; to accept: bitview-dev new-format"
+    [ "$2" != new-format ] || return 1
+    if [ -L "$link" ]; then
+        name=$(readlink "$link")
+        old=${name#bitviewd-}
+        from=$(format "${old%-debug}") && to=$(format "$1") && [ -n "$from" ] && [ -n "$to" ] ||
+            fail "cannot compare the indexer formats of $name and $1"
+        [ "$from" != "$to" ] || return 1
+        why="its indexer format is $to and $name has $from"
+    else
+        [ -e "$HOME/.bitview/plugins/indexer" ] || return 1
+        why="no linked build says the format of the data in $HOME/.bitview"
+    fi
+    say "held $1: $why, so it may rebuild ~/.bitview from genesis; the owner's call, accepted by bitview-dev new-format"
+}
+
+# Whether commit $1 can be built now, saying why when not. $2 as for held.
+buildable() {
+    ! held "$1" "$2" || return 1
+    clean_at "$1" && return 0
+    say "skipped $1: mono's checkout is not next with a clean build tree"
+    return 1
 }
 
 build() {
     next=$(commit refs/heads/next) || fail "mono has no next branch"
     [ "$(installed)" != "$next" ] || return 0
-    ! held "$next" "$1" || return 0
-    if ! clean_at "$next"; then
-        say "skipped $next: mono's checkout is not next with a clean build tree"
-        return 0
-    fi
+    buildable "$next" "$1" || return 0
     say "building $next"
     cd "$mono" || fail "cannot enter $mono"
     started=$(date +%s)
@@ -125,7 +136,8 @@ recent() { [ -n "$(find -L "$link" -mmin -1200 2>/dev/null)" ]; }
 
 refresh() {
     next=$(commit refs/heads/next) || fail "mono has no next branch"
-    [ "$next" = "$(installed)" ] || held "$next" "$1" || cargo --one-cargo-hold "$0" build "$1"
+    [ "$next" != "$(installed)" ] && buildable "$next" "$1" || return 0
+    cargo --one-cargo-hold "$0" build "$1"
 }
 
 case "$#:${1:-}" in
