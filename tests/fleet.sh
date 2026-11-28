@@ -12,6 +12,8 @@ mkdir -p "$work"
 server_user=mini ready_timeout=43200 fetch_timeout=3600 incomplete=''
 SHIP=ship JOB=job TAILSCALE_SH=tailscale.sh MACOS_UPDATE=macos-update.sh PASSWORD='~/pw'
 calls="$TMP/calls"
+# (The hold gate, which detach passes, has its own rows below.)
+hold() { :; }
 record() {
     echo "$*" >> "$calls"
 }
@@ -224,7 +226,7 @@ case "$cmd" in
             *"ship apply"*) [ -z "$(pending)" ] || restart ;;
             *"ship stop && "*) restart ;;
             # A restart on the audit copies fleet staged, which it merges (sync_audits).
-            *"ship stop bitviewd && "*"audits.sh place && "*)
+            *"ship stop bitviewd && if "*"audits.sh place; then "*)
                 echo "$host" >> "$SIM/merged"
                 restart
                 ;;

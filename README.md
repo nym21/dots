@@ -242,13 +242,17 @@ span below its floor.
 Timed work on a server, a benchmark or a profile, holds its lock in brain,
 `~/Developer/brain/bin/SERVER-lock`, or `next-m4-lock` and `next-m6-lock`,
 which take the next group's server of that CPU, whichever it is then; the
-lock refuses a prod server. `fleet update` takes a server's lock, as
-`fleet-auto`, before it builds on it, restarts it or swaps it to prod,
-waiting up to 50 minutes, then stopping with status 4, which `fleet auto`
-takes as its hour skipped; its hold ends with its run. A held server that needs no new build is left
-alone, and a group with a held server never takes prod. A run by hand takes no lock, but refuses a held
-server that needs an update, naming its holder, and goes on only with `fleet update --force`. The other next server
-keeps `next` meanwhile. Nothing in `fleet.conf` changes for a hold.
+lock refuses a prod server. Every `fleet` command that changes a server
+(`update`, `restart`, `reboot`, `shutdown`, `tunnels`) takes its lock, as
+`fleet-auto`, before it builds on it, restarts it or swaps it to prod, and
+keeps it until the run ends, so no timed work starts on a server fleet is
+changing. `fleet auto` waits up to 50 minutes for it, a run by hand a second;
+then the run stops with status 4, naming the holder, which `fleet auto` takes
+as its hour skipped. `--force` goes on over a hold, as when the holder runs
+fleet on its own server (`fleet reboot --force m6-2` before a bench). A held
+server that needs no new build is left alone, and a group with a held server
+never takes prod. The other next server keeps `next` meanwhile. Nothing in
+`fleet.conf` changes for a hold.
 
 ### Setting up
 

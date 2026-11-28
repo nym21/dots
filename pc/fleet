@@ -30,6 +30,10 @@ set -euo pipefail
 #   fleet purge [SERVER...]    purge Cloudflare's cache of the servers' hostnames
 #   fleet auto                 fleet update, hourly, when this Mac can
 #
+# update, restart, reboot, shutdown and tunnels take brain's lock for timed
+# work on each server before they change it, and stop at one someone holds,
+# naming the holder; with --force they go on over it (hold).
+#
 # One group serves prod and never builds nor restarts: a build beside a
 # serving Bitview stalls it (brain notes stalls-20261123). The others serve
 # next, and only they build, each server for its own CPU. Prod is the group
@@ -105,7 +109,7 @@ cf() {
 }
 
 usage() {
-    echo "Usage: fleet init | status | update [--force] [SERVER...] | restart | reboot | shutdown | purge [SERVER...] | role [SERVER] | tunnels | rotate TUNNEL... | log [SINCE] | auto" >&2
+    echo "Usage: fleet init | status | update | restart | reboot | shutdown [--force] [SERVER...] | purge [SERVER...] | role [SERVER] | tunnels [--force] | rotate TUNNEL... | log [SINCE] | auto" >&2
     exit 1
 }
 
@@ -230,6 +234,7 @@ wait_serving() {
 # here, ends first.
 detach() {
     local start="$SECONDS" status waiting=''
+    hold "$1"
     while :; do
         status=0
         on "$1" "$JOB start '$2'" || status=$?
@@ -514,6 +519,7 @@ keeps_floor() {
 # (prod restarts nothing until it is next), or when it does not answer.
 down() {
     local server="$1" tunnel shared
+    hold "$server"
     probe
     if ! answered "$server"; then
         echo "$server did not answer, so what it holds is unknown." >&2
@@ -700,7 +706,8 @@ restart_audits() {
     on "$server" 'git -C ~/Developer/dots pull -q --ff-only' ||
         { echo "$server: could not update its dots; stopping here." >&2; exit 1; }
     start="$SECONDS"
-    detach "$server" "$SHIP stop bitviewd && $AUDITS_SH place && $SHIP start"
+    # Bitview starts again whether or not place took the copies, keeping its failure.
+    detach "$server" "$SHIP stop bitviewd && if $AUDITS_SH place; then $SHIP start; else $SHIP start; false; fi"
     follow_job "$server" || { echo "$server: its restart on the audits failed; stopping here." >&2; exit 1; }
     wait_serving "$server" "$audits_timeout"
     audits "$server" merged || { echo "$server serves without having merged its audits; stopping here." >&2; exit 1; }
@@ -1159,20 +1166,23 @@ lock() {
 }
 locked=''
 
-# In fleet auto, take brain's lock for timed work on each SERVER... that has
-# one, as fleet-auto, so it never builds on, restarts or swaps to a server
-# someone times: waiting at most 50 minutes each, then the run stops with
-# status 4, which fleet auto takes as its hour skipped. A hold ends with this
-# run (-p), kill -9 included; unhold releases them sooner.
-# A run by hand takes none, as whoever runs it may hold the lock, as a bench
-# returning its mini does, and goes on over another's hold only with --force.
+# The one gate before fleet changes a server, which down and detach pass
+# through, and update and swap call first for all the servers they will
+# change: brain's lock for timed work on each SERVER... that has one, taken as
+# fleet-auto until this run ends (-p, kill -9 included; unhold releases it
+# sooner), so fleet never builds on, restarts or swaps to a server someone
+# times, nor does timed work start on one fleet is changing. fleet auto waits
+# up to 50 minutes for it, a run by hand a second; then the run stops with
+# status 4, naming the holder, which fleet auto takes as its hour skipped.
+# --force skips the gate, as for the holder running fleet on its own server.
 hold() {
-    local server
-    [ -n "${FLEET_AUTO:-}" ] || return 0
+    local server wait=1
+    [ -z "${force:-}" ] || return 0
+    [ -z "${FLEET_AUTO:-}" ] || wait=3000
     for server; do
         if [ ! -x "$LOCKS/$server-lock" ] || grep -qx "$server" "$work/held" 2>/dev/null; then continue; fi
-        if ! "$LOCKS/$server-lock" take fleet-auto 3000 -p $$ >/dev/null; then
-            echo "$server stays held for timed work ($("$LOCKS/$server-lock" status | head -1)); stopping here." >&2
+        if ! "$LOCKS/$server-lock" take fleet-auto "$wait" -p $$ >/dev/null; then
+            echo "$server is held for timed work ($("$LOCKS/$server-lock" status | head -1)); stopping here (--force goes on over it)." >&2
             exit 4
         fi
         echo "$server" >> "$work/held"
@@ -1225,7 +1235,7 @@ announce_pages() {
 }
 
 update() {
-    local server tunnel kept='' moving='' pin state
+    local server tunnel kept='' pin state
     lock
     cf_logged_in
     fetch_tokens
@@ -1268,16 +1278,12 @@ update() {
             esac
         elif at_pin "$server" "$pin" && held "$server"; then
             echo "$server is held for timed work and has its version: left alone."
-        elif [ -z "${FLEET_AUTO:-}" ] && [ -z "${force:-}" ] && held "$server"; then
-            echo "$server is held for timed work by $(holder "$server"); fleet update goes on only with --force." >&2
-            exit 1
         else
             kept="$kept $server"
-            at_pin "$server" "$pin" || moving="$moving $server"
         fi
     done
     # shellcheck disable=SC2086
-    hold $moving
+    hold $kept
     swap
     if [ -n "$kept" ]; then
         # shellcheck disable=SC2086
@@ -1312,7 +1318,7 @@ restart() {
     local server
     lock
     work="$(mktemp -d)"
-    trap 'rm -rf "$work" "$LOCK"' EXIT
+    trap 'unhold; rm -rf "$work" "$LOCK"' EXIT
     roles
     for server in $(order "$@"); do
         echo "== $server"
@@ -1341,7 +1347,7 @@ power() {
     shift
     lock
     work="$(mktemp -d)"
-    trap 'clear_passwords; rm -rf "$work" "$LOCK"' EXIT
+    trap 'unhold; clear_passwords; rm -rf "$work" "$LOCK"' EXIT
     roles
     # shellcheck disable=SC2046
     check_passwords $(given "$@")
@@ -1929,11 +1935,13 @@ auto() {
 [ "$#" -ge 1 ] || usage
 command="$1"
 shift
-# fleet update --force goes on over another's hold on a server.
-if [ "$command" = update ] && [ "${1:-}" = --force ]; then
-    force=1
-    shift
-fi
+# --force goes on over another's hold on a server (hold).
+case "$command:${1:-}" in
+    update:--force | restart:--force | reboot:--force | shutdown:--force | tunnels:--force)
+        force=1
+        shift
+        ;;
+esac
 case "$command" in
     log | rotate) ;;
     *) for server; do

@@ -68,7 +68,8 @@ case "$#:${1:-}" in
         bitviewd --checkaudits "$STAGE/$2"
         ;;
     1:place)
-        if pgrep -x bitviewd >/dev/null; then
+        # The managed bitviewd, not a seat's own of the same name.
+        if "$(dirname "$0")/workloads.sh" running bitviewd; then
             echo "bitviewd runs: its store can't take an import now" >&2
             exit 1
         fi

@@ -15,6 +15,8 @@ set -euo pipefail
 #   workloads.sh stop [NAME...]   stop all, or the NAMEs, cleanly and in order
 #   workloads.sh boot             wait for the Rex server and the external
 #                                 volume, then run start in its own block
+#   workloads.sh running NAME     whether this script runs NAME (its loop), not
+#                                 another process of that name
 #
 # NAMEs are bitcoind, bitviewd, and tunnels.
 
@@ -25,7 +27,7 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/
 source "$SERVER_DIR/crate.sh"
 
 usage() {
-    echo "Usage: $0 start | stop [bitcoind | bitviewd | tunnels]... | boot" >&2
+    echo "Usage: $0 start | stop [bitcoind | bitviewd | tunnels]... | boot | running NAME" >&2
     exit 1
 }
 
@@ -320,6 +322,11 @@ case "${1:-}" in
     boot)
         [ "$#" -eq 1 ] || usage
         boot
+        ;;
+    running)
+        [ "$#" -eq 2 ] || usage
+        script "$2" >/dev/null
+        running "$2"
         ;;
     supervise)
         [ "$#" -eq 2 ] || usage
