@@ -71,7 +71,7 @@ and sets it everywhere that holds it: the account, the login keychain, the
 ## Layout
 
 - `shared/`: what both roles use: packages, shell dotfiles, setup internals, and `ship`; also the servers' Helix config.
-- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, `trex`, and Cloudflare's `cf`, which Bun runs as the workstation has no Node. Its own Bitview, built from `~/Developer/mono`, is served to the tailnet alone, at port 4110 of its name.
+- `pc/`: the workstation: development tools, Codex and Claude Code, Chromium for screenshots and checks, `ffmpeg`, `ios-webkit-debug-proxy` for Mobile Safari on a real iPhone, Transmission's Mullvad tunnel, `fleet`, `trex`, and Cloudflare's `cf`, which Bun runs as the workstation has no Node. Its own Bitview, a debug build of `~/Developer/mono`'s `next` that `pc/bitview-dev` rebuilds once a day (the check behind the invariants release builds leave out; a new indexer format, which rebuilds the data, waits for `bitview-dev new-format`), is served to the tailnet alone, at port 4110 of its name.
 - `server/`: headless setup, profile, Helix and difftastic, and the workloads.
 - `tests/`: stand-in tests of `fleet` and the scripts it runs on the servers,
   each run on this Mac alone with fakes for whatever it would change or reach:

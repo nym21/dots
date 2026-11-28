@@ -76,8 +76,9 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/com.local.transmission-vp
 [ -d ~/Developer/stream ] || git clone git@github.com:nym21/stream.git ~/Developer/stream
 ~/Developer/stream/install.sh
 
-# This Mac's Bitview, built from ~/Developer/mono and listening on port 3110,
-# served to the tailnet alone, at port 4110 of this Mac's name.
+# This Mac's Bitview, a debug build of ~/Developer/mono's next (bitview-dev)
+# listening on port 3110, served to the tailnet alone, at port 4110 of this
+# Mac's name.
 tailscale serve --bg --https=4110 http://127.0.0.1:3110
 
 mkdir -p ~/.local/bin
@@ -90,14 +91,21 @@ agent_domain="gui/$(id -u)"
 agent_dir="$HOME/Library/LaunchAgents"
 mkdir -p "$agent_dir" "$HOME/Library/Logs"
 link "$ROLE_DIR/bitview-reap" "$HOME/.local/bin/bitview-reap"
-label=com.local.bitview-reap
-plist="$agent_dir/$label.plist"
-if ! cmp -s "$ROLE_DIR/$label.plist" "$plist" ||
-    ! launchctl print "$agent_domain/$label" >/dev/null 2>&1; then
-    launchctl bootout "$agent_domain/$label" 2>/dev/null || true
-    install -m 644 "$ROLE_DIR/$label.plist" "$plist"
-    launchctl bootstrap "$agent_domain" "$plist"
-fi
+link "$ROLE_DIR/bitview-dev" "$HOME/.local/bin/bitview-dev"
+# bitview-dev builds what bitviewd runs, and restarts it onto each build.
+for job in bitview-reap bitviewd bitview-dev; do
+    label=com.local.$job
+    plist="$agent_dir/$label.plist"
+    if ! cmp -s "$ROLE_DIR/$label.plist" "$plist" ||
+        ! launchctl print "$agent_domain/$label" >/dev/null 2>&1; then
+        launchctl bootout "$agent_domain/$label" 2>/dev/null || true
+        # bootout can return while the job still stops (a Bitview stop waits for
+        # its writes), and a bootstrap then fails.
+        while launchctl print "$agent_domain/$label" >/dev/null 2>&1; do sleep 1; done
+        install -m 644 "$ROLE_DIR/$label.plist" "$plist"
+        launchctl bootstrap "$agent_domain" "$plist"
+    fi
+done
 echo "Installing Cloudflare's cf..."
 install_cf
 # Cloned over HTTPS, as by bootstrap, dots pushes over SSH: the workstation

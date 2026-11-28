@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.bitviewd</string>
+    <!-- The debug build bitview-dev installs. Console lines are in Bitview's
+         own daily log, so launchd keeps only errors and panics. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>exec "$HOME/Library/Application Support/bitviewd/bitviewd" &gt;/dev/null 2&gt;&gt;"$HOME/Library/Logs/bitviewd.log"</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_BACKTRACE</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <!-- A stop waits for the writes in flight. -->
+    <key>ExitTimeOut</key>
+    <integer>1800</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

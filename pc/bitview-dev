@@ -1,0 +1,137 @@
+#!/bin/sh
+# This Mac's Bitview runs a debug build indexing the real chain: it is the check
+# behind the invariants release builds leave out (hash identity among them), so
+# it is rebuilt from mono's next, once a day. com.local.bitview-dev runs this
+# hourly, so a tree that can't be built now is tried again; `bitview-dev now`
+# doesn't wait the day. It builds only mono's main checkout, queued like any
+# build (cargo --one-cargo-hold) in its target/debug, and installs a copy that
+# com.local.bitviewd runs, so later builds there leave it alone. brain sync
+# reports a server that stays behind next or isn't a debug build.
+#
+# A new indexer format makes the server rebuild ~/.bitview from genesis, hours in
+# release and longer in debug, so it waits for `bitview-dev new-format`.
+#
+# State                       Event                  Result
+# next installed              run                    restarts a server still on an older build
+# installed under 20 h ago    run                    no build until then, restart as above
+# next newer, other branch    run                    skipped, said in the log
+# next newer, tree dirty      run                    skipped, said in the log
+# next in a new format        run, now               held, said in the log, the old server runs on
+# next in a new format        new-format             built as above, the server rebuilds its data
+# next moves or tree dirtied  waiting for the lock   the build takes what is clean then
+# next moves or tree dirtied  during the build       nothing installed
+# build fails                 run                    exit 1, the old server runs on
+# killed mid-copy             next run               copies again
+# killed before the restart   next run               restarts
+# server booted out           run                    left stopped
+set -eu
+
+PATH=/opt/homebrew/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin
+mono=$HOME/Developer/mono
+dir="$HOME/Library/Application Support/bitviewd"
+link=$dir/bitviewd
+job=gui/$(id -u)/com.local.bitviewd
+
+say() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+fail() { say "$*" >&2; exit 1; }
+commit() { git -C "$mono" rev-parse --verify --quiet --short=7 "$1^{commit}"; }
+
+# The build inputs, committed: a build of a dirty tree would run code no commit
+# names. The website is left out, as a debug build serves its folder live, and so
+# are untracked files: nothing committed compiles them, and other sessions leave
+# probes in the tree.
+clean_at() {
+    [ "$(commit HEAD)" = "$1" ] &&
+        dirty=$(git -C "$mono" --no-optional-locks status --porcelain --untracked-files=no -- \
+            .cargo Cargo.toml Cargo.lock rust-toolchain.toml crates) &&
+        [ -z "$dirty" ]
+}
+
+installed() {
+    [ -x "$link" ] && readlink "$link" | sed -n 's/^bitviewd-\(.*\)-debug$/\1/p'
+}
+
+format() {
+    git -C "$mono" show "$1^{commit}:crates/bitview_plugin_indexer/src/constants.rs" |
+        sed -n 's/^pub const VERSION: Version = Version::new(\([0-9]*\));$/\1/p'
+}
+
+# Whether commit $1 must wait: its indexer format isn't the installed build's, and
+# $2 doesn't accept that.
+held() {
+    [ "$2" != new-format ] && [ -L "$link" ] || return 1
+    name=$(readlink "$link")
+    old=${name#bitviewd-}
+    from=$(format "${old%-debug}") && to=$(format "$1") && [ -n "$from" ] && [ -n "$to" ] ||
+        fail "cannot compare the indexer formats of $name and $1"
+    [ "$from" != "$to" ] || return 1
+    say "held $1: its indexer format is $to and $name has $from, so it would rebuild ~/.bitview from genesis; to accept: bitview-dev new-format"
+}
+
+build() {
+    next=$(commit refs/heads/next) || fail "mono has no next branch"
+    [ "$(installed)" != "$next" ] || return 0
+    ! held "$next" "$1" || return 0
+    if ! clean_at "$next"; then
+        say "skipped $next: mono's checkout is not next with a clean build tree"
+        return 0
+    fi
+    say "building $next"
+    cd "$mono" || fail "cannot enter $mono"
+    started=$(date +%s)
+    cargo build --locked --bin bitviewd || fail "cargo build failed at $next"
+    if ! clean_at "$next"; then
+        say "not installed: next or the build tree changed while building $next"
+        return 0
+    fi
+    name=bitviewd-$next-debug
+    mkdir -p "$dir"
+    cp "$mono/target/debug/bitviewd" "$dir/.staged" || fail "cannot copy the build of $next"
+    grep -qaF "$next-debug" "$dir/.staged" || fail "the build does not say $next-debug"
+    previous=$(readlink "$link" || true)
+    mv -f "$dir/.staged" "$dir/$name"
+    ln -sfn "$name" "$dir/.link" && mv -f "$dir/.link" "$link" || fail "cannot install $name"
+    # Only the build running and the one before it are kept.
+    for old in "$dir"/bitviewd-*-debug; do
+        case "${old##*/}" in "$name" | "$previous") ;; *) rm -f "$old" ;; esac
+    done
+    say "installed $name in $(($(date +%s) - started)) s"
+}
+
+# Restarts a loaded server that runs another build than the installed one. SIGTERM
+# lets it finish its writes, however long that takes (the plist's ExitTimeOut).
+restart() {
+    [ -x "$link" ] || return 0
+    launchctl print "$job" >/dev/null 2>&1 || return 0
+    pid=$(launchctl print "$job" | awk '$1 == "pid" { print $3; exit }')
+    if [ -n "$pid" ]; then
+        running=$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)
+        [ "${running##*/}" != "$(readlink "$link")" ] || return 0
+        say "restarting the server onto $(readlink "$link")"
+        launchctl kill SIGTERM "$job"
+        waited=0
+        while kill -0 "$pid" 2>/dev/null; do
+            [ "$waited" -lt 1800 ] || fail "the server (pid $pid) is still stopping after 30 min"
+            sleep 2
+            waited=$((waited + 2))
+        done
+    fi
+    launchctl kickstart "$job" || fail "cannot start $job"
+}
+
+# A build installed under 20 h ago is recent enough: a day's refresh, with room
+# for the hourly runs not to drift past it.
+recent() { [ -n "$(find -L "$link" -mmin -1200 2>/dev/null)" ]; }
+
+refresh() {
+    next=$(commit refs/heads/next) || fail "mono has no next branch"
+    [ "$next" = "$(installed)" ] || held "$next" "$1" || cargo --one-cargo-hold "$0" build "$1"
+}
+
+case "$#:${1:-}" in
+    0:) recent || refresh ""; restart ;;
+    1:now) refresh ""; restart ;;
+    1:new-format) refresh new-format; restart ;;
+    2:build) build "$2" ;;
+    *) fail "usage: bitview-dev [now | new-format]" ;;
+esac
