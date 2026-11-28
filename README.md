@@ -343,8 +343,9 @@ changes left to commit, push or pull), and a server answers. That one check brin
 group Homebrew, Rust, Rex, cloudflared, Bitcoin Core, Tailscale, and macOS's
 updates, major upgrades included, which a prod server gets once it is next; a run with nothing new
 restarts nothing. A closed or travelling Mac skips its hours, and the next one
-it is open for catches up. It leaves alone a server that does not serve, as one
-stopped on purpose or after a crash, to be looked at, while the others update.
+it is open for catches up. It leaves alone a server that does not serve, while
+the others update: for the hour when it is held for timed work, catching up or
+updating, and to be looked at when it crashed, stopped or does not answer.
 `fleet reboot [SERVER...]` and `fleet shutdown [SERVER...]` restart or turn
 off the Macs themselves, one at a time, each as a job with its password lent:
 `server/power.sh`, which is `ship reboot` and `ship shutdown` there, stops the
@@ -355,12 +356,18 @@ or, one that wasn't serving, as a mini benching, once it answers on a new boot. 
 fresh boot before a benchmark keeps runs comparable.
 
 One `fleet update`, `restart`, `reboot` or `shutdown` runs at a time: another stops at once,
-and an hourly run skips its turn, which a day without a completed run
-notifies, as when one hangs. It keeps the Mac awake meanwhile, logs to
-`~/Library/Logs/fleet-auto.log`, each line of a run with its time, and why it
-skipped an hour, and notifies once when runs start failing, when one has run for a day, as when it hangs, or
-when none has run for a day; `ship status` says
-when none succeeded for over 3 days.
+and an hourly run skips its turn. It keeps the Mac awake meanwhile, and logs to
+`~/Library/Logs/fleet-auto.log` each line of a run with its time, why it skipped
+an hour, and each hour, while an update runs too, one health line: what each
+server does (serving, catching up, held by whom, updating, crashed, not serving
+or unreachable) and how many serve each role's tunnel against its floor.
+A failure that lasts 3 hours reaches the owner: prod's tunnel below its floor,
+as when one of its servers fails, by one text (brain's `ping --now`) at
+its start and one when it recovers; anything else, a server failing, an update
+failing, skipping as dots differs, or running past a day, by one line in brain's
+`todo/dots.md`, kept while it lasts. Held and catching up are no failures, and
+nothing is kept while no server answers, as when this Mac is offline.
+`ship status` says when none succeeded for over 3 days.
 
 ### Status and alerts
 

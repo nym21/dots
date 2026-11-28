@@ -85,7 +85,7 @@ SITE=http://localhost:3110
 export CF_QUIET=1
 # Where fleet keeps its state, which a cache cleaner leaves alone: the lock,
 # the tunnel cache records, the last swap's time, and fleet auto's last
-# success and alerts.
+# success and failing streaks.
 STATE_DIR="$HOME/Library/Application Support/dots"
 PURGED="$STATE_DIR/purged"
 SWAPPED="$STATE_DIR/swapped"
@@ -344,13 +344,31 @@ busy() {
     grep -qx 'job ' "$work/live.$1"
 }
 held() {
-    local state
-    [ -x "$LOCKS/$1-lock" ] || return 1
-    state="$("$LOCKS/$1-lock" status | head -1)"
-    [ "${state#held: }" != "$state" ] && [ "${state#held: fleet-auto }" = "$state" ]
+    local by
+    by="$(holder "$1")"
+    [ -n "$by" ] && [ "$by" != fleet-auto ]
 }
+# Who holds that lock, fleet-auto included; nothing when free or there is none.
 holder() {
-    "$LOCKS/$1-lock" status | awk 'NR == 1 { print $2 }'
+    [ ! -x "$LOCKS/$1-lock" ] || "$LOCKS/$1-lock" status | awk 'NR == 1 && $1 == "held:" { print $2 }'
+}
+
+# What SERVER does now: serving; catching up, its tunnels serving, Bitview
+# short of the tip; or, serving neither, held by HOLDER, for timed work, as a
+# bench; updating, held by fleet auto; or crashed, a workload staying down,
+# not serving, or unreachable, the three that fail.
+look() {
+    local code=0 by
+    on "$1" "$SHIP status --check" 2>/dev/null || code=$?
+    by="$(holder "$1")"
+    case "$code:$by" in
+        0:*) echo serving ;;
+        3:*) echo catching up ;;
+        *:?*) if [ "$by" = fleet-auto ]; then echo updating; else echo "held by $by"; fi ;;
+        2:) echo crashed ;;
+        255:) echo unreachable ;;
+        *) echo not serving ;;
+    esac
 }
 
 # Whether every server of GROUP serves prod's pin, at the tip, with no job of
@@ -1181,8 +1199,10 @@ swap() {
     converge
 }
 
-# Leave SERVERS as they are, for REASON, and have the run end failing.
-incomplete='' unsettled=''
+# Leave SERVER as it is, for REASON, and have the run end incomplete (status
+# 5), as a server or tunnel that is not ready is health's to report; or broken
+# (1), a failure of the update's own, as a build.
+incomplete='' broken='' unsettled=''
 leave() {
     echo "$2; leaving $1 alone." >&2
     incomplete=1
@@ -1205,7 +1225,7 @@ announce_pages() {
 }
 
 update() {
-    local server tunnel kept='' moving='' pin
+    local server tunnel kept='' moving='' pin state
     lock
     cf_logged_in
     fetch_tokens
@@ -1238,10 +1258,14 @@ update() {
             [ "$#" -eq 0 ] || echo "$server serves prod, so it updates once it is next."
         elif [ -z "$pin" ]; then
             :
-        # fleet auto leaves alone a server that does not serve, as one stopped
-        # on purpose or after a crash, to be looked at.
-        elif [ -n "${FLEET_AUTO:-}" ] && ! on "$server" "$SHIP status --check" 2>/dev/null; then
-            leave "$server" "$server does not serve, which ship status there explains"
+        # fleet auto leaves alone a server that does not serve: for the hour
+        # when it is held, catching up or updating; to be looked at when it
+        # crashed, stopped or does not answer, which health reports.
+        elif [ -n "${FLEET_AUTO:-}" ] && state="$(look "$server")" && [ "$state" != serving ]; then
+            case "$state" in
+                crashed | 'not serving' | unreachable) leave "$server" "$server is $state" ;;
+                *) echo "$server is $state: left alone this hour." ;;
+            esac
         elif at_pin "$server" "$pin" && held "$server"; then
             echo "$server is held for timed work and has its version: left alone."
         elif [ -z "${FLEET_AUTO:-}" ] && [ -z "${force:-}" ] && held "$server"; then
@@ -1263,6 +1287,7 @@ update() {
         for server in $kept; do
             if grep -qx "$server" "$work/unready" 2>/dev/null; then
                 leave "$server" "$server did not get ready"
+                broken=1
             else
                 update_server "$server"
             fi
@@ -1273,9 +1298,12 @@ update() {
         swap
     fi
     settled
-    if [ -n "$incomplete" ]; then
+    if [ -n "$broken" ]; then
         echo "Not everything was updated; see above." >&2
         exit 1
+    elif [ -n "$incomplete" ]; then
+        echo "Not everything was updated, as a server or tunnel above is not ready." >&2
+        exit 5
     fi
     announce_pages
 }
@@ -1677,67 +1705,141 @@ init() {
 # Run fleet update, hourly, from its LaunchAgent: the one check, which brings
 # the servers the newest release or commit of their mode, and Homebrew, Rust,
 # Rex, cloudflared, and macOS's updates; a run with nothing new restarts
-# nothing. It is this Mac's one hourly job, so it checks every server serves
-# too, whatever it skips. Only on power, with this Mac's dots exactly origin's
-# main, which the servers pull, and with a server in reach, so a closed or
-# travelling Mac skips its hours, and the next one it is open for catches up.
-# It keeps the Mac awake meanwhile, logs why it skips an hour, and notifies once
-# when runs start failing, or none has run for 2 hours, and again when runs
-# succeed; ship status says when none succeeded for over 3 days.
+# nothing. It is this Mac's one hourly job, so it checks the servers too
+# (health), whatever it skips, and hourly while an update runs. Only on power,
+# with this Mac's dots exactly origin's main, which the servers pull, and with
+# a server in reach, so a closed or travelling Mac skips its hours, and the
+# next one it is open for catches up. It keeps the Mac awake meanwhile, logs
+# each check and why it skips an hour; ship status says when none succeeded
+# for over 3 days.
+#
+# What fails reaches the owner once it has lasted $persist, as a server
+# restarting or recomputing for an hour is no news. Prod's tunnel below its
+# floor of servers serving, as when one of its servers fails, is texted once
+# (brain's ping --now) and once more when it recovers; any other
+# failure is one line in brain's todo/dots.md while it lasts. Each subject
+# failing (server.SERVER, ROLE.TUNNEL, update) keeps when it began and what
+# it is now in $FAILING/SUBJECT, and SUBJECT.texted once texted:
+#   fails, no streak                -> its streak begins
+#   fails, under $persist           -> what it is now is kept, nothing said
+#   fails past $persist             -> texted (a prod tunnel) or the line
+#   the text fails to send          -> no mark: tried again at the next check
+#   fine again                      -> the streak ends; one text if texted
+#   no server answers, as offline   -> nothing changes
+#   run killed, Mac restarted       -> the files keep the streaks
+FAILING="$STATE_DIR/failing"
+persist=$((3 * 3600))
+PING="$HOME/Developer/brain/tools/ping"
+TODO="$HOME/Developer/brain/todo/dots.md"
 
-notify() {
-    osascript -e "display notification \"See ~/Library/Logs/fleet-auto.log.\" with title \"$1\"" || true
+stamp() {
+    date '+%Y-%m-%d %H:%M'
 }
 
-# Notify with TITLE, once per KIND until it is cleared: each kind has its own
-# marker, as one shared by all hid a skip streak behind a server's answer.
-alert() {
-    local marker="$STATE_DIR/alerted.$1"
-    [ ! -e "$marker" ] || return 0
-    mkdir -p "$STATE_DIR"
-    touch "$marker"
-    notify "$2"
+# SUBJECT fails as WHAT: its streak goes on, or begins now.
+failing() {
+    local since
+    mkdir -p "$FAILING"
+    since="$(cut -f 1 "$FAILING/$1" 2>/dev/null || date +%s)"
+    printf '%s\t%s\n' "$since" "$2" > "$FAILING/$1"
+}
+fine() {
+    rm -f "$FAILING/$1"
 }
 
-# Skip this hour's update for REASON, and notify once no run has succeeded for
-# 2 hours, naming the reason it skips now: the last success is the one record
-# of a streak, which only a successful update ends, so nothing else is kept.
-overdue() {
-    echo "$(date '+%Y-%m-%d %H:%M') skipped: $1"
-    if [ $(($(date +%s) - $(cat "$STATE_DIR/fleet-auto" 2>/dev/null || echo 0))) -ge 7200 ]; then
-        alert skip "fleet update skipped for 2 hours: $1"
-    fi
+# Text the owner TEXT now, saying so in the log when it fails.
+text() {
+    "$PING" --now "$1" >/dev/null || { echo "$(stamp) could not text: $1"; return 1; }
 }
 
-# A run succeeded: end the streak the update's alerts began, saying so.
-recovered() {
-    local kind had=''
-    for kind in skip failed long; do
-        [ ! -e "$STATE_DIR/alerted.$kind" ] || had=1
-        rm -f "$STATE_DIR/alerted.$kind"
-    done
-    [ -z "$had" ] || notify "fleet update runs again"
-}
-
-# Check every server serves, saying and notifying about one that answers but
-# does not, and fail when none answers. Its own step, run every hour whatever
-# the update skips, so a skipped update never leaves the servers unwatched.
-health() {
-    local server status answered=''
-    for server in $(servers); do
-        status=0
-        on "$server" "$SHIP status --check" 2>/dev/null || status=$?
-        # ssh's own failure: the server does not answer.
-        [ "$status" -ne 255 ] || continue
-        answered=1
-        if [ "$status" -ne 0 ]; then
-            echo "$(date '+%Y-%m-%d %H:%M') $server does not serve, which ship status there explains"
-            alert "serve.$server" "fleet: $server does not serve"
+# Say what has failed for $persist, and what texted is fine again.
+report() {
+    local file subject since what line=''
+    for file in "$FAILING"/*; do
+        [ -f "$file" ] || continue
+        subject="${file##*/}"
+        if [ "${subject%.texted}" != "$subject" ]; then
+            if [ ! -e "${file%.texted}" ] && text "fleet: fine again: $(cat "$file")"; then rm -f "$file"; fi
+            continue
+        fi
+        IFS=$'\t' read -r since what < "$file"
+        [ $(($(date +%s) - since)) -ge "$persist" ] || continue
+        what="$what, since $(date -r "$since" '+%-d %b %H:%M')"
+        if [ "${subject#prod.}" != "$subject" ]; then
+            if [ ! -e "$file.texted" ] && text "fleet: $what. See ~/Library/Logs/fleet-auto.log on the Mac."; then
+                echo "$what" > "$file.texted"
+            fi
         else
-            rm -f "$STATE_DIR/alerted.serve.$server"
+            line="$line${line:+; }$what"
         fi
     done
-    [ -n "$answered" ]
+    todo_line "$line"
+}
+
+# Keep brain's one TODO line on what fails, LINE, or none when it is empty,
+# just under the file's heading, as t3-release-watch keeps its own.
+todo_line() {
+    local marker='- **Fleet failing** (fleet-auto):' new
+    if [ ! -f "$TODO" ]; then
+        [ -z "$1" ] || echo "$(stamp) $TODO is missing, so this goes unsaid there: $1"
+        return 0
+    fi
+    new="$(awk -v marker="$marker" -v line="$1" '
+        index($0, marker) == 1 { next }
+        { print; n++ }
+        $0 == "# dots: open items" { at = n + 1 }
+        n == at && line != "" { print marker " " line ". See ~/Library/Logs/fleet-auto.log."; at = -1 }
+        END { if (line != "" && at != -1) exit 1 }' "$TODO")" || {
+        echo "$(stamp) $TODO has no heading # dots: open items, so this goes unsaid there: $1"
+        return 0
+    }
+    [ "$new" = "$(cat "$TODO")" ] || { printf '%s\n' "$new" > "$TODO.new" && mv "$TODO.new" "$TODO"; }
+}
+
+# Look at every server, logging what each does and how many serve each role's
+# tunnel against its floor, keep what fails, and report. Fails, keeping
+# nothing, when no server answers, as when this Mac is offline.
+health() {
+    local server state states='' answered='' role tunnel ready need dir
+    dir="$(mktemp -d)"
+    for server in $(servers); do
+        state="$(look "$server")"
+        states="$states${states:+, }$server $state"
+        [ "$state" = unreachable ] || answered=1
+        case "$state" in
+            serving | 'catching up') on "$server" "$TUNNELS_SH state" > "$dir/$server" 2>/dev/null || true ;;
+        esac
+        case "$state" in
+            crashed | 'not serving' | unreachable) echo "$state" > "$dir/$server.failing" ;;
+        esac
+    done
+    if [ -z "$answered" ]; then
+        echo "$(stamp) health: no server answers"
+        rm -rf "$dir"
+        return 1
+    fi
+    for role in prod next; do
+        for tunnel in $(role_tunnels "$role"); do
+            ready="$(grep -lx "$tunnel ready" "$dir"/* 2>/dev/null | wc -l | tr -d ' ')"
+            need="$(floor "$tunnel")"
+            states="$states; $tunnel $ready/$need"
+            if [ "$ready" -lt "$need" ]; then
+                failing "$role.$tunnel" "$tunnel has $ready of its $need servers serving ($(sed 's/;.*//' <<< "$states"))"
+            else
+                fine "$role.$tunnel"
+            fi
+        done
+    done
+    for server in $(servers); do
+        if [ -e "$dir/$server.failing" ]; then
+            failing "server.$server" "$server is $(cat "$dir/$server.failing")"
+        else
+            fine "server.$server"
+        fi
+    done
+    rm -rf "$dir"
+    echo "$(stamp) health: $states"
+    report
 }
 
 # Why this Mac's dots, whose fleet runs against the servers, differs from what
@@ -1756,7 +1858,7 @@ dots_differs() {
 }
 
 auto() {
-    local log="$HOME/Library/Logs/fleet-auto.log" dots differs silent='' pid long='' status=0
+    local log="$HOME/Library/Logs/fleet-auto.log" dots differs silent='' pid long='' checked status=0
     dots="$(dirname "$PC_DIR")"
     # Its log keeps the last 5 to 10 MB, cut in place, as launchd writes this
     # run's output to the file it opened.
@@ -1765,32 +1867,39 @@ auto() {
         rm -f "$log.new"
     fi
     health || silent=1
+    checked="$SECONDS"
     if ! pmset -g batt | grep -q "'AC Power'"; then
-        echo "$(date '+%Y-%m-%d %H:%M') skipped: on battery"
+        echo "$(stamp) skipped: on battery"
         return 0
     fi
     differs="$(dots_differs "$dots")"
     if [ -n "$differs" ]; then
-        overdue "$differs"
+        echo "$(stamp) skipped: $differs"
+        failing update "fleet update skips: $differs"
+        report
         return 0
     fi
     # Any server in reach, as one down leaves only its group alone.
     if [ -n "$silent" ]; then
-        overdue "no server answers"
+        echo "$(stamp) skipped: no server answers"
         return 0
     fi
-    echo "== $(date '+%Y-%m-%d %H:%M') fleet update"
+    echo "== $(stamp) fleet update"
     # Watched from here, as launchd starts no other hour's run while this one
-    # runs: one that hangs notifies once it has run for a day. Each line it
-    # prints is logged with its time, so how long a step took, as a server
-    # alone on a tunnel, reads from the log.
+    # runs: health hourly, as a wait may take 12 hours, and a run past a day
+    # fails, as when it hangs. Each line it prints is logged with its time, so
+    # how long a step took, as a server alone on a tunnel, reads from the log.
     FLEET_AUTO=1 caffeinate -i "$0" update </dev/null \
         > >(while IFS= read -r line; do printf '%s %s\n' "$(date +%T)" "$line"; done) 2>&1 &
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         if [ -z "$long" ] && [ "$SECONDS" -ge 86400 ]; then
-            alert long "fleet update has run for a day"
+            failing update "fleet update has run for over a day"
             long=1
+        fi
+        if [ $((SECONDS - checked)) -ge 3600 ]; then
+            health || true
+            checked="$SECONDS"
         fi
         sleep 60
     done
@@ -1799,19 +1908,22 @@ auto() {
         0)
             mkdir -p "$STATE_DIR"
             date +%s > "$STATE_DIR/fleet-auto"
-            recovered
+            fine update
             ;;
-        # Another run holds the lock, as one by hand: this hour's turn, unless
-        # that one hangs, which a day without a run says.
-        3) overdue "another fleet update or restart runs" ;;
-        # A server it would build on, restart or swap to stayed held for timed
-        # work (hold), as during a bench: this hour's turn.
-        4) overdue "a server stayed held for timed work for 50 minutes" ;;
+        # Another run holds the lock, as one by hand, or a server it would
+        # build on, restart or swap to stayed held for timed work (hold), as
+        # during a bench: this hour's turn.
+        3) echo "$(stamp) skipped: another fleet update or restart runs" ;;
+        4) echo "$(stamp) skipped: a server stayed held for timed work for 50 minutes" ;;
+        # A server or tunnel not ready, which health follows.
+        5) fine update ;;
         *)
-            alert failed "fleet update failed"
+            failing update "fleet update failed (status $status)"
+            report
             return 1
             ;;
     esac
+    report
 }
 
 [ "$#" -ge 1 ] || usage
