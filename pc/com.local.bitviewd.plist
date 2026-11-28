@@ -29,7 +29,9 @@
     <!-- A stop waits for the writes in flight. -->
     <key>ExitTimeOut</key>
     <integer>1800</integer>
-    <key>ProcessType</key>
-    <string>Background</string>
+    <!-- Behind everything at the same priority. Not ProcessType Background,
+         which starves it under load, and a rebuild would take far longer. -->
+    <key>Nice</key>
+    <integer>10</integer>
 </dict>
 </plist>
