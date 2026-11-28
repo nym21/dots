@@ -90,7 +90,7 @@ build() {
     grep -qaF "$next-debug" "$dir/.staged" || fail "the build does not say $next-debug"
     previous=$(readlink "$link" || true)
     mv -f "$dir/.staged" "$dir/$name"
-    ln -sfn "$name" "$dir/.link" && mv -f "$dir/.link" "$link" || fail "cannot install $name"
+    { ln -sfn "$name" "$dir/.link" && mv -f "$dir/.link" "$link"; } || fail "cannot install $name"
     # Only the build running and the one before it are kept.
     for old in "$dir"/bitviewd-*-debug; do
         case "${old##*/}" in "$name" | "$previous") ;; *) rm -f "$old" ;; esac
